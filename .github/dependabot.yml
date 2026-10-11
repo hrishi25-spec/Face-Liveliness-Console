@@ -1,0 +1,45 @@
+# Dependency updates.
+#
+# Scope: the dependencies this repository actually builds and ships — the root
+# Maven project (619 MB of bundled natives and an ML runtime, so a vulnerable
+# transitive dep is not hypothetical), the Python backend's pinned
+# requirements, and the workflow actions themselves.
+#
+# Deliberately NOT covered: android_client/ (its Flutter 3.10.4 toolchain and
+# locked pub dependencies are pinned on purpose — see its README) and
+# vendor/github setup/ (a third-party workspace outside this repository's CI).
+#
+# A Dependabot PR runs the same CI as any other change, so a bump that breaks
+# the build turns red rather than landing silently.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the routine patch/minor churn instead of a dozen.
+      maven-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: pip
+    directory: /pad_liveness_backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      pip-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

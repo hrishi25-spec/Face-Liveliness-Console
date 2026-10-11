@@ -1,0 +1,15 @@
+# Minimal production image - builds from slim jar, ~90MB layers
+FROM eclipse-temurin:17-jre-alpine AS runner
+
+# Low-end defaults: cap heap at 50% RAM, SerialGC for small footprint, exit on OOM
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=50.0 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
+
+# Non-root user
+RUN addgroup -S mosip && adduser -S -G mosip mosip
+
+WORKDIR /app
+COPY --chown=mosip:mosip target/pad-liveness-backend-*-slim.jar app.jar
+
+USER mosip
+EXPOSE 8000
+CMD ["java", "-jar", "app.jar"]

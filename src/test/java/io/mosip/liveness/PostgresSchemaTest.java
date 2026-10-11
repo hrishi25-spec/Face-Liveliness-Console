@@ -72,13 +72,18 @@ class PostgresSchemaTest {
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16")
             .withDatabaseName("pad_liveness")
             .withUsername("mosip")
-            .withPassword("test-postgres-password");
+            .withPassword("test-postgres-password")
+            .withInitScript("docker/initdb/01-least-privilege-role.sql");
 
     @DynamicPropertySource
     static void postgresProperties(DynamicPropertyRegistry properties) {
         properties.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        properties.add("spring.datasource.username", POSTGRES::getUsername);
-        properties.add("spring.datasource.password", POSTGRES::getPassword);
+        properties.add("spring.datasource.username", () -> "pad_runtime");
+        properties.add("spring.datasource.password", () -> "test-postgres-password");
+        // Flyway runs as pad_migrate (migration role with DDL permissions)
+        properties.add("spring.flyway.url", POSTGRES::getJdbcUrl);
+        properties.add("spring.flyway.user", () -> "pad_migrate");
+        properties.add("spring.flyway.password", () -> "test-postgres-password");
     }
 
     @Autowired

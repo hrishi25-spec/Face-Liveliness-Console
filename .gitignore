@@ -24,3 +24,7 @@ vendor/SKILLS-INTEGRATION.zip
 target/
 target/
 .DS_Store
+
+# Environment files - docker compose reads .env automatically, so ignore it
+.env
+!.env.example

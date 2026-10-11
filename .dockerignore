@@ -1,0 +1,38 @@
+# Docker build context hygiene (CIS Docker Benchmark 4.4 / image build files).
+#
+# Without this file the whole repository is sent to the Docker daemon on every
+# build — including .git history and a local .env, which .gitignore does NOT
+# protect, because the ignore rules that matter here are the context ones.
+#
+# target/ is deliberately NOT ignored: the Dockerfile copies
+# target/pad-liveness-backend-*-slim.jar out of it.
+.git
+.gitignore
+.github
+.idea
+.vscode
+*.iml
+*.log
+
+# Local secrets and machine overrides — never needed to build the image.
+# Same rule as .gitignore: the .env file docker compose reads automatically,
+# and the ./secrets/ directory docs/configuration.md mounts from.
+.env
+.env.*
+secrets/
+*.pem
+*.key
+*.p12
+*.jks
+
+# Build output that is not the jar the image copies.
+# android_client/build alone is ~690 MB.
+android_client/build
+android_client/android/.gradle
+android_client/.dart_tool
+**/node_modules
+
+# Python build/runtime caches.
+pad_liveness_backend/.pytest_cache
+**/__pycache__
+*.pyc

@@ -1,0 +1,46 @@
+# Minimal docker-compose for production - uses pre-built slim jar
+# Usage: ./mvnw clean package -DskipTests -Pslim && docker compose -f docker-compose.lite.yml up
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pad_liveness_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mosip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-pad_liveness}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mosip}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    container_name: pad_liveness_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-pad_liveness}
+      POSTGRES_APP_USER: pad_runtime
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+      POSTGRES_MIGRATE_USER: pad_migrate
+      MOSIP_ADMIN_API_KEY: ${MOSIP_ADMIN_API_KEY}
+      MOSIP_AUDIT_HMAC_SECRET: ${MOSIP_AUDIT_HMAC_SECRET}
+      MOSIP_AUDIT_HMAC_PREVIOUS_SECRET: ${MOSIP_AUDIT_HMAC_PREVIOUS_SECRET}
+    ports: ["8000:8000"]
+    user: "1000:1000"
+
+volumes:
+  pg_data:

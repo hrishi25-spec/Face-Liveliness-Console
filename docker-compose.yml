@@ -13,6 +13,7 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mosip}"]
       interval: 5s
@@ -30,8 +31,9 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-pad_liveness}
-      POSTGRES_USER: ${POSTGRES_USER:-mosip}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_APP_USER: pad_runtime
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+      POSTGRES_MIGRATE_USER: pad_migrate
       # Admin key required by PUT /api/v1/config/* — set it in .env.
       MOSIP_ADMIN_API_KEY: ${MOSIP_ADMIN_API_KEY:-}
       # HMAC key for the config audit chain; optional, but recommended.

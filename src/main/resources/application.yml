@@ -27,8 +27,8 @@ spring:
   # ---- PostgreSQL ----
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:pad_liveness}
-    username: ${POSTGRES_USER:mosip}
-    password: ${POSTGRES_PASSWORD}
+    username: ${POSTGRES_APP_USER:pad_runtime}
+    password: ${POSTGRES_APP_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       # 5 connections are ample for the few writes per frame/challenge and
@@ -57,6 +57,12 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    # Separate datasource for Flyway migrations - uses pad_migrate role which owns
+    # the public schema and has DDL permissions. The main datasource uses pad_runtime
+    # which has only DML permissions (cannot ALTER TABLE ... DISABLE TRIGGER).
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:pad_liveness}
+    user: ${POSTGRES_MIGRATE_USER:pad_migrate}
+    password: ${POSTGRES_PASSWORD}
 
   # ---- Jackson ----
   jackson:

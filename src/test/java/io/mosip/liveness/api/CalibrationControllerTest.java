@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -19,7 +20,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(CalibrationController.class)
 @Import(TestConfig.class)
+@TestPropertySource(properties = {
+        "mosip.security.admin-api-key=" + CalibrationControllerTest.ADMIN_KEY
+})
 class CalibrationControllerTest {
+
+    static final String ADMIN_KEY = "test-admin-key";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ThresholdCalibrationService calibration;
@@ -36,7 +42,8 @@ class CalibrationControllerTest {
     void thresholdSweepReturnsTheTable() throws Exception {
         when(calibration.run(anyDouble())).thenReturn(sample(0.02));
 
-        mockMvc.perform(get("/api/v1/eval/threshold-sweep"))
+        mockMvc.perform(get("/api/v1/eval/threshold-sweep")
+                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.targetBpcer").value(0.02))
                 .andExpect(jsonPath("$.scorer").value("onnx-minifasnet-v2"))
@@ -52,14 +59,16 @@ class CalibrationControllerTest {
     void customTargetBpcerIsForwarded() throws Exception {
         when(calibration.run(0.05)).thenReturn(sample(0.05));
 
-        mockMvc.perform(get("/api/v1/eval/threshold-sweep").param("targetBpcer", "0.05"))
+        mockMvc.perform(get("/api/v1/eval/threshold-sweep").param("targetBpcer", "0.05")
+                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.targetBpcer").value(0.05));
     }
 
     @Test
     void outOfRangeTargetIsRejected() throws Exception {
-        mockMvc.perform(get("/api/v1/eval/threshold-sweep").param("targetBpcer", "1.5"))
+        mockMvc.perform(get("/api/v1/eval/threshold-sweep").param("targetBpcer", "1.5")
+                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("BAD_REQUEST"));
     }
