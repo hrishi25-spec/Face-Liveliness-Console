@@ -30,5 +30,16 @@ class ChallengeValidationResult(BaseModel):
     session_id: uuid.UUID
     challenge: ChallengeResponse
     passed: bool
-    action: str = Field(..., description="One of: proceed | retry_challenge | reject")
+    action: str = Field(
+        ...,
+        description="One of: proceed | retry_challenge | reject | locked | escalate_to_operator | failed",
+    )
+    may_retry_session: bool | None = Field(
+        None,
+        description=(
+            "Set only on a terminal budget-exhausted verdict: true when the policy lets the "
+            "client open a fresh session (failed), false for locked / escalate_to_operator. "
+            "Never a grant of another challenge inside this session."
+        ),
+    )
     message: str

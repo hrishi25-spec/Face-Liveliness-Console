@@ -13,7 +13,7 @@ import io.mosip.liveness.audit.AuditEvent;
 import io.mosip.liveness.audit.AuditEventType;
 import io.mosip.liveness.audit.AuditLogger;
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 import io.mosip.liveness.config.WorkflowPolicyDefaults;
 

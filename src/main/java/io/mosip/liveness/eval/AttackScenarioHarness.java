@@ -6,7 +6,6 @@ import io.mosip.liveness.backend.LivenessBackend;
 import io.mosip.liveness.backend.MockLivenessBackend;
 import io.mosip.liveness.config.LivenessConfig;
 import io.mosip.liveness.core.Challenge;
-import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.FaceSignals;
 import io.mosip.liveness.core.Frame;
 import io.mosip.liveness.core.PadAttackType;

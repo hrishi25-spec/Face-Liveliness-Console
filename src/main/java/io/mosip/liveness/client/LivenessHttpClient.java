@@ -8,10 +8,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.net.ssl.SSLContext;
 
 /**
@@ -24,9 +25,15 @@ import javax.net.ssl.SSLContext;
  * <h3>Usage from Desktop (JavaFX):</h3>
  * <pre>
  *   LivenessClient client = new LivenessHttpClient("http://localhost:8000");
- *   SessionInfo session = client.createSession("RESIDENT", "L1-CAM-01");
+ *   SessionInfo session = client.createSession("RESIDENT", "L1-CAM-01", "resident-42");
  *   FrameResult result = client.submitFrame(session.id(), jpegBytes);
  * </pre>
+ *
+ * <p>Passing a subject reference makes the session <em>owned</em>: this client
+ * then presents it in {@code X-Subject-Ref} on every session-scoped call it makes
+ * for that session, and the service refuses the calls of any other caller. Omit
+ * it for an anonymous session, which needs no header. See
+ * {@code docs/client-integration-guide.md} §5.5.</p>
  *
  * <h3>Usage from Android (via Pigeon bridge):</h3>
  * <pre>
@@ -40,9 +47,25 @@ import javax.net.ssl.SSLContext;
  */
 public class LivenessHttpClient implements LivenessClient {
 
+    /**
+     * The ownership header, as {@code UserSessionGuard.HEADER} spells it. Declared
+     * here rather than imported so this package stays free of the web layer (it is
+     * the transport hosts reuse), with {@code LivenessHttpClientWireTest} pinning
+     * the two names together — the guard refuses the session if they ever differ.
+     */
+    static final String SUBJECT_REF_HEADER = "X-Subject-Ref";
+
     private final String baseUrl;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+
+    /**
+     * The owner of each session this client created with one, so the header the
+     * guard demands can be attached to the session flow without every caller
+     * repeating it. A session created without a subject reference is absent here
+     * and stays anonymous, which is the behaviour hosts had before.
+     */
+    private final Map<UUID, String> ownedSessions = new ConcurrentHashMap<>();
 
     /** Creates an instance with default JDK TLS settings. */
     public LivenessHttpClient(String baseUrl) {
@@ -69,17 +92,23 @@ public class LivenessHttpClient implements LivenessClient {
     // ---- Session lifecycle ----
 
     @Override
-    public SessionInfo createSession(String workflowType, String deviceId) {
+    public SessionInfo createSession(String workflowType, String deviceId, String subjectRef) {
         try {
-            String body = objectMapper.writeValueAsString(new CreateSessionBody(workflowType, deviceId));
+            String body = objectMapper.writeValueAsString(
+                    new CreateSessionBody(workflowType, deviceId, subjectRef));
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/api/v1/sessions"))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return parseSessionInfo(objectMapper.readTree(response.body()));
+            SessionInfo session = parseSessionInfo(send(request, "create session"));
+            if (subjectRef != null && !subjectRef.isBlank()) {
+                // Recorded only after the service accepted the session: the owner is
+                // the caller's claim, and the service took it.
+                ownedSessions.put(session.id(), subjectRef);
+            }
+            return session;
         } catch (IOException | InterruptedException e) {
             throw new LivenessClientException("Failed to create session", e);
         }
@@ -88,14 +117,16 @@ public class LivenessHttpClient implements LivenessClient {
     @Override
     public SessionSummary closeSession(UUID sessionId) {
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v1/sessions/" + sessionId + "/close"))
-                    .header("Content-Type", "application/json")
+            HttpRequest request = sessionRequest(sessionId,
+                    "/api/v1/sessions/" + sessionId + "/close")
                     .POST(HttpRequest.BodyPublishers.noBody())
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            JsonNode json = objectMapper.readTree(response.body());
+            JsonNode json = send(request, "close session");
+            // The session is closed, so its owner is no longer needed: forgetting it
+            // here is what keeps the map bounded by sessions in flight, not by
+            // sessions ever created.
+            ownedSessions.remove(sessionId);
 
             return new SessionSummary(
                     UUID.fromString(json.get("id").asText()),
@@ -123,16 +154,12 @@ public class LivenessHttpClient implements LivenessClient {
             String frameBase64 = Base64.getEncoder().encodeToString(frameJpeg);
             String body = objectMapper.writeValueAsString(new SubmitFrameBody(frameBase64));
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v1/sessions/" + sessionId + "/frames"))
-                    .header("Content-Type", "application/json")
+            HttpRequest request = sessionRequest(sessionId,
+                    "/api/v1/sessions/" + sessionId + "/frames")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            JsonNode json = objectMapper.readTree(response.body());
-
-            return parseFrameResult(json);
+            return parseFrameResult(send(request, "submit frame"));
         } catch (IOException | InterruptedException e) {
             throw new LivenessClientException("Failed to submit frame", e);
         }
@@ -150,14 +177,12 @@ public class LivenessHttpClient implements LivenessClient {
             String body = objectMapper.writeValueAsString(
                     new ValidateChallengeBody(challengeId.toString(), framesBase64));
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v1/sessions/" + sessionId + "/challenges/validate"))
-                    .header("Content-Type", "application/json")
+            HttpRequest request = sessionRequest(sessionId,
+                    "/api/v1/sessions/" + sessionId + "/challenges/validate")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return parseChallengeResult(sessionId, objectMapper.readTree(response.body()));
+            return parseChallengeResult(sessionId, send(request, "validate challenge"));
         } catch (IOException | InterruptedException e) {
             throw new LivenessClientException("Failed to validate challenge", e);
         }
@@ -174,13 +199,78 @@ public class LivenessHttpClient implements LivenessClient {
                     .GET()
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            JsonNode json = objectMapper.readTree(response.body());
+            JsonNode json = send(request, "read config");
             return json.has("livenessEnabled") && json.get("livenessEnabled").asBoolean();
-        } catch (IOException | InterruptedException e) {
-            // Default to enabled if config service is unreachable
+        } catch (IOException | InterruptedException | LivenessClientException e) {
+            // Default to enabled when the config answer cannot be read at all —
+            // including a 4xx, which used to surface as a missing field and the same
+            // false. Never bypass liveness because the answer was unreadable.
             return true;
         }
+    }
+
+    // ---- Transport helpers ----
+
+    /**
+     * A session-scoped request builder: the JSON content type plus the session's
+     * ownership header when this client is the session's owner.
+     *
+     * <p>An unknown session (one this client did not create) is sent without the
+     * header on purpose. The client cannot invent a claim it was never given, and
+     * the service answers 403 for an owned session either way — which
+     * {@link #send} surfaces as a {@link LivenessClientException} rather than as a
+     * response the JSON parser then has to make sense of.</p>
+     */
+    private HttpRequest.Builder sessionRequest(UUID sessionId, String path) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + path))
+                .header("Content-Type", "application/json");
+        String subjectRef = ownedSessions.get(sessionId);
+        if (subjectRef != null) {
+            builder.header(SUBJECT_REF_HEADER, subjectRef);
+        }
+        return builder;
+    }
+
+    /**
+     * Sends a request and decodes a JSON response, turning any HTTP error into a
+     * {@link LivenessClientException}.
+     *
+     * <p>Before this existed each method parsed the body whatever the status was,
+     * so a 4xx — an error object with no {@code id}, no {@code stage}, no
+     * {@code action} — failed as a {@link NullPointerException} inside a parser or
+     * as a silently defaulted field. The guard's 403 is the reachable case: a
+     * mismatched subject reference has to read as a refusal, not as a bug in the
+     * client.</p>
+     */
+    private JsonNode send(HttpRequest request, String action) throws IOException, InterruptedException {
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() >= 400) {
+            throw new LivenessClientException("Failed to " + action + ": HTTP "
+                    + response.statusCode() + ": " + errorMessage(response.body()));
+        }
+        return objectMapper.readTree(response.body());
+    }
+
+    /**
+     * The service's {@code message} field when the error body carries one
+     * ({@code GlobalExceptionHandler}'s shape), else the raw body — which is never
+     * PII for an error response, and is the only thing left to say when the error
+     * did not come from this service at all (a proxy, say).
+     */
+    private String errorMessage(String body) {
+        if (body == null) {
+            return "";
+        }
+        try {
+            JsonNode message = objectMapper.readTree(body).get("message");
+            if (message != null && !message.isNull()) {
+                return message.asText();
+            }
+        } catch (IOException notJson) {
+            // fall through to the raw body
+        }
+        return body.length() > 200 ? body.substring(0, 200) : body;
     }
 
     // ---- JSON parsing helpers ----
@@ -279,8 +369,11 @@ public class LivenessHttpClient implements LivenessClient {
 
     // ---- Internal request body records ----
 
+    // subjectRef is always written, null included: the service reads an absent and
+    // a null reference alike (both mean "no owner"), so the anonymous case needs no
+    // separate body shape.
     @SuppressWarnings("unused")
-    private record CreateSessionBody(String workflowType, String deviceId) {}
+    private record CreateSessionBody(String workflowType, String deviceId, String subjectRef) {}
     @SuppressWarnings("unused")
     private record SubmitFrameBody(String frameBase64) {}
     @SuppressWarnings("unused")

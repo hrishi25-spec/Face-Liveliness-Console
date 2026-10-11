@@ -181,7 +181,13 @@ is taken, the build breaks, or the service never becomes healthy.
 real API — no build step and no CDN, so it works fully offline. It creates a
 session, captures webcam frames, runs passive liveness, performs the active
 challenge, and shows the decision log, audit trail and operational metrics side
-by side. It also edits the **config policy** per workflow: loads are open `GET`s,
+by side. A passive score above the threshold passes the session and skips the
+challenge by design; **Run active liveness** then becomes available and starts
+one extra challenge on request (`POST /api/v1/sessions/{id}/active-liveness`). The
+extra check is marked `manual`: its result is recorded on the challenge row and
+in the audit trail, and it **never changes the session verdict** — a missed
+action leaves the session PASSED. The console also edits the **config policy**
+per workflow: loads are open `GET`s,
 saving issues a `PUT` with the `X-Admin-API-Key` header — paste
 `MOSIP_ADMIN_API_KEY` into the admin-key field first (kept in the tab's
 sessionStorage only, never logged). The key never sits in the page: the field is
@@ -346,14 +352,25 @@ Maven because Maven cannot reach what they check:
 | --- | --- | --- |
 | Java unit + integration suites | `./mvnw --batch-mode test` | *Unit tests*, *Integration tests* |
 | PostgreSQL schema gate (entities vs Flyway migrations) | `./mvnw --batch-mode test -Dtest='PostgresSchemaTest'` | *PostgreSQL schema gate* |
+| Cross-backend contract (one spent retry budget, both services) | `./mvnw --batch-mode test -Dtest='CrossBackendContractTest'` | *Cross-backend contract* |
 | Console DOM guards | `node src/test/js/console-guards.test.mjs` | *Console DOM tests* |
 | Project boundaries (guidance, instruction scope, documented gates) | `node scripts/check-project-boundaries.mjs` | *Project boundaries* |
+| Secret scan (committed credentials, keys, real biometrics) | `./scripts/check-secrets.sh` | *Secret scan* |
 | Packaged jar boots and serves | `./scripts/smoke-jar.sh` | *Package … jar* |
 | Jar size ceiling | `./scripts/check-jar-size.sh 'target/pad-liveness-backend-*-slim.jar' 110 'slim jar'` | *Package … jar* |
 | Cold boot time (median of 5) | `./scripts/boot-median.sh` | *Cold boot time (median)* |
 | Docker image boots, non-root, `/health` ok | `./scripts/smoke-docker.sh` | *Docker image* |
 | Python backend suite | see [pad_liveness_backend/README.md](pad_liveness_backend/README.md) | *Python liveness backend tests* |
 | Android client build gates | see [android_client/README.md](android_client/README.md) | *Android/Flutter client build* |
+
+The *Cross-backend contract* gate needs both toolchains on the machine running
+it: the Java test boots this service (H2, real OpenCV) and drives
+[pad_liveness_backend](pad_liveness_backend/)'s scenario script over a
+subprocess. Point `PAD_LIVENESS_PYTHON` at an interpreter with
+`pad_liveness_backend/requirements-dev.txt` installed (the default is
+`python3`); without one the test skips with the reason, and
+`PAD_LIVENESS_REQUIRE_PYTHON=1` — which CI sets — turns that skip into a
+failure instead.
 
 The *Project boundaries* gate keeps this table honest: it fails if a command
 documented here or in a project README is not run by a workflow, and equally if

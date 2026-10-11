@@ -2,9 +2,6 @@ package io.mosip.liveness.api;
 
 import io.mosip.liveness.dto.OperationalMetrics;
 import io.mosip.liveness.metrics.PipelineTimers;
-import io.mosip.liveness.models.entity.ChallengeEntity;
-import io.mosip.liveness.models.entity.FrameEvent;
-import io.mosip.liveness.models.entity.LivenessSession;
 import io.mosip.liveness.models.enums.ChallengeStatus;
 import io.mosip.liveness.models.enums.LivenessStage;
 import io.mosip.liveness.models.enums.SessionStatus;

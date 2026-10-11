@@ -1,12 +1,5 @@
 package io.mosip.liveness.api;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.mosip.liveness.models.enums.SessionStatus;
-import io.mosip.liveness.models.enums.WorkflowType;
-import io.mosip.liveness.models.enums.LivenessStage;
-import io.mosip.liveness.models.entity.LivenessSession;
-import io.mosip.liveness.crud.ChallengeRepository;
-import io.mosip.liveness.crud.FrameEventRepository;
 import io.mosip.liveness.crud.LivenessSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

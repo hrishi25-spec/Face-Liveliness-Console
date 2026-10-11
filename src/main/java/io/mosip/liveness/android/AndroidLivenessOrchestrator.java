@@ -8,37 +8,28 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 
 import io.mosip.liveness.dto.FrameProcessResult;
 import io.mosip.liveness.audit.AuditEvent;
 import io.mosip.liveness.audit.AuditEventType;
 import io.mosip.liveness.audit.AuditLogger;
 import io.mosip.liveness.backend.LivenessBackend;
-import io.mosip.liveness.challenge.ChallengeSelector;
 import io.mosip.liveness.core.Challenge;
 import io.mosip.liveness.core.ChallengeProgress;
 import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.Frame;
 import io.mosip.liveness.core.LivenessErrorCode;
-import io.mosip.liveness.core.PadAttackType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 import io.mosip.liveness.engine.FaceLivenessEngine;
 import io.mosip.liveness.engine.FrameAssessment;
-import io.mosip.liveness.engine.LivenessDecisionLogic;
-import io.mosip.liveness.engine.SessionSummary;
-import io.mosip.liveness.core.CombinedLivenessScore;
 
 /**
  * Android liveness gate orchestrator (orchestration spec §4/§8).

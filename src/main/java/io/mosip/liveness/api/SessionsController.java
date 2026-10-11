@@ -60,15 +60,23 @@ public class SessionsController {
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(session));
     }
 
+    /**
+     * Reads are session-scoped too: the response carries the session's identity,
+     * stage and failure reason, which is exactly what an owner wants kept private.
+     * Ownership is {@link SessionOwnershipFilter}'s, ahead of this handler.
+     */
     @GetMapping("/{sessionId}")
-    public ResponseEntity<SessionResponse> getSession(@PathVariable java.util.UUID sessionId) {
+    public ResponseEntity<SessionResponse> getSession(
+            @PathVariable java.util.UUID sessionId) {
         LivenessSession session = sessionRepo.findById(sessionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
         return ResponseEntity.ok(toResponse(session));
     }
 
+    /** Closing is an action on somebody's session; the filter has already refused a stranger. */
     @PostMapping("/{sessionId}/close")
-    public ResponseEntity<SessionSummary> closeSession(@PathVariable java.util.UUID sessionId) {
+    public ResponseEntity<SessionSummary> closeSession(
+            @PathVariable java.util.UUID sessionId) {
         LivenessSession session = sessionRepo.findById(sessionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
 

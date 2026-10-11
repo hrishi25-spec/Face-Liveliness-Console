@@ -2,7 +2,260 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-10-06
+## [Unreleased] - 2026-10-11
+
+### Changed — Session ownership moved into a filter, and a new session route cannot skip it
+
+- Ownership used to be a `UserSessionGuard.require` call inside each of the six
+  session-scoped handlers. That shape has the failure mode the admin key already
+  had: a new session-scoped endpoint whose author forgets the call is simply
+  open, and nothing notices — the omission is invisible to every test, because
+  no route is missing a check that a *list* would have said it needed.
+  `SessionOwnershipFilter` now decides for every route in the new
+  `RouteInventory.SESSION_SCOPED` list — `GET /api/v1/sessions/{id}`,
+  `POST …/close`, `POST …/frames`, `POST …/challenges/validate`,
+  `POST …/active-liveness`, `GET …/audit` — before the handler runs, so there is
+  no call site left to omit.
+- `ApiRouteInventoryTest` fails a route that carries a `{sessionId}` without
+  being in that list, a listed route that is no longer declared or no longer
+  matched (the id has to be read off the path), and a session-scoped route that
+  also lands in `ADMIN_KEYED`. A session endpoint added without the opt-in is a
+  red test now instead of an unguarded route.
+- The 403 is written by the filter, so it no longer travels through
+  `GlobalExceptionHandler`, which resolves exceptions Spring MVC raised.
+  `FilterRefusal` holds the one copy of that body
+  (`error`/`message`/`status`/`timestamp`, loopback CORS headers included) and
+  `AdminKeyFilter` and `RateLimitFilter` write through it too: three filters
+  produce a shape the client guide documents and clients parse `message` out of,
+  so a second copy of it was a contract change waiting to happen.
+  `UserSessionGuard.refusal` returns the reason — the text that becomes
+  `message` — instead of throwing a `ResponseStatusException`, and the
+  handler-side `require` call is gone.
+- Nothing a client sees changed: the same 403 with the same two messages, the
+  same CORS treatment on the refusal, an unknown session id still answered by the
+  handler (404, or the audit route's empty trail), a malformed id still a 400
+  rather than a 500, and a browser's `OPTIONS` preflight still passing because it
+  cannot carry the claim.
+- Tests: `SessionOwnershipFilterTest` (10) drives the filter directly — the
+  refusal body, the chain actually stopping, the shapes it must not refuse
+  (anonymous session, unknown id, malformed id without a lookup, preflight) and
+  that it does not widen the CORS origin list; `UserSessionGuardTest` now asserts
+  the returned reasons, `ApiRouteInventoryTest` +3 pins the opt-in, the matcher
+  and the non-session cases, and `HealthControllerTest` imports `TestConfig`
+  because a slice builds every filter bean. Verified by falsification: adding an
+  unlisted `GET /api/v1/sessions/{id}/ping` to `SessionsController` fails
+  `everySessionScopedRouteOptsIntoOwnership` naming the route, and the probe was
+  removed afterwards.
+
+### Fixed — The documented `onRepeatedFailure` behaviour is now the actual behaviour
+
+- `docs/configuration.md` (and the DTOs it mirrors) documented three terminal
+  outcomes for a spent retry budget — `locked` / `escalate_to_operator` /
+  `failed`, each with its own `failureReason` and `mayRetrySession` — and said
+  they were "wired into the HTTP decision path, so a per-workflow value is real
+  behaviour, not just stored config". They were not: the engine answered every
+  spent budget with `reject` + `max_retries_exceeded`, so a per-workflow
+  `onRepeatedFailure` was stored config, `mayRetrySession` was documented on four
+  documents and set by nothing, and the client layer carried a workaround for the
+  gap (`ServiceLivenessEventMapper` derived the outcome from the policy name
+  because the action was always `reject`).
+- Each `RepeatedFailureAction` now carries its own outcome — action,
+  `failureReason`, retryability and the generic user-facing message — and the
+  engine reads it when the last retry is spent, so `ESCALATE_TO_OPERATOR`
+  escalates, `LOCK_OUT` locks and `FALLBACK` (= the seeded `ALLOW_RETRY`) fails
+  with `mayRetrySession: true`. Every reason keeps the
+  `max_retries_exceeded` prefix, so a client that only knows the old value still
+  recognises the outcome.
+- `ChallengeValidationResult` carries `mayRetrySession` (set only on a terminal
+  budget-exhausted verdict), `FrameProcessResult` no longer advertises a field
+  no code path could set (the frame path never spends the retry budget, so it
+  cannot emit the terminal vocabulary), and `docs/PRD.md` now lists the two
+  response shapes accordingly.
+- The console treats the three outcomes as terminal and shows the server's own
+  message: `LOCKED OUT` (not `REJECT`) with no "new session" hint for a lock-out,
+  `ESCALATE TO OPERATOR`, and `FAILED` with the retry hint for a fallback. The
+  passive loop now also stops on any non-`retry_passive` verdict instead of
+  looping a closed session.
+- The service-mediated client mapped the three actions only on **frame**
+  responses, where they can never appear — `ServiceLivenessEventMapper.fromValidation`
+  fell through to "verifying", so an overlay would keep waiting on a session the
+  service had already closed. The terminal vocabulary now ends a validation too,
+  and the attempt that spent the last retry counts as consumed (it was made).
+- Tests: `DecisionEngineServiceTest` +3 (one per repeated-failure action, each
+  pinning action, `failureReason`, retryability and that no further challenge is
+  issued), `ServiceLivenessEventMapperTest` +1 (the three actions end a
+  validation with the right next action, and each consumes the attempt) and the
+  console DOM suite gained a budget-exhausted scenario asserting the headline,
+  the server's message, the retry hint only for `failed`, and that the resolved
+  challenge is never re-submitted.
+
+### Fixed — The Python backend speaks the same repeated-failure vocabulary
+
+- `pad_liveness_backend` answered every spent retry budget with `reject` and a
+  reason of its own (`max_retries_exceeded` / `_locked` / `_escalated`), so a
+  client written against the Java contract — or against the table in
+  `docs/configuration.md` — could not tell a lock-out from an escalation, and the
+  per-workflow `on_repeated_failure` was stored config there too. Each policy now
+  carries the outcome it produces (`FailurePolicy.outcome` in
+  `app/models/enums.py`, mirroring the Spring service's `RepeatedFailureAction`):
+  `lock` → `locked` + `max_retries_exceeded:locked_out`, `escalate` →
+  `escalate_to_operator` + `max_retries_exceeded:escalation_required`,
+  `allow_retry` → `failed` + `max_retries_exceeded`, with the same generic
+  user-facing messages and the same `max_retries_exceeded` prefix a client that
+  only knows the older spelling still recognises.
+- `ChallengeValidationResult` gained `may_retry_session`, set only on the terminal
+  budget-exhausted verdict, and the action's documented domain now names all three
+  terminal actions. Nothing else in the service keyed off the old reasons.
+- Tests: +4 in `tests/test_liveness_api.py` — each policy driven through the real
+  API (a low-score frame issues a challenge, the failing frame stream then spends
+  three retries), asserting the terminal action, `failure_reason`,
+  `may_retry_session`, the message, that only the last verdict is terminal, the
+  audit trail, and that the closed session refuses further frames; plus the
+  mapping table itself with its prefix invariant. The divergence had **no**
+  coverage before — no Python test reached retry exhaustion at all. Restoring the
+  old `reject` mapping fails the three API cases.
+- Docs: the backend README tables the shared vocabulary, `docs/configuration.md`
+  points at it, and `docs/PRD.md`'s companion-project and test-suite counts move
+  to 42 tests.
+
+### Added — One contract test, both backends
+
+- Each implementation was only ever asserted against its own expectations, which
+  is exactly why the Python backend could answer a spent retry budget with
+  `reject` while the Java service answered `locked` (fixed above) without either
+  suite noticing. `CrossBackendContractTest` drives one scenario on both — the
+  Spring service over real HTTP (real OpenCV, real scorer, a 3s challenge window)
+  and the FastAPI backend through `pad_liveness_backend/tests/cross_backend_scenario.py`
+  over a subprocess, because it is a different runtime — and compares the terminal
+  verdicts field by field: `action`, `failure_reason`, `may_retry_session`, the
+  user-facing message, the session and challenge status, and the retry that
+  precedes the outcome.
+- Each side is read under its own documented spelling (camelCase here, snake_case
+  there) and the spellings are asserted, not papered over by a lookup that accepts
+  both, so a rename on either side fails. Enum casing (`FAILED` / `failed`) is the
+  one deliberate difference the comparison normalises, and it says so.
+- Tests: the scenario script is covered by the Python suite as well
+  (`test_cross_backend_scenario.py`, +4: the documented shape for all three
+  policies, plus a larger budget to show the outcome does not depend on its size),
+  and the new Java test was verified by mutation — restoring the old Python
+  vocabulary fails it with `expected: <locked> but was: <reject>`.
+- CI: a new *Cross-backend contract* job sets up JDK 17 and Python 3.12, installs
+  the backend's test dependencies and runs the test with
+  `PAD_LIVENESS_REQUIRE_PYTHON=1`, so a runner without the Python environment fails
+  the job instead of skipping the comparison inside it. The unit matrix excludes
+  the class (it would only skip there, since that job installs no Python) and the
+  README gate table lists the new job, which the boundaries gate checks from both
+  sides.
+
+### Fixed — Session ownership (`X-Subject-Ref`) is enforced, not just documented
+
+- `UserSessionGuard` implemented the resource-level ownership rule — a session
+  created with a `subjectRef` may only be acted on by a caller presenting it —
+  and had a unit test, but **no route called it**, so an owned session was
+  reachable by anyone who could reach the port. It is now invoked on every
+  session-scoped endpoint: `GET /api/v1/sessions/{id}`,
+  `POST …/close`, `POST …/frames`, `POST …/challenges/validate`,
+  `POST …/active-liveness` and `GET …/audit`. A missing or mismatched header is
+  403 and the refusal happens before any frame is decoded or scored.
+- Anonymous sessions (no `subjectRef`) stay reachable without a header, which is
+  what the console and the shipped `LivenessHttpClient` create — their behaviour
+  is unchanged. `X-Subject-Ref` is allowed in the CORS headers so a browser host
+  that creates an owned session can send it, and the header is documented in
+  `docs/client-integration-guide.md` (§5.5) and `docs/brain.md`.
+- Tests: +1 to each of `SessionsControllerTest` (read requires the header, close
+  refuses another subject, anonymous sessions stay open), `FramesControllerTest`,
+  `ChallengesControllerTest`, `ActiveLivenessControllerTest` and
+  `AuditControllerTest`, each asserting the 403 and that no work was performed on
+  the refused call.
+
+### Added — `LivenessHttpClient` can create and drive an owned session
+
+- The shipped client could only create **anonymous** sessions: `createSession` had
+  no subject reference, so a host could not use the `X-Subject-Ref` ownership the
+  service enforces. `LivenessClient` now declares
+  `createSession(workflowType, deviceId, subjectRef)` — the two-argument form is a
+  `default` delegating with no owner, so anonymous hosts and implementations are
+  untouched — and `LivenessHttpClient` puts the reference in the create body,
+  remembers it for that session, and repeats it in the `X-Subject-Ref` header on
+  every session-scoped call it makes (`frames`, `challenges/validate`, `close`).
+  The owner is released by `closeSession`, which bounds that bookkeeping by
+  sessions in flight rather than by sessions ever created.
+- A 4xx response used to be parsed as if it were the success shape, so the guard's
+  refusal — an error object with no `id` and no `action` — failed as a
+  `NullPointerException` inside a parser, or silently defaulted a field. Every call
+  now goes through one transport helper that raises a `LivenessClientException`
+  carrying the status and the service's own `message`, so a mismatched subject
+  reference reads as a refusal. `isLivenessEnabled` keeps its documented fail-open
+  default (never bypass liveness because the config answer was unreadable).
+- Tests: `LivenessHttpClientWireTest` (7) drives the client over a real socket
+  against a stub `HttpServer` — the only way to see the request body and headers —
+  asserting the create body claims the owner, that every session-scoped call
+  repeats it under the name `UserSessionGuard.HEADER` (the client declares the
+  literal itself to stay free of the web layer, so this pins the two spellings
+  together), that `close` releases it, that an anonymous session still sends no
+  header, that a 403 arrives as a `LivenessClientException` rather than a parse
+  failure, and that an unreadable config answer is not mistaken for `livenessEnabled:
+  false`. Suppressing the header in the client fails two of the seven.
+
+### Added — Secret scan gate
+
+- `scripts/check-secrets.sh` runs gitleaks over the checkout **and its Git
+  history**, so a credential that was committed and then removed still fails
+  until the history is rewritten; `--redact` keeps the value out of CI logs and
+  terminal scrollback. The image tag is pinned so a new gitleaks release cannot
+  change what the gate accepts on its own schedule, and the CLI is used when one
+  is on `PATH` (faster locally). Wired as the *Secret scan* CI job
+  (`fetch-depth: 0`, since a shallow checkout would scan one commit) and listed
+  in the README's gate table, which the *Project boundaries* gate checks from
+  both sides.
+
+### Changed — Dead code and stale artefacts removed
+
+- 43 unused Java imports across 23 files, 7 unreferenced MediaPipe landmark
+  constants (the right-iris ring and the unused lip/model-point tables), an
+  unused `@Mock` field in `ApcerEndpointTest`, and the unreachable
+  `FrameProcessResult.mayRetrySession` field.
+- Deleted `docs/brain.md.backup` (a tracked, stale copy of `brain.md`) and
+  `src/test/java/io/mosip/liveness/client/LivenessHttpClientTest.java.bak`, a
+  scratch copy of a test that asserted a client API (`subjectRef` in
+  `createSession`) which did not exist at the time and could not compile — that API
+  now does exist, and is covered by `LivenessHttpClientWireTest` (above).
+
+### Added — Manually requested active liveness (console extra check)
+
+- Above the passive threshold a session passes and the engine issues no
+  challenge — that part is right, but it left no way to ask for one anyway.
+  Added `POST /api/v1/sessions/{sessionId}/active-liveness`: on a session that
+  already passed (`status = PASSED`, `finalResult = true`) it issues a single
+  active challenge marked `manual` and hands it back, and the console's new
+  **Run active liveness** button drives it. Refusals are fail-closed 409s (not
+  passed yet, active liveness disabled, no challenge types configured), and a
+  repeat call while a manual challenge is still `ISSUED` returns that same
+  challenge instead of issuing a second one.
+- The extra check is *advisory*: its result is stored on the challenge row and
+  audited (`CHALLENGE_PASSED` / `CHALLENGE_FAILED` with `manual: true`, PAD hits
+  with `stage: active_manual`), but the session's verdict is never rewritten — a
+  missed action leaves the session PASSED and consumes no retry budget. The
+  engine's own escalation path is untouched, so an automatic challenge still
+  decides its session exactly as before.
+- Schema: `challenges.manual BOOLEAN NOT NULL DEFAULT FALSE`
+  (`V11__challenge_manual_flag.sql`), so every pre-existing challenge stays
+  engine-issued. The route is client-facing (no admin key) and shares the
+  per-session rate-limit budget with frames and challenge validation.
+- Tests: `DecisionEngineServiceTest` +6 (refused before a pass and when active
+  liveness is disabled, issued and marked `manual`, idempotent while open, a
+  passed and a missed extra check both leaving the verdict untouched, a PAD hit
+  audited as `active_manual`), `ActiveLivenessControllerTest` (3 — 404, the
+  created manual challenge, structured 409), `ChallengesControllerTest` +2 (a
+  manual challenge accepted on a PASSED session, an engine challenge still
+  refused there), `RateLimitFilterTest` +1 (the extra check shares the session
+  budget), and the console DOM guard suite drives the button end to end
+  (disabled until a pass, requests the challenge, shows that check's own
+  verdict). The suite's challenge stub now carries the resolved challenge like
+  the server does — without that shape the loop's `retry_challenge` fallback
+  re-submitted a just-failed manual challenge and surfaced a 409 in the verdict
+  box (caught by driving the real page, fixed by treating a manual verdict as
+  terminal for its challenge).
 
 ### Fixed — Passive liveness score pinned at `1.000` on genuine faces
 

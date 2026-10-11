@@ -2,7 +2,7 @@ package io.mosip.liveness.models.converter;
 
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumSet;

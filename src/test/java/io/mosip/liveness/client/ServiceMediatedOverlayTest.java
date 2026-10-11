@@ -314,7 +314,7 @@ class ServiceMediatedOverlayTest {
         SessionSummary summary = summary("PASSED", null);
 
         @Override
-        public SessionInfo createSession(String workflowType, String deviceId) {
+        public SessionInfo createSession(String workflowType, String deviceId, String subjectRef) {
             calls.add("create");
             return new SessionInfo(SESSION, workflowType, "ACTIVE", policy);
         }

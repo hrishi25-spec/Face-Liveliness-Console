@@ -10,7 +10,7 @@ import io.mosip.liveness.metrics.PipelineTimers;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -349,7 +349,11 @@ public class AppConfig {
                 registry.addMapping("/**")
                         .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
                         .allowedMethods("GET", "POST", "PUT", "OPTIONS")
-                        .allowedHeaders("Content-Type", "Authorization", "X-Admin-API-Key")
+                        // X-Subject-Ref is the ownership claim for a session-scoped
+                        // call (UserSessionGuard); a browser client that creates a
+                        // session with a subjectRef must be able to send it.
+                        .allowedHeaders("Content-Type", "Authorization", "X-Admin-API-Key",
+                                "X-Subject-Ref")
                         // So a console on another dev port can read the limiter's
                         // budget headers (a browser hides unlisted headers).
                         .exposedHeaders("Retry-After", "X-RateLimit-Bucket", "X-RateLimit-Limit",

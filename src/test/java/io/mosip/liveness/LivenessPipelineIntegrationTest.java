@@ -28,7 +28,6 @@ import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Supplier;
 
 import org.springframework.beans.factory.annotation.Value;
 
@@ -398,9 +397,11 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
      */
     @Test
     @Timeout(60)
-    void supervisorChallengeWindowTimeout_retriesThenRejectsAtMaxRetries() throws Exception {
+    void supervisorChallengeWindowTimeout_retriesThenLocksOutAtMaxRetries() throws Exception {
         // The policy's window is the deployment floor itself, so the update is
-        // accepted as written; maxRetryCount=2 → one retry, then terminal reject.
+        // accepted as written; maxRetryCount=2 → one retry, then the supervisor
+        // workflow's terminal outcome: SUPERVISOR is seeded LOCK_OUT, so a spent
+        // budget answers `locked` and refuses a fresh session (docs/configuration.md).
         expect(HttpStatus.OK, exchange(HttpMethod.PUT, "/api/v1/config/SUPERVISOR",
                 "{\"passiveThreshold\":1.0,\"challengeTimeoutMs\":" + WINDOW_MS
                         + ",\"maxRetryCount\":2}", true));
@@ -445,18 +446,20 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
         Thread.sleep(INSIDE_WINDOW_PROBE_MS);
         assertEquals("continue", validateChallenge(sessionId, secondId).get("action").asText());
 
-        // Second window elapsed and retryCount(2) >= maxRetry(2) → terminal reject.
+        // Second window elapsed and retryCount(2) >= maxRetry(2) → terminal lock-out.
         sleepUntil(secondWindowStart + WINDOW_MS + ELAPSED_MARGIN_MS);
         JsonNode rejected = validateChallenge(sessionId, secondId);
-        assertEquals("reject", rejected.get("action").asText(), rejected.toString());
+        assertEquals("locked", rejected.get("action").asText(), rejected.toString());
         assertFalse(rejected.get("passed").asBoolean());
+        assertFalse(rejected.get("mayRetrySession").asBoolean(true),
+                "a lock-out must not let the client open a fresh session: " + rejected);
         assertEquals("FAILED", rejected.get("challenge").get("status").asText());
         assertNotNull(rejected.get("challenge").get("completedAt"));
 
         JsonNode after = expect(HttpStatus.OK,
                 exchange(HttpMethod.GET, "/api/v1/sessions/" + sessionId, null, false));
         assertEquals("FAILED", after.get("status").asText());
-        assertEquals("max_retries_exceeded", after.get("failureReason").asText());
+        assertEquals("max_retries_exceeded:locked_out", after.get("failureReason").asText());
         assertEquals("COMPLETED", after.get("currentStage").asText());
         // finalResult is only ever set on pass, so it is absent (NON_NULL) here.
         assertFalse(after.path("finalResult").asBoolean(false));
@@ -475,7 +478,7 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
         JsonNode summary = expect(HttpStatus.OK,
                 exchange(HttpMethod.POST, "/api/v1/sessions/" + sessionId + "/close", null, false));
         assertEquals("FAILED", summary.get("status").asText());
-        assertEquals("max_retries_exceeded", summary.get("failureReason").asText());
+        assertEquals("max_retries_exceeded:locked_out", summary.get("failureReason").asText());
         assertEquals(2, summary.get("totalChallengesIssued").asInt());
     }
 

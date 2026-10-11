@@ -28,16 +28,15 @@ public class FrameProcessResult {
     private Double livenessScore;
     private Boolean padFlag;
     private String padAttackType;
-    // proceed | escalate_to_active | retry_passive | reject | locked |
-    // escalate_to_operator | failed
+    /**
+     * proceed | escalate_to_active | retry_passive | reject. The frame path never
+     * spends the retry budget, so it cannot answer with the budget-exhausted
+     * vocabulary ({@code locked} / {@code escalate_to_operator} / {@code failed}),
+     * which only a challenge validation produces (see
+     * {@link ChallengeValidationResult}).
+     */
     private String action;
     private ChallengeInfo challenge;
-    /**
-     * True only when a session ended but the client may open a fresh one
-     * (the ALLOW_RETRY repeated-failure action). False/null for lock-out or
-     * escalation. Never grants a further challenge in this session.
-     */
-    private Boolean mayRetrySession;
     private String message;
 
     @Data

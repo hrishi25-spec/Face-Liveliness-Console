@@ -29,13 +29,34 @@ public interface LivenessClient {
     // ---- Session lifecycle ----
 
     /**
-     * Start a new liveness verification session.
+     * Start a new liveness verification session owned by {@code subjectRef}.
+     *
+     * <p>An owned session may only be acted on by a caller presenting the same
+     * reference in the {@code X-Subject-Ref} header — see
+     * {@code docs/client-integration-guide.md} §5.5 — so the session flow after
+     * this call (frames, challenge validation, close) is the owning subject's
+     * alone. An implementation that talks to the service is expected to carry the
+     * reference on those calls itself rather than make every caller repeat it.
+     *
+     * @param workflowType one of "RESIDENT", "OPERATOR", "SUPERVISOR"
+     * @param deviceId     identifier of the capture device (e.g. "L1-CAM-01")
+     * @param subjectRef   the resident/operator/supervisor this session belongs to,
+     *                     or {@code null} for an anonymous session (no header, no
+     *                     ownership check — the pre-existing behaviour)
+     * @return session response with the new session ID
+     */
+    SessionInfo createSession(String workflowType, String deviceId, String subjectRef);
+
+    /**
+     * Start an anonymous liveness verification session (no owner).
      *
      * @param workflowType one of "RESIDENT", "OPERATOR", "SUPERVISOR"
      * @param deviceId     identifier of the capture device (e.g. "L1-CAM-01")
      * @return session response with the new session ID
      */
-    SessionInfo createSession(String workflowType, String deviceId);
+    default SessionInfo createSession(String workflowType, String deviceId) {
+        return createSession(workflowType, deviceId, null);
+    }
 
     /**
      * Close a session and get the audit summary.

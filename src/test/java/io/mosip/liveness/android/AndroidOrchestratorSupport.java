@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import io.mosip.liveness.audit.AuditLogger;
 import io.mosip.liveness.backend.MockLivenessBackend;

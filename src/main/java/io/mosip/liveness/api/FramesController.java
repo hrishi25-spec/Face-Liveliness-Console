@@ -31,6 +31,11 @@ public class FramesController {
     private final ImageUtils imageUtils;
     private final DiagnosticsService diagnostics;
 
+    /**
+     * Frames are the session's biometrics: {@link SessionOwnershipFilter} has
+     * already refused anyone but the session's owner, before a frame is decoded
+     * or scored.
+     */
     @PostMapping
     public FrameProcessResult submitFrame(
             @PathVariable java.util.UUID sessionId,

@@ -51,6 +51,7 @@
         <div class="row mt12">
           <button id="btn-camera">Start camera</button>
           <button id="btn-run" class="primary" disabled>Run liveness check</button>
+          <button id="btn-active" disabled>Run active liveness</button>
           <button id="btn-stop" class="danger" disabled>Stop</button>
         </div>
 
@@ -63,6 +64,14 @@
           The preview is <b>mirrored</b> (like a selfie) so it matches the instruction —
           turn your head to <em>your own</em> left when asked to turn left. The frames sent
           to the engine stay raw and un-mirrored.
+        </p>
+        <p class="hint">
+          <b>Run active liveness</b> covers the case the pipeline normally skips: when the
+          passive score is above the threshold the session passes and <b>no challenge is
+          issued</b>. The button becomes available after such a pass and starts one extra
+          challenge on request. The check is recorded on its challenge row and in the audit
+          trail, and it <b>never changes the session verdict</b> — a missed action still
+          leaves the session PASSED.
         </p>
         <p class="hint">
           The page must be opened at <b>http://localhost:8000</b> — browsers only expose
@@ -101,8 +110,8 @@
         <div id="rl-buckets" class="rl-buckets">No limited requests yet.</div>
         <p class="hint">The service publishes <code>X-RateLimit-Limit</code>,
           <code>-Remaining</code> and <code>-Reset</code> on session creation and on frame /
-          challenge submissions. Capture faster than the window and the frame budget empties —
-          the console shows the limiter running down before the 429 arrives.</p>
+          challenge / extra-check submissions. Capture faster than the window and the frame
+          budget empties — the console shows the limiter running down before the 429 arrives.</p>
       </div>
     </section>
 

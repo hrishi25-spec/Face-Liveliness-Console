@@ -2,8 +2,7 @@ package io.mosip.liveness.services;
 
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
-import io.mosip.liveness.core.WorkflowType;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.crud.FrameEventRepository;
 import io.mosip.liveness.eval.ThresholdSweep;
 import io.mosip.liveness.models.entity.FrameEvent;

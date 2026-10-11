@@ -4,7 +4,7 @@ import java.util.EnumSet;
 import java.util.Set;
 
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 
 /**
  * Immutable per-session liveness policy after per-role resolution

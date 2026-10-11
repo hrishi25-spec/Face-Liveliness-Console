@@ -134,11 +134,11 @@ class ConfigServiceTest {
         assertEquals(0.82, operator.passiveThreshold(), 1e-9);
         assertEquals(0.85, supervisor.passiveThreshold(), 1e-9);
 
-        assertEquals(io.mosip.liveness.core.RepeatedFailureAction.ESCALATE_TO_OPERATOR,
+        assertEquals(io.mosip.liveness.shared.definitions.RepeatedFailureAction.ESCALATE_TO_OPERATOR,
                 resident.onRepeatedFailure());
-        assertEquals(io.mosip.liveness.core.RepeatedFailureAction.FALLBACK,
+        assertEquals(io.mosip.liveness.shared.definitions.RepeatedFailureAction.FALLBACK,
                 operator.onRepeatedFailure());
-        assertEquals(io.mosip.liveness.core.RepeatedFailureAction.LOCK_OUT,
+        assertEquals(io.mosip.liveness.shared.definitions.RepeatedFailureAction.LOCK_OUT,
                 supervisor.onRepeatedFailure());
 
         assertEquals(2, supervisor.minChallengeCount());
@@ -147,8 +147,8 @@ class ConfigServiceTest {
 
     @Test
     void failureActionConversionsRoundTrip() {
-        for (io.mosip.liveness.core.RepeatedFailureAction core
-                : io.mosip.liveness.core.RepeatedFailureAction.values()) {
+        for (io.mosip.liveness.shared.definitions.RepeatedFailureAction core
+                : io.mosip.liveness.shared.definitions.RepeatedFailureAction.values()) {
             ConfigPolicy row = ConfigPolicy.builder()
                     .onRepeatedFailure(service.toDbFailure(core))
                     .build();

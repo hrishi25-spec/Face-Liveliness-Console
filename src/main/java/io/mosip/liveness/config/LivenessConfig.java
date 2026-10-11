@@ -3,7 +3,7 @@ package io.mosip.liveness.config;
 import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.LivenessErrorCode;
 import io.mosip.liveness.core.LivenessException;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 
 import java.util.EnumSet;

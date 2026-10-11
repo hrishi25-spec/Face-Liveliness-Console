@@ -184,6 +184,30 @@ class ServiceLivenessEventMapperTest {
         }
     }
 
+    /**
+     * The retry budget is spent on a <em>validation</em>, so that is where the
+     * terminal vocabulary actually arrives. Mapping it to "verifying" left the
+     * overlay waiting on a session the service had already closed.
+     */
+    @Test
+    void theDocumentedTerminalActionsEndAValidationToo() {
+        assertEquals(LivenessFinalResult.NextAction.LOCKOUT, ServiceLivenessEventMapper.fromValidation(
+                validation("locked", false, null), context(), null).finalResult().nextAction());
+        assertEquals(LivenessFinalResult.NextAction.EXCEPTION, ServiceLivenessEventMapper.fromValidation(
+                validation("escalate_to_operator", false, null), context(), null)
+                .finalResult().nextAction());
+        assertEquals(LivenessFinalResult.NextAction.FALLBACK, ServiceLivenessEventMapper.fromValidation(
+                validation("failed", false, null), context(), null).finalResult().nextAction());
+
+        for (String action : new String[]{"locked", "escalate_to_operator", "failed"}) {
+            ServiceLivenessEventMapper.Delivery d = ServiceLivenessEventMapper.fromValidation(
+                    validation(action, false, null), context(), null);
+            assertEquals(LivenessState.TERMINAL_FAILURE, only(d).state(),
+                    action + " renders the recovery card on a validation");
+            assertTrue(d.ended(), action + " ends the gate");
+        }
+    }
+
     // ------------------------------------------------------- challenge verdicts
 
     @Test
@@ -341,6 +365,11 @@ class ServiceLivenessEventMapperTest {
         assertFalse(ServiceLivenessEventMapper.consumesAttempt(validation("proceed", true, null)));
         assertTrue(ServiceLivenessEventMapper.consumesAttempt(validation("reject", false, null)));
         assertTrue(ServiceLivenessEventMapper.consumesAttempt(validation("retry_challenge", false, null)));
+        // The attempt that spent the last retry was really made, whichever
+        // terminal outcome the frozen policy applied to it.
+        assertTrue(ServiceLivenessEventMapper.consumesAttempt(validation("locked", false, null)));
+        assertTrue(ServiceLivenessEventMapper.consumesAttempt(validation("escalate_to_operator", false, null)));
+        assertTrue(ServiceLivenessEventMapper.consumesAttempt(validation("failed", false, null)));
     }
 
     // ------------------------------------------------------------------ helpers

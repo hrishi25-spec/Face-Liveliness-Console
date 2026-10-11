@@ -15,7 +15,10 @@
  *   6. the change history flags edits that weaken liveness (risk level
  *      and the named reason, per entry),
  *   7. the change history loads with the page, so the key fingerprint
- *      behind the most recent edit is visible at a glance.
+ *      behind the most recent edit is visible at a glance,
+ *   8. the manual extra-check button stays disabled until the session passes,
+ *      then asks the server for one active challenge and reports that check's
+ *      own verdict (never a rewritten session verdict).
  *
  * Run: node src/test/js/console-guards.test.mjs   (exit 0 = all assertions pass)
  *
@@ -141,6 +144,14 @@ function buildDom(source) {
     const el = new Element(tag);
     el.id = attrs.id;
     if (tag === "input") el.type = attrs.type || "text";
+    // Honour the markup's own disabled attribute, as a browser would: the run,
+    // stop and extra-check buttons all start disabled until the camera/session
+    // makes them usable, and an assertion on that starting state is only
+    // meaningful if the DOM reflects it. `disabled` is a bare boolean
+    // attribute in the markup, so the attribute regex above never sees it.
+    if (attrs.disabled !== undefined || /(^|\s)disabled(\s|=|$)/.test(rawAttrs)) {
+      el.disabled = true;
+    }
     for (const [k, v] of Object.entries(attrs)) el.attrs[k] = v;
     byId.set(attrs.id, el);
   }
@@ -183,6 +194,8 @@ const POLICY = {
 const fetchCalls = [];
 let confirmAnswer = false;
 let hangFrames = false;   // when set, frame POSTs never answer (check in flight)
+let challengeAction = "proceed";   // action a challenge-validation stub answers with
+let frameAction = "proceed";       // action a frame-POST stub answers with
 let chainVerify = {
   intact: true,
   hmac: true,
@@ -264,9 +277,39 @@ async function fetch(url, options = {}) {
   }
   if (url.includes("/frames")) {
     if (hangFrames) return new Promise(() => {});   // never settles
-    return respond({ action: "proceed", message: "stub" });
+    // `escalate_to_active` has to carry the challenge the client then validates.
+    return respond({
+      action: frameAction,
+      message: "stub",
+      challenge: frameAction === "escalate_to_active"
+        ? { challengeId: "challenge-1", challengeType: "BLINK", timeoutMs: 15000, attemptNumber: 1 }
+        : undefined
+    });
   }
-  if (url.includes("/challenges/")) return respond({ passed: true, action: "proceed" });
+  if (url.includes("/active-liveness")) {
+    return respond({ id: "challenge-manual-1", challengeType: "BLINK",
+                     timeoutMs: 15000, manual: true });
+  }
+  if (url.includes("/challenges/")) {
+    // Mirrors the server: the response always carries the challenge it just
+    // resolved, which is why the console's loop has to treat a terminal verdict
+    // as terminal instead of retrying that (now FAILED) id. The budget-exhausted
+    // actions carry the service's own message and retryability.
+    const answers = {
+      locked: ["Face verification failed. Please contact an operator for assistance.", false],
+      escalate_to_operator: ["Face verification could not be completed. An operator will assist you.", false],
+      failed: ["We could not verify face liveness. Please try again.", true],
+      manual_check_passed: ["Action detected. Extra check passed — the session result is unchanged.", undefined],
+      manual_check_failed: ["Action not detected. Extra check failed — the session result is unchanged.", undefined]
+    };
+    const [message, mayRetrySession] = answers[challengeAction] || ["stub", undefined];
+    return respond({ passed: challengeAction === "manual_check_passed",
+                     action: challengeAction,
+                     mayRetrySession,
+                     message,
+                     challenge: { id: "challenge-manual-1", challengeType: "BLINK",
+                                  status: "FAILED", timeoutMs: 15000 } });
+  }
   if (url.includes("/close")) {
     return respond({ status: "CLOSED", totalFramesEvaluated: 1,
                      totalChallengesIssued: 0, durationMs: 1 });
@@ -458,6 +501,76 @@ discardBtn().dispatch("click");
 await settle();
 assert(status().textContent.includes("No pending edits"),
     "discarding a clean form is a no-op that says so");
+
+section("manual active liveness — extra check after a passive pass");
+assert($id("btn-active").disabled === true,
+    "the extra-check button is disabled while no session has passed");
+$id("btn-run").dispatch("click");
+await settle();
+assert($id("verdict-action").textContent === "PROCEED",
+    "the passive pass ends the run with a PROCEED verdict");
+assert($id("btn-active").disabled === false,
+    "a pass on the passive stage enables the extra-check button");
+
+challengeAction = "manual_check_passed";
+const activeFetches = fetchCalls.length;
+$id("btn-active").dispatch("click");
+await settle(4);
+assert(fetchCalls.slice(activeFetches).some(c => c.method === "POST"
+        && c.url === "/api/v1/sessions/sess-00000000-0000-0000-0000-000000000001/active-liveness"),
+    "the button asks the server for one manual active challenge");
+// The challenge loop captures a short frame window (~1s) before validating.
+await new Promise(r => setTimeout(r, 1300));
+await settle();
+assert($id("verdict-action").textContent === "EXTRA CHECK PASSED",
+    "the extra check reports its own verdict");
+assert(fetchCalls.filter(c => c.url.includes("/challenges/validate")).length === 1,
+    "the extra check stops on its verdict instead of re-validating the resolved challenge");
+assert(!$id("verdict-msg").textContent.includes("HTTP 409"),
+    "a resolved manual challenge is never re-submitted");
+assert($id("verdict-msg").textContent.includes("Extra check passed"),
+    "the message is the extra check's, not a rewritten session verdict");
+assert($id("verdict-msg").textContent.includes("unchanged"),
+    "the console says the session verdict is unchanged");
+assert($id("btn-active").disabled === false,
+    "another extra check can be requested afterwards");
+challengeAction = "proceed";
+
+section("budget-exhausted outcomes — locked / failed");
+// The server's terminal vocabulary for a spent retry budget (docs/configuration.md):
+// the console must end the run on the server's own action and neither re-validate
+// the resolved challenge nor present a lock-out as retryable.
+frameAction = "escalate_to_active";
+challengeAction = "locked";
+let validateCalls = fetchCalls.filter(c => c.url.includes("/challenges/validate")).length;
+$id("btn-run").dispatch("click");
+await new Promise(r => setTimeout(r, 1300));   // the challenge loop captures before validating
+await settle();
+assert($id("verdict-action").textContent === "LOCKED OUT",
+    "a LOCK_OUT budget exhaustion reports LOCKED OUT, not REJECT");
+assert($id("verdict-msg").textContent.includes("contact an operator"),
+    "the message is the server's own, not a generic failure line");
+assert(!$id("verdict-msg").textContent.includes("new session"),
+    "a lock-out is never presented as retryable");
+const afterLocked = fetchCalls.filter(c => c.url.includes("/challenges/validate")).length;
+assert(afterLocked === validateCalls + 1,
+    "the locked verdict is terminal: the resolved challenge is not re-submitted");
+assert(!$id("verdict-msg").textContent.includes("HTTP 409"),
+    "and the closed session is never re-validated");
+
+challengeAction = "failed";
+validateCalls = fetchCalls.filter(c => c.url.includes("/challenges/validate")).length;
+$id("btn-run").dispatch("click");
+await new Promise(r => setTimeout(r, 1300));
+await settle();
+assert($id("verdict-action").textContent === "FAILED",
+    "a FALLBACK budget exhaustion reports FAILED");
+assert($id("verdict-msg").textContent.includes("new session"),
+    "only the retryable outcome says a fresh session is allowed");
+assert(fetchCalls.filter(c => c.url.includes("/challenges/validate")).length === validateCalls + 1,
+    "the failed verdict is terminal too");
+frameAction = "proceed";
+challengeAction = "proceed";
 
 section("beforeunload — dirty form (item 3)");
 edit($id("cfg-threshold"), "0.9");

@@ -1,8 +1,10 @@
 package io.mosip.liveness.services;
 
 import io.mosip.liveness.config.EffectivePolicy;
+import io.mosip.liveness.config.LivenessConfig;
 import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.PadVerdict;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.crud.AuditLogRepository;
 import io.mosip.liveness.crud.ChallengeRepository;
 import io.mosip.liveness.crud.FrameEventRepository;
@@ -18,13 +20,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.opencv.core.Mat;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -363,6 +366,59 @@ public class DecisionEngineService {
     }
 
     /**
+     * Starts one active-liveness challenge on explicit request — the manual
+     * counterpart of the automatic passive-to-active escalation.
+     *
+     * <p>Active liveness is normally reached only when the passive median falls
+     * below the threshold; a session whose passive score is above it passes and
+     * never challenges. This method lets an operator ask for a challenge anyway
+     * on a session that already passed. The issued challenge is marked
+     * {@code manual}, which makes its validation <em>advisory</em>: the result is
+     * recorded on the challenge row and in the audit trail, but the session's
+     * PASSED verdict stands even when the action is not performed.</p>
+     *
+     * <p>Calling this while a manual challenge is still {@code ISSUED} returns
+     * that same challenge, so a double click (or a retried request) does not
+     * pile up challenge rows.</p>
+     *
+     * @throws ResponseStatusException 409 when the session has not passed, when
+     *         the workflow has active liveness disabled, or when it allows no
+     *         challenge types at all
+     */
+    @Transactional
+    public ChallengeEntity startActiveLiveness(LivenessSession in) {
+        // Same row lock as processFrame: the passed-state check and the challenge
+        // it authorizes must be atomic against a racing frame submission.
+        LivenessSession session = sessionRepo.findByIdForUpdate(in.getId()).orElse(in);
+
+        if (!SessionStatus.PASSED.equals(session.getStatus())
+                || !Boolean.TRUE.equals(session.getFinalResult())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Active liveness can only be started on a session that already passed "
+                            + "the liveness check (status=" + session.getStatus() + ")");
+        }
+
+        EffectivePolicy policy = resolvePolicy(session);
+        if (!policy.activeLivenessEnabled()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Active liveness is not enabled for this workflow");
+        }
+        if (policy.allowedChallenges() == null || policy.allowedChallenges().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "No challenge types are configured for this workflow");
+        }
+
+        ChallengeEntity open = challengeRepo.findFirstBySessionIdAndStatusOrderByIssuedAtDesc(
+                session.getId(), ChallengeStatus.ISSUED);
+        if (open != null) {
+            return open;
+        }
+
+        ChallengeEntity challenge = issueChallenge(session, policy, true);
+        return challenge;
+    }
+
+    /**
      * Process challenge validation across a set of frames.
      * Config is read fresh from the DB for each call.
      */
@@ -381,6 +437,12 @@ public class DecisionEngineService {
         int maxRetry = policy.maxRetries();
         int minChallengeCount = policy.minChallengeCount();
 
+        // A manual challenge is an extra, operator-requested check on a session
+        // that already passed. Its verdict is recorded (challenge row + audit)
+        // but never allowed to rewrite the session outcome — the passive
+        // decision stands, including when this check sees an attack.
+        boolean manual = Boolean.TRUE.equals(challenge.getManual());
+
         // Re-run PAD across challenge frames
         for (Mat frame : frames) {
             PadVerdict padResult = padEngine.detect(frame, imageUtils);
@@ -390,7 +452,15 @@ public class DecisionEngineService {
                 logAudit(session, "PAD_REJECTED", Map.of(
                         "attackType", padResult.attackType().name(),
                         "confidence", padResult.confidence(),
-                        "stage", "active"));
+                        "stage", manual ? "active_manual" : "active",
+                        "manual", manual));
+                if (manual) {
+                    return Map.of(
+                            "passed", false,
+                            "action", "manual_check_failed",
+                            "message", "Extra check could not be completed. The session result "
+                                    + "is unchanged.");
+                }
                 session.setStatus(SessionStatus.FAILED);
                 session.setFailureReason("presentation_attack:" + padResult.attackType().name());
                 session.setCurrentStage(LivenessStage.COMPLETED);
@@ -408,7 +478,19 @@ public class DecisionEngineService {
             // Resolved immediately: the challenge stops as soon as the action is seen.
             challenge.setStatus(ChallengeStatus.PASSED);
             challenge.setCompletedAt(OffsetDateTime.now());
-            logAudit(session, "CHALLENGE_PASSED", Map.of("challengeType", challenge.getChallengeType().name()));
+            logAudit(session, "CHALLENGE_PASSED", Map.of(
+                    "challengeType", challenge.getChallengeType().name(),
+                    "manual", manual));
+
+            if (manual) {
+                // One action, one verdict: the extra check does not consume the
+                // workflow's minChallengeCount and does not touch the session.
+                return Map.of(
+                        "passed", true,
+                        "action", "manual_check_passed",
+                        "message", "Action detected. Extra check passed — the session result "
+                                + "is unchanged.");
+            }
 
             long challengesCompleted = challengeRepo.countBySessionIdAndStatus(
                     session.getId(), ChallengeStatus.PASSED);
@@ -451,18 +533,41 @@ public class DecisionEngineService {
         // The window elapsed without a pass: this attempt really did fail.
         challenge.setStatus(ChallengeStatus.FAILED);
         challenge.setCompletedAt(OffsetDateTime.now());
-        logAudit(session, "CHALLENGE_FAILED", Map.of("challengeType", challenge.getChallengeType().name()));
+        logAudit(session, "CHALLENGE_FAILED", Map.of(
+                "challengeType", challenge.getChallengeType().name(),
+                "manual", manual));
+
+        if (manual) {
+            // A missed extra check is not a failed verification: no retry budget
+            // is consumed, the session stays PASSED, and the attempt is visible
+            // on the challenge row and in the audit trail.
+            return Map.of(
+                    "passed", false,
+                    "action", "manual_check_failed",
+                    "message", "Action not detected. Extra check failed — the session result "
+                            + "is unchanged.");
+        }
 
         session.setRetryCount(session.getRetryCount() + 1);
         if (session.getRetryCount() >= maxRetry) {
+            // The budget is spent, so the frozen policy's repeated-failure action
+            // decides the terminal signal: `locked` for LOCK_OUT, `failed` for
+            // FALLBACK (= the seeded ALLOW_RETRY), `escalate_to_operator` for
+            // ESCALATE_TO_OPERATOR. The action carries its own failureReason,
+            // retryability and message, so this stays a per-workflow behaviour
+            // instead of one hard-coded verdict.
+            RepeatedFailureAction outcome = policy.onRepeatedFailure() != null
+                    ? policy.onRepeatedFailure()
+                    : LivenessConfig.DEFAULT_REPEATED_FAILURE_ACTION;
             session.setStatus(SessionStatus.FAILED);
-            session.setFailureReason("max_retries_exceeded");
+            session.setFailureReason(outcome.failureReason());
             session.setCurrentStage(LivenessStage.COMPLETED);
             session.setClosedAt(OffsetDateTime.now());
             return Map.of(
                     "passed", false,
-                    "action", "reject",
-                    "message", "We could not verify face liveness. Please try again.");
+                    "action", outcome.action(),
+                    "mayRetrySession", outcome.mayRetrySession(),
+                    "message", outcome.message());
         }
 
         return Map.of(
@@ -506,6 +611,15 @@ public class DecisionEngineService {
      * ISSUED challenge is required instead.</p>
      */
     private ChallengeEntity issueChallenge(LivenessSession session, EffectivePolicy policy) {
+        return issueChallenge(session, policy, false);
+    }
+
+    /**
+     * Issues and persists the next challenge for the session, optionally marked
+     * as a manually requested extra check (see {@link #startActiveLiveness}).
+     */
+    private ChallengeEntity issueChallenge(LivenessSession session, EffectivePolicy policy,
+                                           boolean manual) {
         String previousType = null;
         java.util.List<ChallengeEntity> issued =
                 challengeRepo.findBySessionIdOrderByIssuedAtDesc(session.getId());
@@ -526,6 +640,7 @@ public class DecisionEngineService {
                 .status(ChallengeStatus.ISSUED)
                 .attemptNumber(attempt)
                 .timeoutMs((int) policy.challengeTimeoutMs())
+                .manual(manual)
                 .issuedAt(OffsetDateTime.now())
                 .build();
         challengeRepo.save(next);
@@ -533,7 +648,9 @@ public class DecisionEngineService {
         logAudit(session, "CHALLENGE_ISSUED", Map.of(
                 "challengeType", nextType.name(),
                 "attemptNumber", attempt,
-                "timeoutMs", next.getTimeoutMs()));
+                "timeoutMs", next.getTimeoutMs(),
+                "manual", manual,
+                "via", manual ? "manual_request" : "escalation"));
         return next;
     }
 

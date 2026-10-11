@@ -50,7 +50,7 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 │   │   ├── static/console.css              # Console styles (external — strict CSP)
 │   │   ├── static/console.js               # Console logic (external — strict CSP)
 │   │   └── db/migration/V1__init_schema.sql  # Flyway DB migration
-│   └── test/java/io/mosip/liveness/       # 23 test classes + 3 support files (26 files)
+│   └── test/java/io/mosip/liveness/       # 76 test classes + 6 support files (82 files)
 │
 ├── pad_liveness_backend/                   # Python FastAPI ORIGINAL reference backend
 │   ├── app/                                # FastAPI application (35 .py files)
@@ -80,12 +80,12 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 
 | Language | Where | Lines of Code | Purpose |
 |----------|-------|---------------|---------|
-| **Java 17** | `src/main/java` (101 files) | ~9,300 | Main backend: engine, API, device adapters, backends, services, models |
-| **Java 17** | `src/test/java` (26 files) | ~2,400 | Unit + integration tests and test utilities |
-| **Python 3.11+** | `pad_liveness_backend/` | ~1,390 | Original FastAPI reference implementation (kept for comparison) |
+| **Java 17** | `src/main/java` (156 files) | ~19,400 | Main backend: engine, API, device adapters, backends, services, models |
+| **Java 17** | `src/test/java` (82 files) | ~16,900 | Unit + integration tests and test utilities |
+| **Python 3.11+** | `pad_liveness_backend/` (50 files) | ~3,390 | Original FastAPI reference implementation (kept for comparison) |
 | **SQL** | `V1__init_schema.sql` | ~85 | PostgreSQL schema (Flyway migration) |
 | **YAML** | `application.yml`, `application-dev.yml` | ~60 | Spring Boot configuration |
-| **JavaScript/HTML** | `static/index.html`, `static/console.css`, `static/console.js` | ~480 | Single-page browser test console (external assets so CSP stays strict) |
+| **JavaScript/HTML** | `static/index.html`, `static/console.css`, `static/console.js` | ~1,340 | Single-page browser test console (external assets so CSP stays strict) |
 | **Dockerfile** | 2 files | ~20 | Containerization (Java + Python) |
 
 ---
@@ -157,6 +157,43 @@ GET /health
 the service still starts and serves `/health` and `/api/v1/config`, but every
 frame/challenge endpoint that needs image processing returns **503**.
 
+### Session ownership (`X-Subject-Ref`)
+
+`POST /api/v1/sessions` takes an optional `subjectRef` (an opaque resident /
+operator / supervisor reference). A session created **with** one is owned: every
+session-scoped route (`GET`/`close`/`frames`/`challenges/validate`/
+`active-liveness`/`audit`) then requires the same value in the `X-Subject-Ref`
+header and answers **403** when it is missing or different. The rule is
+`UserSessionGuard.refusal` (a constant-time compare) and the enforcement point is
+`SessionOwnershipFilter`, which refuses **before** the handler runs, so no frame
+is decoded and no challenge is consumed on a refused call. A session created
+**without** one has no owner to protect and stays reachable to anyone who can
+reach the port — the same caller could create their own session anyway — which
+keeps the console and the two-argument `createSession` working unchanged.
+
+Which routes are guarded is `RouteInventory.SESSION_SCOPED`, not a call inside
+each handler — the call site was what a new session-scoped endpoint could forget,
+leaving an owned session open with nothing to notice. `ApiRouteInventoryTest`
+fails a route that carries a `{sessionId}` without being listed there, and fails
+a listed route the matcher no longer reads the id off. The refusal body is the
+service's usual error shape (`error`/`message`/`status`/`timestamp`), written by
+`FilterRefusal` because a filter runs outside Spring MVC's exception handling.
+
+On the client side, `LivenessHttpClient.createSession(workflow, device, subjectRef)`
+claims the owner and the client then repeats the header on every session-scoped call
+it makes for that session (the owner is remembered per session and released by
+`closeSession`); an unknown session — one this client did not create — is sent
+without the header, and the service's refusal arrives as a `LivenessClientException`
+carrying the status and the service's own message rather than as a parse failure on
+the error body.
+
+This is resource-level isolation, not authentication: there is no identity
+provider, user table or token issuer here, `subjectRef` is not a wire credential,
+and a caller who learns a reference holds it. MOSIP subject references are
+predictable, so treat the port binding (`SERVER_ADDRESS`, loopback by default) as
+the real access boundary and this as the check that keeps honest clients from
+reaching each other's sessions.
+
 ### Session Lifecycle
 ```
 POST /api/v1/sessions
@@ -168,7 +205,28 @@ GET /api/v1/sessions/{sessionId}
 
 POST /api/v1/sessions/{sessionId}/close
   → 200: SessionSummary { id, status, finalResult, totalFramesEvaluated, challengesIssued, durationMs, ... }
+
+POST /api/v1/sessions/{sessionId}/active-liveness
+  → 201: ChallengeResponse { id, sessionId, challengeType, status, attemptNumber,
+                             timeoutMs, manual: true, issuedAt }
+  → 409: { error: "CONFLICT", message: "..." }
 ```
+
+**Manual active liveness (extra check).** Above the passive threshold the session
+passes and the engine issues no challenge — by design. This endpoint asks for one
+anyway, on a session that already passed (`status = PASSED`, `finalResult = true`),
+and is what the console's **Run active liveness** button drives. The issued
+challenge is marked `manual = true` (`V11__challenge_manual_flag.sql`) and is
+validated as an *extra* check: the result is stored on its challenge row and
+written to the audit trail (`CHALLENGE_ISSUED` / `CHALLENGE_PASSED` /
+`CHALLENGE_FAILED` with `manual: true`, PAD hits with `stage: active_manual`), but
+it **never rewrites the session verdict** — a missed action leaves the session
+PASSED and consumes no retry budget. Refusals are fail-closed 409s: a session that
+has not passed, a workflow with `activeLivenessEnabled: false`, or a workflow with
+no challenge types. While a manual challenge is still `ISSUED`, a repeat call
+returns that same challenge instead of issuing a second one. The route is
+client-facing (no admin key) and shares the per-session rate-limit budget with
+frame and challenge submissions.
 
 ### Frame Submission
 ```
@@ -223,7 +281,10 @@ POST /api/v1/sessions/{sessionId}/challenges/validate
   → ChallengeValidationResult {
       sessionId, challenge: { id, challengeType, status, ... },
       passed: true/false,
-      action: "proceed" | "continue" | "retry_challenge" | "reject",
+      action: "proceed" | "continue" | "retry_challenge" | "reject"
+            | "locked" | "escalate_to_operator" | "failed"
+            | "manual_check_passed" | "manual_check_failed",
+      mayRetrySession: true/false,   // only on a terminal *failure* action
       message: "generic user-facing message"
     }
 ```
@@ -238,7 +299,15 @@ POST /api/v1/sessions/{sessionId}/challenges/validate
    challenge stays `ISSUED`, the session stays `ACTIVE`, and **no retry is consumed**
 5. If the window elapsed without a pass → retry with a different challenge
    (up to `maxRetryCount`)
-6. If retries exhausted → `reject`
+6. If retries exhausted → the frozen policy's repeated-failure action decides the
+   terminal signal: `locked` (`LOCK_OUT`), `escalate_to_operator`
+   (`ESCALATE_TO_OPERATOR`) or `failed` (`FALLBACK`, seeded as `ALLOW_RETRY`),
+   each with its own `failureReason` and its own `mayRetrySession`. None of the
+   three issues another challenge — extra attempts belong in `maxRetryCount`
+   (see `RepeatedFailureAction`, and §10 for the per-workflow values)
+7. A `manual` challenge (the extra check above) short-circuits steps 3–6: pass →
+   `manual_check_passed`, window elapsed without the action → `manual_check_failed`,
+   both with the session left untouched
 
 **Challenge window.** A challenge stays open for `challengeTimeoutMs`, with a
 **15-second floor** enforced by the engine regardless of the stored value
@@ -788,7 +857,15 @@ The Java version is a **complete superset** of the Python version — it adds th
 
 ## 14. Test Suite
 
-**23 test classes + 3 support files (26 files), 152 tests, all green.**
+**76 test classes + 6 support files (82 files), 607 tests, all green.** The
+cross-backend contract test runs in its own CI job (it needs both runtimes), so
+it is excluded from the unit matrix rather than skipping there.
+
+The table is the decision-and-API core, not the full list: the rest is
+per-component (audit chain and key rotation, threshold calibration, rate
+limiting, the MediaPipe/ONNX/TFLite backends, the Android orchestrator and model
+store, the client adapters and overlay) plus the PostgreSQL schema gate and the
+end-to-end `LivenessPipelineIntegrationTest`.
 
 | Test | What It Validates |
 |------|-------------------|
@@ -909,7 +986,7 @@ already in use.
 
 ## 17. File Inventory
 
-### Java Source (101 files, ~9,300 LOC)
+### Java Source (156 files, ~19,400 LOC)
 
 **Entry Point (1)**
 - `PadLivenessApplication.java`
@@ -1008,7 +1085,8 @@ already in use.
 
 **Client (5)** — integration surface for host applications
 - `LivenessClient` — platform-neutral client interface + result records
-- `LivenessHttpClient` — HTTP client for this service's REST API
+- `LivenessHttpClient` — HTTP client for this service's REST API, including session
+  ownership (`X-Subject-Ref`) for the sessions it creates
 - `LivenessClientException` — client-side error type
 - `DesktopLivenessAdapter` — Desktop (JavaFX/Java) adapter
 - `AndroidLivenessAdapter` — Android (Flutter / Pigeon bridge) adapter
@@ -1020,11 +1098,11 @@ already in use.
 - `converter/` — `StringListJsonConverter`, `StringObjectMapJsonConverter`
   (JSON text ↔ Java collections, so H2 and PostgreSQL behave identically)
 
-### Java Tests (26 files, 152 tests)
+### Java Tests (82 files, 607 tests)
 - 5 engine, 2 challenge, 1 config, 8 API, 1 device, 1 eval, 1 models, 4 service tests
 - Support files: `MutableClock`, `RecordingAuditLogger`, `TestConfig`
 
-### Python Reference Backend (35 files, ~1,390 LOC)
+### Python Reference Backend (50 files, ~3,390 LOC)
 - FastAPI app with identical API contract
 - SQLAlchemy + Alembic for DB
 - Same decision flow, pluggable engines, audit logging
@@ -1075,4 +1153,4 @@ already in use.
 *Last updated: 2026-10-02*
 *Branch: development*
 *Artifact: `io.mosip.liveness:pad-liveness-backend:1.0.0-SNAPSHOT`*
-*Verified against: 101 main source files / 26 test files / 152 passing tests*
+*Verified against: 156 main source files / 82 test files / 607 passing tests*

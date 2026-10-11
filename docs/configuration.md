@@ -395,6 +395,11 @@ per-workflow value is real behaviour, not just stored config.
 `escalate_to_operator` is a signal only (there is no escalation endpoint of its
 own); the client routes the subject to an operator.
 
+The FastAPI backend ([`pad_liveness_backend`](../pad_liveness_backend/README.md))
+reports this same vocabulary for the same policy — `lock` / `escalate` /
+`allow_retry` there, with identical `action`, `failureReason` and
+`mayRetrySession` values — so one client can read either backend.
+
 ---
 
 ## Per-user-type policy at session start

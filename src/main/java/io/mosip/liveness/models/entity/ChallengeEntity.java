@@ -64,6 +64,21 @@ public class ChallengeEntity {
     @Column(name = "timeout_ms", nullable = false)
     private Integer timeoutMs;
 
+    /**
+     * True when this challenge was requested by hand
+     * ({@code POST /api/v1/sessions/{id}/active-liveness}) rather than by the
+     * engine's passive-to-active escalation.
+     *
+     * <p>A manual challenge runs as an <em>extra</em> check on a session that
+     * already passed: its own verdict is persisted on the challenge row and
+     * written to the audit trail, but it never rewrites the session's verdict
+     * — the passive decision stands either way. Created by
+     * {@code V11__challenge_manual_flag.sql}.</p>
+     */
+    @Column(name = "manual", nullable = false)
+    @Builder.Default
+    private Boolean manual = false;
+
     @Column(name = "issued_at")
     private OffsetDateTime issuedAt;
 

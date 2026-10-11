@@ -4,7 +4,6 @@ import io.mosip.liveness.challenge.ChallengeSelector;
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.core.Challenge;
 import io.mosip.liveness.core.ChallengeProgress;
-import io.mosip.liveness.core.CombinedLivenessScore;
 import io.mosip.liveness.core.LivenessErrorCode;
 import io.mosip.liveness.core.WorkflowType;
 

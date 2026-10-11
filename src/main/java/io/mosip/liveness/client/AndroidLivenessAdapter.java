@@ -2,7 +2,6 @@ package io.mosip.liveness.client;
 
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /**
@@ -110,7 +109,21 @@ public class AndroidLivenessAdapter {
 
     /** Start a liveness session. Returns session ID for subsequent calls. */
     public UUID startSession(String workflowType, String deviceId) {
-        LivenessClient.SessionInfo session = client.createSession(workflowType, deviceId);
+        return startSession(workflowType, deviceId, null);
+    }
+
+    /**
+     * Start a liveness session owned by the given subject reference.
+     * The session will be protected by session ownership checks.
+     *
+     * @param workflowType one of "RESIDENT", "OPERATOR", "SUPERVISOR"
+     * @param deviceId     identifier of the capture device
+     * @param subjectRef   the resident/operator/supervisor this session belongs to,
+     *                     or {@code null} for an anonymous session
+     * @return session ID for subsequent calls
+     */
+    public UUID startSession(String workflowType, String deviceId, String subjectRef) {
+        LivenessClient.SessionInfo session = client.createSession(workflowType, deviceId, subjectRef);
         this.currentSessionId = session.id();
         this.livenessPassed = false;
         this.livenessFailed = false;

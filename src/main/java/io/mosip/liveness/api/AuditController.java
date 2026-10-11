@@ -20,6 +20,15 @@ public class AuditController {
 
     private final AuditLogRepository auditLogRepo;
 
+    /**
+     * The trail is the session's history — scores, challenge outcomes, PAD hits —
+     * so it is owned by whoever owns the session;
+     * {@link SessionOwnershipFilter} refuses everyone else.
+     *
+     * <p>This handler used to look the session up for that check alone. With the
+     * check in the filter it does not need the session at all, and an unknown id
+     * keeps answering an empty trail rather than a 404, as it always has.</p>
+     */
     @GetMapping
     public List<AuditLogEntry> getAuditTrail(@PathVariable UUID sessionId) {
         List<AuditLog> entries = auditLogRepo.findBySessionIdOrderByCreatedAtAsc(sessionId);

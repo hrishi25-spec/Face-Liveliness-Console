@@ -1,8 +1,5 @@
 package io.mosip.liveness.api;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
-
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
@@ -10,6 +7,18 @@ import java.security.MessageDigest;
  * The ownership check for every session-scoped route: a caller may act on a
  * session only by presenting, in {@link #HEADER}, the same subject reference the
  * session was created with.
+ *
+ * <p>The decision is the whole of this class — {@link #refusal} — and
+ * {@link SessionOwnershipFilter} is its one caller, on every route in
+ * {@link RouteInventory#SESSION_SCOPED}, <em>before</em> the handler runs. It
+ * returns the reason rather than throwing an HTTP exception because the check no
+ * longer happens inside Spring MVC: a filter runs outside exception resolution,
+ * where a thrown {@code ResponseStatusException} would surface as a container
+ * error page instead of the JSON every other 4xx here produces.</p>
+ *
+ * <p>Handlers deliberately do <em>not</em> call this. The call site was what a
+ * new session-scoped endpoint could forget; the inventory list is what makes the
+ * omission a test failure instead.</p>
  *
  * <p><b>What this is.</b> Resource-level authorization — the isolation half of
  * "users can only reach what is theirs". It is the strongest thing this service
@@ -49,32 +58,38 @@ public final class UserSessionGuard {
     }
 
     /**
+     * Why this caller may not act on this session, or {@code null} when it may.
+     *
+     * <p>The returned text is the wire message: {@link SessionOwnershipFilter}
+     * writes it into the 403 body under {@code message}, where it used to come
+     * from the thrown exception's reason. The two cases stay distinguishable to a
+     * client on purpose — "you did not say who you are" reads differently from
+     * "you are not the owner".</p>
+     *
      * @param sessionSubjectRef  the session's owner ({@code subjectRef}); null or
-     *                           blank means the session was created without one
+     *                           blank means the session was created without one,
+     *                           which is never refused
      * @param providedSubjectRef the caller's header value, may be {@code null}
-     * @throws ResponseStatusException 403 when the session has an owner and the
-     *                                 caller is not it, or did not say who it is
      */
-    static void require(String sessionSubjectRef, String providedSubjectRef) {
+    static String refusal(String sessionSubjectRef, String providedSubjectRef) {
         // Checked before the caller's value on purpose: an unowned session must
         // never reach the compare below. `sessionSubjectRef.equals(...)` would
         // throw a NullPointerException on a subjectRef-less session, which surfaced
         // as a 500 on a route that is supposed to answer 403 — a crash a caller
         // could trigger, and the one path where this guard was not fail-closed.
         if (isBlank(sessionSubjectRef)) {
-            return;
+            return null;
         }
         if (isBlank(providedSubjectRef)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "This session belongs to a subject reference; send it in the "
-                            + HEADER + " header to act on it.");
+            return "This session belongs to a subject reference; send it in the "
+                    + HEADER + " header to act on it.";
         }
         byte[] expected = sessionSubjectRef.getBytes(StandardCharsets.UTF_8);
         byte[] actual = providedSubjectRef.getBytes(StandardCharsets.UTF_8);
         if (!MessageDigest.isEqual(expected, actual)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "Invalid subject reference for this session.");
+            return "Invalid subject reference for this session.";
         }
+        return null;
     }
 
     private static boolean isBlank(String value) {

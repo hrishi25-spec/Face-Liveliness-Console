@@ -4,7 +4,7 @@ import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.config.LivenessConfig;
 import io.mosip.liveness.config.WorkflowPolicyDefaults;
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 import io.mosip.liveness.crud.ConfigPolicyRepository;
 import io.mosip.liveness.models.entity.ConfigPolicy;

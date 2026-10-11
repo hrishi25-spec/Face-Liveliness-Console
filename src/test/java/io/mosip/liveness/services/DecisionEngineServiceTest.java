@@ -4,12 +4,13 @@ import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.PadAttackType;
 import io.mosip.liveness.core.PadVerdict;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 import io.mosip.liveness.crud.AuditLogRepository;
 import io.mosip.liveness.crud.ChallengeRepository;
 import io.mosip.liveness.crud.FrameEventRepository;
 import io.mosip.liveness.crud.LivenessSessionRepository;
+import io.mosip.liveness.models.entity.AuditLog;
 import io.mosip.liveness.models.entity.ChallengeEntity;
 import io.mosip.liveness.models.entity.LivenessSession;
 import io.mosip.liveness.models.enums.ChallengeStatus;
@@ -17,8 +18,11 @@ import io.mosip.liveness.models.enums.LivenessStage;
 import io.mosip.liveness.models.enums.SessionStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.opencv.core.Mat;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
 import java.util.EnumSet;
@@ -31,10 +35,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -117,10 +123,26 @@ class DecisionEngineServiceTest {
     }
 
     private EffectivePolicy policy(int minChallengeCount, int maxRetries) {
+        return policy(minChallengeCount, maxRetries, RepeatedFailureAction.LOCK_OUT);
+    }
+
+    private EffectivePolicy policy(int minChallengeCount, int maxRetries,
+                                   RepeatedFailureAction onRepeatedFailure) {
         return new EffectivePolicy(true, true, 0.80, 0.50, 5, 7,
                 minChallengeCount, maxRetries, 60_000L,
-                EnumSet.of(ChallengeType.TURN_HEAD_LEFT), RepeatedFailureAction.LOCK_OUT,
+                EnumSet.of(ChallengeType.TURN_HEAD_LEFT), onRepeatedFailure,
                 -1.0, 30_000L, 1, 10, 0.6, 0.4);
+    }
+
+    /**
+     * The stage that decides one of the three terminal signals: the window has
+     * elapsed without the action, so the miss is real and burns the last retry.
+     */
+    private Map<String, Object> exhaustTheRetryBudget(RepeatedFailureAction onRepeatedFailure) {
+        challenge.setIssuedAt(OffsetDateTime.now().minusSeconds(61));
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 1, onRepeatedFailure));
+        when(livenessEngine.validateActive(eq(DB_TURN_LEFT), anyList(), any())).thenReturn(false);
+        return service.processChallengeValidation(session, challenge, frames, imageUtils);
     }
 
     @Test
@@ -236,6 +258,41 @@ class DecisionEngineServiceTest {
     }
 
     @Test
+    void aSpentBudgetOnALockOutWorkflowLocksTheSession() {
+        Map<String, Object> result = exhaustTheRetryBudget(RepeatedFailureAction.LOCK_OUT);
+
+        assertEquals("locked", result.get("action"));
+        assertEquals(Boolean.FALSE, result.get("mayRetrySession"));
+        assertEquals("max_retries_exceeded:locked_out", session.getFailureReason());
+        assertEquals(SessionStatus.FAILED, session.getStatus());
+        assertEquals(LivenessStage.COMPLETED, session.getCurrentStage());
+        assertNull(result.get("challenge"), "a terminal outcome issues no further challenge");
+    }
+
+    @Test
+    void aSpentBudgetOnAFallbackWorkflowFailsButAllowsANewSession() {
+        Map<String, Object> result = exhaustTheRetryBudget(RepeatedFailureAction.FALLBACK);
+
+        assertEquals("failed", result.get("action"));
+        assertEquals(Boolean.TRUE, result.get("mayRetrySession"));
+        // The reason keeps the prefix every existing client already recognises.
+        assertEquals("max_retries_exceeded", session.getFailureReason());
+        assertEquals(SessionStatus.FAILED, session.getStatus());
+    }
+
+    @Test
+    void aSpentBudgetOnAnEscalatingWorkflowRoutesToAnOperator() {
+        Map<String, Object> result =
+                exhaustTheRetryBudget(RepeatedFailureAction.ESCALATE_TO_OPERATOR);
+
+        assertEquals("escalate_to_operator", result.get("action"));
+        assertEquals(Boolean.FALSE, result.get("mayRetrySession"));
+        assertEquals("max_retries_exceeded:escalation_required", session.getFailureReason());
+        assertEquals(SessionStatus.FAILED, session.getStatus());
+        assertEquals(LivenessStage.COMPLETED, session.getCurrentStage());
+    }
+
+    @Test
     void passingStopsTheChallengeImmediately() {
         when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
         when(livenessEngine.validateActive(eq(DB_TURN_LEFT), anyList(), any())).thenReturn(true);
@@ -280,5 +337,142 @@ class DecisionEngineServiceTest {
         assertEquals("reject", result.get("action"));
         assertEquals(SessionStatus.FAILED, session.getStatus());
         assertEquals(ChallengeStatus.FAILED, challenge.getStatus());
+    }
+
+    // -------------------------------------------------- manual extra check
+    //
+    // Active liveness is normally reached only by the passive-to-active
+    // escalation. A passed session may ask for one challenge anyway
+    // (POST /api/v1/sessions/{id}/active-liveness): the challenge is marked
+    // manual, and its verdict is recorded on the row and in the audit trail
+    // without ever rewriting the session's verdict — the passive pass stands,
+    // including when the extra check sees an attack.
+
+    /** The state a session is in when the manual extra check is requested. */
+    private void passedSession() {
+        session.setStatus(SessionStatus.PASSED);
+        session.setCurrentStage(LivenessStage.COMPLETED);
+        session.setFinalResult(true);
+    }
+
+    @Test
+    void manualCheckIsRefusedOnASessionThatHasNotPassed() {
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> service.startActiveLiveness(session));
+
+        assertEquals(HttpStatus.CONFLICT, error.getStatusCode());
+        verify(challengeRepo, never()).save(any());
+    }
+
+    @Test
+    void manualCheckIssuesAChallengeMarkedManualOnAPassedSession() {
+        passedSession();
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
+
+        ChallengeEntity issued = service.startActiveLiveness(session);
+
+        assertTrue(Boolean.TRUE.equals(issued.getManual()),
+                "the extra check must be distinguishable from an escalation challenge");
+        assertEquals(ChallengeStatus.ISSUED, issued.getStatus());
+        assertEquals(SessionStatus.PASSED, session.getStatus(), "the pass is not undone");
+        verify(challengeRepo).save(issued);
+    }
+
+    @Test
+    void manualCheckReusesTheChallengeThatIsAlreadyOpen() {
+        passedSession();
+        ChallengeEntity open = ChallengeEntity.builder()
+                .id(UUID.randomUUID()).session(session)
+                .challengeType(DB_TURN_LEFT).status(ChallengeStatus.ISSUED)
+                .attemptNumber(1).timeoutMs(60_000).manual(true)
+                .issuedAt(OffsetDateTime.now())
+                .build();
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
+        when(challengeRepo.findFirstBySessionIdAndStatusOrderByIssuedAtDesc(any(), any()))
+                .thenReturn(open);
+
+        assertEquals(open, service.startActiveLiveness(session));
+        verify(challengeRepo, never()).save(any());
+    }
+
+    @Test
+    void manualCheckIsRefusedWhenActiveLivenessIsDisabled() {
+        passedSession();
+        when(configService.getEffectivePolicy(any())).thenReturn(
+                new EffectivePolicy(true, false, 0.80, 0.50, 5, 7, 1, 2, 60_000L,
+                        EnumSet.of(ChallengeType.TURN_HEAD_LEFT), RepeatedFailureAction.LOCK_OUT,
+                        -1.0, 30_000L, 1, 10, 0.6, 0.4));
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> service.startActiveLiveness(session));
+
+        assertEquals(HttpStatus.CONFLICT, error.getStatusCode());
+        verify(challengeRepo, never()).save(any());
+    }
+
+    @Test
+    void aPassedManualCheckIsRecordedWithoutRewritingTheSession() {
+        passedSession();
+        challenge.setManual(true);
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
+        when(livenessEngine.validateActive(eq(DB_TURN_LEFT), anyList(), any())).thenReturn(true);
+
+        Map<String, Object> result =
+                service.processChallengeValidation(session, challenge, frames, imageUtils);
+
+        assertEquals("manual_check_passed", result.get("action"));
+        assertTrue((Boolean) result.get("passed"));
+        assertEquals(ChallengeStatus.PASSED, challenge.getStatus());
+        assertNotNull(challenge.getCompletedAt());
+        assertEquals(SessionStatus.PASSED, session.getStatus());
+        assertEquals(Boolean.TRUE, session.getFinalResult());
+        assertEquals(0, session.getRetryCount(), "an extra check must not consume retry budget");
+    }
+
+    @Test
+    void aMissedManualCheckLeavesTheSessionPassed() {
+        passedSession();
+        challenge.setManual(true);
+        challenge.setIssuedAt(OffsetDateTime.now().minusSeconds(61));
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
+        when(livenessEngine.validateActive(eq(DB_TURN_LEFT), anyList(), any())).thenReturn(false);
+
+        Map<String, Object> result =
+                service.processChallengeValidation(session, challenge, frames, imageUtils);
+
+        assertEquals("manual_check_failed", result.get("action"));
+        assertFalse((Boolean) result.get("passed"));
+        assertEquals(ChallengeStatus.FAILED, challenge.getStatus());
+        assertNotNull(challenge.getCompletedAt());
+        assertEquals(SessionStatus.PASSED, session.getStatus(),
+                "a missed extra check must not rewrite the passive pass");
+        assertEquals(0, session.getRetryCount());
+        verify(challengeRepo, never()).save(any());   // and no follow-up challenge is issued
+    }
+
+    @Test
+    void aPadHitDuringAManualCheckIsAuditedWithoutRewritingTheSession() {
+        passedSession();
+        challenge.setManual(true);
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
+        when(padEngine.detect(any(Mat.class), any()))
+                .thenReturn(PadVerdict.attack(PadAttackType.PRINTED_PHOTO, 0.9));
+
+        Map<String, Object> result =
+                service.processChallengeValidation(session, challenge, frames, imageUtils);
+
+        assertEquals("manual_check_failed", result.get("action"));
+        assertEquals(ChallengeStatus.FAILED, challenge.getStatus());
+        assertEquals(SessionStatus.PASSED, session.getStatus(),
+                "the extra check is recorded; the verdict it was asked about is not rewritten");
+
+        ArgumentCaptor<AuditLog> saved = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogRepo, atLeastOnce()).save(saved.capture());
+        assertTrue(saved.getAllValues().stream().anyMatch(e ->
+                        "PAD_REJECTED".equals(e.getEventType())
+                                && "active_manual".equals(e.getDetails().get("stage"))),
+                "the attack is recorded against the manual check, not against the session");
     }
 }

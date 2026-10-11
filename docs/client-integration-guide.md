@@ -639,6 +639,53 @@ When a session ends, read `action`:
 `mayRetrySession` is `false`/absent for `locked` and `escalate_to_operator`. A
 failure action **never** issues another challenge in the same session.
 
+### 5.5 Session ownership and `X-Subject-Ref`
+
+If you create a session **with** `subjectRef` (the resident/operator/supervisor
+reference you already have), that session is owned: every session-scoped call —
+`GET /api/v1/sessions/{id}`, `POST …/close`, `POST …/frames`,
+`POST …/challenges/validate`, `POST …/active-liveness`,
+`GET …/audit` — must then repeat the same value in the `X-Subject-Ref` header.
+
+```bash
+# Owned: the header must match the subjectRef the session was created with.
+curl -s -X POST localhost:8000/api/v1/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"workflowType":"RESIDENT","deviceId":"L1-CAM-01","subjectRef":"resident-42"}'
+curl -s localhost:8000/api/v1/sessions/$SESSION_ID -H 'X-Subject-Ref: resident-42'
+```
+
+A missing or different header answers **403** (`FORBIDDEN`), and a refusal leaves
+the session untouched — no frame is scored and no challenge is consumed. A session
+created **without** `subjectRef` is anonymous and needs no header, which is what
+this repository's own console does.
+
+The shipped `LivenessHttpClient` does the header work for you: create the session
+with the three-argument form and it remembers the owner and repeats it on every
+session-scoped call it makes for that session. The two-argument form is the
+anonymous session and is unchanged.
+
+```java
+LivenessClient client = new LivenessHttpClient("http://localhost:8000");
+
+// Owned: the 3-arg create claims the reference, and every later call this client
+// makes for the session carries X-Subject-Ref: resident-42.
+LivenessClient.SessionInfo session =
+        client.createSession("RESIDENT", "L1-CAM-01", "resident-42");
+client.submitFrame(session.id(), frameJpeg);
+client.validateChallenge(session.id(), challengeId, frames);
+client.closeSession(session.id());
+```
+
+An HTTP refusal is a `LivenessClientException` whose message carries the status and
+the service's own explanation — a 403 reads as a refusal, not as a broken response.
+
+This isolates honest clients from each other; it is not authentication. There is no
+identity provider behind it, a subject reference is not a secret, and MOSIP subject
+ids are predictable — so keep the service bound to loopback (`SERVER_ADDRESS`, the
+default) or behind the host's own authenticated transport, and treat this header as
+the claim it is.
+
 ---
 
 ## 6. Error Handling
@@ -648,6 +695,7 @@ failure action **never** issues another challenge in the same session.
 | HTTP Status | Error Code | Meaning | Client Action |
 |-------------|------------|---------|---------------|
 | 404 | NOT_FOUND | Session/challenge not found | Create new session |
+| 403 | FORBIDDEN | This session belongs to a subject reference (missing or mismatched `X-Subject-Ref`) | Create the session with its `subjectRef` (the client then sends the header), or send it yourself |
 | 409 | CONFLICT | Session not active / challenge not pending | Refresh state |
 | 422 | INVALID_FRAME | Frame couldn't be decoded | Re-capture frame |
 | 400 | VALIDATION_ERROR | Bad request body | Fix request |

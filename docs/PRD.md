@@ -150,7 +150,7 @@ Six independent projects plus repository tooling. Full details in §13–§17.
 
 | Path | Kind | What it is |
 | --- | --- | --- |
-| `src/`, `pom.xml` | Java / Maven | The service and shared engine. **The active codebase.** 150 main classes, 69 test classes. |
+| `src/`, `pom.xml` | Java / Maven | The service and shared engine. **The active codebase.** 156 main classes, 76 test classes. |
 | `pad_liveness_backend/` | Python / FastAPI | Independent PostgreSQL-backed reference implementation of the same decision flow, with Alembic migrations and real-PostgreSQL tests. Its own service, not wired into the Java build. |
 | `android_client/` | Flutter + Android | Pinned Flutter 3.10.4 build harness, Pigeon bindings, CameraX frame source, keystore evidence signer. Not the full Registration Client. |
 | `docs/` | Markdown | Cross-project documentation (this file included). |
@@ -158,9 +158,9 @@ Six independent projects plus repository tooling. Full details in §13–§17.
 | `vendor/github setup/` | Node | Separate vendored third-party workspace. Neither built nor tested by this repository's CI. |
 | `scripts/` | Shell + Node | Repository gates: boundary check, jar smoke, jar size, cold-boot median, Docker smoke, `start.sh` / `start.bat`. |
 
-Size at a glance: **659 tracked files**, 150 Java main classes, 69 Java test classes (five more
-files under `src/test/java` are support helpers) with 536 `@Test` methods, 38 Python tests,
-7 Flyway migrations, 11 CI jobs, 5 repository gate scripts.
+Size at a glance: **703 tracked files**, 156 Java main classes, 76 Java test classes (six more
+files under `src/test/java` are support helpers) with 596 `@Test` methods, 46 Python tests,
+10 Flyway migrations, 13 CI jobs, 6 repository gate scripts.
 
 ---
 
@@ -410,9 +410,13 @@ are under `/api/v1`.
   `retryCount`, `online`, `finalResult`, `failureReason`, `createdAt`, `updatedAt`,
   `closedAt`, plus the effective `policy`.
 - `FrameProcessResult` — `sessionId`, `stage`, `faceDetected`, `multipleFaces`,
-  `faceQuality`, `livenessScore`, `padFlag`, `padAttackType`, `action`, optional
-  `challenge {challengeId, challengeType, timeoutMs, attemptNumber}`, `mayRetrySession`,
-  `message`.
+  `faceQuality`, `livenessScore`, `padFlag`, `padAttackType`, `action`
+  (`proceed` / `escalate_to_active` / `retry_passive` / `reject`), optional
+  `challenge {challengeId, challengeType, timeoutMs, attemptNumber}`, `message`.
+- `ChallengeValidationResult` — `sessionId`, `challenge`, `passed`, `action`
+  (`proceed` / `retry_challenge` / `reject`, plus the budget-exhausted
+  `locked` / `escalate_to_operator` / `failed`), `message`, and — only on a
+  terminal budget-exhausted verdict — `mayRetrySession`.
 - `SessionSummary` — counters and `durationMs` for a closed session.
 - `OperationalMetrics` — totals, pass rate, escalation rate, frames/challenges per session,
   retry rate, failure rate, PAD rejection rate.
@@ -607,6 +611,13 @@ capture hardware. Injection attacks (a compromised camera feed) are explicitly *
 - `ClientIpFilter` + `ClientIpResolver` honour `X-Forwarded-For` / `X-Real-IP` **only** from
   configured `trusted-proxies`. Empty means trust nobody, and the budget keys on the socket
   address — a client cannot spoof its way past the limiter.
+- `SessionOwnershipFilter` enforces resource-level ownership on every route in
+  `RouteInventory.SESSION_SCOPED`: a session created with a `subjectRef` answers only a caller
+  presenting it in `X-Subject-Ref` (`UserSessionGuard`, constant-time compare), and the refusal
+  happens before the handler. The list, not a per-handler call, decides what is covered, and
+  `ApiRouteInventoryTest` fails a session-scoped route that is missing from it — so a new
+  endpoint cannot be added unguarded by omission. This is isolation between honest clients, not
+  authentication: see `docs/brain.md` and §12.5.
 - 24 MiB body cap, checked before parsing.
 
 ### 12.3 Tamper-evident audit trail
@@ -632,13 +643,13 @@ Metrics are aggregates. Frames are not persisted; only derived numeric fields ar
 
 ## 13. Java service file map
 
-`src/main/java/io/mosip/liveness/` — 150 classes.
+`src/main/java/io/mosip/liveness/` — 158 classes.
 
 | Package | Contains |
 | --- | --- |
 | *(root)* | `PadLivenessApplication` — Spring Boot entry point. |
 | `app/config/` | `AppConfig` — bean wiring, OpenCV init, SPI bean selection. |
-| `api/` | `SessionsController`, `FramesController`, `ChallengesController`, `ConfigController`, `AuditController`, `MetricsController`, `HealthController`, `CalibrationController`, `DiagnosticsController`; `SecurityHeadersFilter`, `RateLimitFilter`, `RateLimitCounters`, `ClientIpFilter`, `ClientIpResolver`, `GlobalExceptionHandler`. |
+| `api/` | `SessionsController`, `FramesController`, `ChallengesController`, `ConfigController`, `AuditController`, `MetricsController`, `HealthController`, `CalibrationController`, `DiagnosticsController`; `SecurityHeadersFilter`, `RateLimitFilter`, `RateLimitCounters`, `ClientIpFilter`, `ClientIpResolver`, `AdminKeyFilter`, `AdminKeyGuard`, `SessionOwnershipFilter`, `UserSessionGuard`, `RouteInventory`, `FilterRefusal`, `GlobalExceptionHandler`. |
 | `dto/` | Request/response records: `SessionCreateRequest`, `SessionResponse`, `SessionSummary`, `FrameSubmitRequest`, `FrameProcessResult`, `ChallengeValidateRequest`, `ChallengeValidationResult`, `ChallengeResponse`, `ConfigPolicyResponse`, `ConfigPolicyUpdate`, `AuditLogEntry`, `OperationalMetrics`. |
 | `services/` | `DecisionEngineService`, `PassiveScoringService`, `PadEngineService`, `LivenessEngineService`, `ChallengeSelectorService`, `ConfigService`, `ThresholdCalibrationService`, `ImageUtils`. |
 | `engine/` | `LivenessPipeline`, `FaceLivenessEngine`, `LivenessDecisionLogic`, `LivenessSession`, `FrameAssessment`, `AssessmentStatus`, `ValidationResult`, `SessionSummary`. |
@@ -719,14 +730,15 @@ build or the Spring service.
   (`633dd91383c5_initial_schema`) creates the same five tables with **native** PostgreSQL
   types — enum types, `uuid` primary keys, `jsonb` columns, `timestamptz`. Databases created
   with the `app.db.init_db` shortcut must be adopted with `alembic stamp head`.
-- **Tests (38):** API behaviour on in-memory SQLite (5), OpenCV heuristic fixtures (12),
+- **Tests (46):** API behaviour on in-memory SQLite (9), OpenCV heuristic fixtures (12),
   fresh-interpreter import guards (6), Alembic migration behaviour on real PostgreSQL (7),
-  and session persistence on real PostgreSQL (8). The PostgreSQL suites run the real `alembic`
+  session persistence on real PostgreSQL (8), and the cross-backend scenario script (4). The PostgreSQL suites run the real `alembic`
   CLI against a `postgres:16-alpine` container and are skipped without Docker — CI sets
   `PAD_LIVENESS_REQUIRE_POSTGRES=1` so a Docker-less runner fails instead of silently skipping.
 - **Known gaps:** no frame-size cap equivalent to the Java engine's 1280 px downscale, so large
   frames cost proportionally more here; and its policy defaults differ from the Java service's
-  (§9).
+  (§9). Its repeated-failure vocabulary does **not** differ: a spent retry budget now reports the
+  same `action` / `failure_reason` / `may_retry_session` as the Java service (see its README).
 
 ### 15.2 Training pipeline (`training/`)
 A **workstation-only** synthetic-data pipeline for MiniFASNet: `generate_synthetic_data.py`,
@@ -759,11 +771,12 @@ repository's CI.
 | Java unit | Everything except the pipeline integration and PostgreSQL schema tests | `./mvnw --batch-mode test` |
 | Java integration | `LivenessPipelineIntegrationTest` | `./mvnw --batch-mode test -Dtest='LivenessPipelineIntegrationTest'` |
 | PostgreSQL schema | `PostgresSchemaTest` — entities vs Flyway migrations on real PostgreSQL via Testcontainers | `./mvnw --batch-mode test -Dtest='PostgresSchemaTest'` |
+| Cross-backend contract | `CrossBackendContractTest` — one spent retry budget driven on both services, terminal verdicts compared | `./mvnw --batch-mode test -Dtest='CrossBackendContractTest'` (needs `PAD_LIVENESS_PYTHON`) |
 | Console DOM | Real `index.html` + `console.js` guards in a DOM | `node src/test/js/console-guards.test.mjs` |
-| Python backend | 38 tests (SQLite behaviour, OpenCV fixtures, imports, PostgreSQL migrations, persistence) | `python -m pytest -q` in `pad_liveness_backend/` |
+| Python backend | 46 tests (SQLite behaviour, OpenCV fixtures, imports, PostgreSQL migrations, persistence, the cross-backend scenario script) | `python -m pytest -q` in `pad_liveness_backend/` |
 | Android client | Locked dependency resolution, binding regeneration + diff, formatting, analyse, APK build | see [android_client/README.md](../android_client/README.md) |
 
-69 Java test classes / 536 `@Test` methods. The unit and integration suites run as two
+76 Java test classes / 596 `@Test` methods. The unit and integration suites run as two
 parallel, independent jobs so one failure cannot cancel the other.
 
 ### 16.2 Repository gates
@@ -781,13 +794,13 @@ declares it in the root map with `boundary-allow-no-ci: <reason>`; a single line
 `boundary-allow: <reason>` to exempt a legitimate exception. Both are printed with their
 reason on every run, so escapes stay visible instead of silently weakening the gate.
 
-### 16.3 CI jobs (11)
+### 16.3 CI jobs (13)
 
-`test` (Unit / Integration matrix) · `console` · `boundaries` · `python-backend` ·
-`android-client` · `package` (full + slim matrix) · `docker` · `boot-time` · `schema` ·
-`release` (tag only) · `docker-release` (tag only).
+`test` (Unit / Integration matrix) · `console` · `boundaries` · `secrets` · `python-backend` ·
+`cross-backend` · `android-client` · `package` (full + slim matrix) · `docker` · `boot-time` ·
+`schema` · `release` (tag only) · `docker-release` (tag only).
 
-Every push and pull request runs the first nine (`release` and `docker-release` are gated on a
+Every push and pull request runs the first eleven (`release` and `docker-release` are gated on a
 `refs/tags/v*` ref); tags additionally publish a GitHub Release with both jars plus `.sha256`
 checksums, and a `ghcr.io` image. Artifact uploads are gated on the
 default branch or a `v*` tag, so no fork can write to storage.

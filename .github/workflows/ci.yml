@@ -33,7 +33,11 @@ jobs:
       matrix:
         include:
           - suite: Unit
-            maven_tests: "!LivenessPipelineIntegrationTest,!PostgresSchemaTest"
+            # CrossBackendContractTest is excluded here on purpose: it needs the
+            # Python backend's dependencies, which this job does not install,
+            # so it would only ever skip. The *Cross-backend contract* job
+            # exists to run it where that environment is real.
+            maven_tests: "!LivenessPipelineIntegrationTest,!PostgresSchemaTest,!CrossBackendContractTest"
           - suite: Integration
             maven_tests: "LivenessPipelineIntegrationTest"
     steps:
@@ -98,6 +102,32 @@ jobs:
       - name: Check project guidance and instruction scope
         run: node scripts/check-project-boundaries.mjs
 
+  #
+  # The secret scan. Nothing else here can catch a committed credential: the
+  # Java suites, the schema gate and the console harness all read the code, and
+  # a `.env`-shaped value compiles fine. gitleaks reads the Git history rather
+  # than the working tree, so a secret that was committed and then removed still
+  # fails until the history is rewritten — which is why the checkout is full
+  # depth — and `--redact` keeps the value itself out of the CI log.
+  #
+  # Like the boundary gate this is deliberately not a dependency of
+  # package/docker/release: a leak found in an old commit is a reason to fix the
+  # history, not a reason to withhold a jar. `./scripts/check-secrets.sh` uses
+  # the gitleaks CLI when one is present and the pinned image otherwise, so the
+  # gate accepts the same thing locally and here.
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan the checkout and its history for committed secrets
+        run: ./scripts/check-secrets.sh
+
   python-backend:
     name: Python liveness backend tests
     runs-on: ubuntu-latest
@@ -127,6 +157,51 @@ jobs:
 
       - name: Run backend tests (SQLite behavior, OpenCV heuristics, PostgreSQL integration)
         run: python -m pytest --quiet
+
+  # The one check that compares the two implementations instead of asserting
+  # each against its own expectations. A spent active-challenge retry budget is
+  # driven on the Spring service (real HTTP, real OpenCV) and on the FastAPI
+  # backend (its scenario script, run as a subprocess because it is a different
+  # runtime), and the terminal verdicts are compared field by field. Each suite
+  # on its own can only pin its own spelling, which is how the two backends came
+  # to answer `locked` and `reject` for the same policy (CHANGELOG, 2026-10-11).
+  cross-backend:
+    name: Cross-backend contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # A runner without the Python environment must fail this job rather than
+      # skip the comparison inside it — the same convention the Python tests use
+      # for PostgreSQL (PAD_LIVENESS_REQUIRE_POSTGRES).
+      PAD_LIVENESS_REQUIRE_PYTHON: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Set up Python 3.12.15
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.15'
+          cache: pip
+          cache-dependency-path: |
+            pad_liveness_backend/requirements.txt
+            pad_liveness_backend/requirements-dev.txt
+
+      # The scenario runs the real FastAPI app in-process, so it imports the
+      # app's own dependencies (FastAPI, SQLAlchemy, numpy, OpenCV) as well as
+      # pytest. On PATH as `python3`, which is what the Java test defaults to.
+      - name: Install backend dependencies
+        run: python -m pip install --requirement pad_liveness_backend/requirements-dev.txt
+
+      - name: Compare a spent retry budget on both backends
+        run: ./mvnw --batch-mode test -Dtest='CrossBackendContractTest'
 
   android-client:
     name: Android/Flutter client build

@@ -3,7 +3,6 @@ package io.mosip.liveness.audit;
 import io.mosip.liveness.core.WorkflowType;
 import org.junit.jupiter.api.Test;
 
-import java.util.Map;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;

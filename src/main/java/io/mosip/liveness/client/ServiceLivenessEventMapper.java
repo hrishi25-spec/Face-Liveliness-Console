@@ -45,10 +45,10 @@ import java.util.Optional;
  * frame/challenge: proceed             → PASSED + final PASSED / PROCEED
  * frame/challenge: reject (PAD)        → ATTEMPT_FAILED, liveness.pad.generic
  * frame/challenge: reject (liveness)   → ATTEMPT_FAILED, liveness.failed.try_again
- * frame/challenge: reject, budget gone → TERMINAL_FAILURE + final per onRepeatedFailure
- * frame: locked                        → TERMINAL_FAILURE + final LOCKOUT
- * frame: escalate_to_operator          → TERMINAL_FAILURE + final EXCEPTION
- * frame: failed                        → TERMINAL_FAILURE + final FALLBACK
+ * challenge: reject, budget gone      → TERMINAL_FAILURE + final per onRepeatedFailure
+ * challenge: locked                    → TERMINAL_FAILURE + final LOCKOUT
+ * challenge: escalate_to_operator      → TERMINAL_FAILURE + final EXCEPTION
+ * challenge: failed                    → TERMINAL_FAILURE + final FALLBACK
  * challenge: retry_challenge (passed)  → CHALLENGE_PASSED, then the next prompt
  * challenge: retry_challenge (failed)  → ATTEMPT_FAILED (the attempt was consumed)
  * challenge: continue                  → CHALLENGE_VERIFYING (window still open)
@@ -56,14 +56,20 @@ import java.util.Optional;
  * session stopped by the host          → final ABORTED / BLOCK
  * </pre>
  *
+ * <p><b>Budget-exhausted outcomes have two spellings.</b> The service spends the
+ * last retry on a challenge validation and answers with the frozen policy's own
+ * action ({@code locked} / {@code escalate_to_operator} / {@code failed}, see
+ * {@link io.mosip.liveness.shared.definitions.RepeatedFailureAction}), which the branches above
+ * take at face value. A plain {@code reject} whose closed session reports
+ * {@code max_retries_exceeded} is the older spelling, kept working because the
+ * adapter can read the session's {@code failureReason} — that path derives the
+ * same outcome from the policy name instead of the action.
+ *
  * <p><b>Known fidelity gaps of the REST contract</b> (the client cannot invent
  * what the service does not send): no cool-down duration for {@code locked}, so
  * the overlay shows the recovery card without the "Try again in Ns" countdown;
- * no gate-validity window, so a passed session reports {@code validForSeconds}
- * 0; and the terminal vocabulary {@code locked} / {@code escalate_to_operator} /
- * {@code failed} is documented for clients but the current service reports
- * budget exhaustion as a plain {@code reject}, which is therefore mapped to a
- * retryable attempt failure.
+ * and no gate-validity window, so a passed session reports {@code validForSeconds}
+ * 0.
  */
 public final class ServiceLivenessEventMapper {
 
@@ -196,6 +202,12 @@ public final class ServiceLivenessEventMapper {
         return switch (action) {
             case "proceed" -> passed(ctx);
             case "reject" -> rejected(ctx, false, sessionFailureReason);
+            // The budget is spent on a validation, so this — not a frame response —
+            // is where the terminal vocabulary actually arrives. Treating it as
+            // "verifying" left the overlay waiting on a session that had ended.
+            case "locked" -> budgetExhausted(ctx, LivenessFinalResult.NextAction.LOCKOUT);
+            case "escalate_to_operator" -> budgetExhausted(ctx, LivenessFinalResult.NextAction.EXCEPTION);
+            case "failed" -> budgetExhausted(ctx, LivenessFinalResult.NextAction.FALLBACK);
             case "retry_challenge" -> result.passed()
                     ? challengeDetected(ctx, result.challenge())
                     : Delivery.states(attemptFailed(ctx, KEY_TRY_AGAIN));
@@ -229,7 +241,9 @@ public final class ServiceLivenessEventMapper {
         }
         return switch (result.action()) {
             case "retry_challenge" -> !result.passed();
-            case "reject" -> true;
+            // Every terminal outcome follows an attempt that was really made: the
+            // window elapsed without the action, which is what spent the budget.
+            case "reject", "locked", "escalate_to_operator", "failed" -> true;
             default -> false;
         };
     }

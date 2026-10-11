@@ -151,6 +151,51 @@ class SessionsControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * The ownership rule on a session that declares an owner. It is checked on
+     * reads too: the response names the workflow, the stage and the failure
+     * reason, which is the owner's business and nobody else's.
+     */
+    @Test
+    void aSessionOwnedByASubjectRefIsOnlyReachableWithIt() throws Exception {
+        session.setSubjectRef("resident-42");
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId).header("X-Subject-Ref", "resident-43"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId).header("X-Subject-Ref", "resident-42"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(sessionId.toString()));
+    }
+
+    @Test
+    void closingSomebodyElsesSessionIsRefused() throws Exception {
+        session.setSubjectRef("resident-42");
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+
+        mockMvc.perform(post("/api/v1/sessions/" + sessionId + "/close")
+                        .header("X-Subject-Ref", "resident-43"))
+                .andExpect(status().isForbidden());
+        verify(sessionRepo, never()).save(any());
+        assertEquals(SessionStatus.ACTIVE, session.getStatus(), "a refused close must not expire it");
+    }
+
+    /**
+     * Creation is what decides ownership: a session with no subjectRef has no
+     * owner to protect, so every existing client (the console, the shipped
+     * {@code LivenessHttpClient}) keeps working without a new header.
+     */
+    @Test
+    void anAnonymousSessionStaysReachableWithoutTheHeader() throws Exception {
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId).header("X-Subject-Ref", "anyone"))
+                .andExpect(status().isOk());
+    }
+
     @Test
     void closeSession_activeSession_returns200() throws Exception {
         when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));

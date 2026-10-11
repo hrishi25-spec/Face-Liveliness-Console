@@ -32,7 +32,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -106,6 +108,28 @@ class ChallengesControllerTest {
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
     }
 
+    /**
+     * Challenge frames are the session's own capture, so an owned session answers
+     * only its owner — and the refusal happens before any frame is decoded.
+     */
+    @Test
+    void validatingAnotherSubjectsSessionIsRefused() throws Exception {
+        session.setSubjectRef("resident-42");
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+        when(challengeRepo.findById(challenge.getId())).thenReturn(Optional.of(challenge));
+
+        mockMvc.perform(post(url())
+                        .header("X-Subject-Ref", "resident-43")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                ChallengeValidateRequest.builder()
+                                        .challengeId(challenge.getId())
+                                        .framesBase64(List.of("dGVzdA=="))
+                                        .build())))
+                .andExpect(status().isForbidden());
+        verify(decisionEngine, never()).processChallengeValidation(any(), any(), anyList(), any());
+    }
+
     @Test
     void validRequest_passes_returns200() throws Exception {
         when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
@@ -144,9 +168,14 @@ class ChallengesControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * A session that is neither ACTIVE nor PASSED can never validate a challenge.
+     * (A PASSED session may, but only for a manually requested extra check — see
+     * {@link #engineChallengeOnAPassedSession_isRefused()}.)
+     */
     @Test
-    void sessionNotActive_returns409() throws Exception {
-        session.setStatus(SessionStatus.PASSED);
+    void sessionExpired_returns409() throws Exception {
+        session.setStatus(SessionStatus.EXPIRED);
         when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
         mockMvc.perform(post(url())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -156,6 +185,55 @@ class ChallengesControllerTest {
                                         .framesBase64(List.of("dGVzdA=="))
                                         .build())))
                 .andExpect(status().isConflict());
+    }
+
+    /**
+     * The manual extra check is validated on a session that already passed, so
+     * PASSED sessions are accepted — but only for a challenge the manual
+     * endpoint marked. An engine-issued challenge on a passed session stays
+     * refused: its verdict could otherwise be replayed against a closed verdict.
+     */
+    @Test
+    void engineChallengeOnAPassedSession_isRefused() throws Exception {
+        session.setStatus(SessionStatus.PASSED);
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+        when(challengeRepo.findById(challenge.getId())).thenReturn(Optional.of(challenge));
+
+        mockMvc.perform(post(url())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                ChallengeValidateRequest.builder()
+                                        .challengeId(challenge.getId())
+                                        .framesBase64(List.of("dGVzdA=="))
+                                        .build())))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void manualChallengeOnAPassedSession_isAccepted() throws Exception {
+        session.setStatus(SessionStatus.PASSED);
+        challenge.setManual(true);
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+        when(challengeRepo.findById(challenge.getId())).thenReturn(Optional.of(challenge));
+        Mat frame = mock(Mat.class);
+        when(imageUtils.decodeBase64Frame(anyString())).thenReturn(frame);
+        when(decisionEngine.processChallengeValidation(any(), any(), anyList(), any()))
+                .thenReturn(Map.of(
+                        "passed", true,
+                        "action", "manual_check_passed",
+                        "message", "Action detected. Extra check passed — the session result "
+                                + "is unchanged."));
+
+        mockMvc.perform(post(url())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                ChallengeValidateRequest.builder()
+                                        .challengeId(challenge.getId())
+                                        .framesBase64(List.of("dGVzdA=="))
+                                        .build())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.action").value("manual_check_passed"))
+                .andExpect(jsonPath("$.challenge.manual").value(true));
     }
 
     @Test

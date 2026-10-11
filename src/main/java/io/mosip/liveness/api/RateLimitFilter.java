@@ -9,13 +9,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Clock;
-import java.time.OffsetDateTime;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -52,9 +50,14 @@ import java.util.regex.Pattern;
 @Order(Ordered.LOWEST_PRECEDENCE)
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    /** /api/v1/sessions/{id}/frames or .../challenges/validate */
+    /**
+     * The session-scoped write paths: /api/v1/sessions/{id}/frames,
+     * .../challenges/validate, and the manually requested extra check at
+     * .../active-liveness. They share one per-session budget, so a client cannot
+     * escape the limiter by moving its traffic to another write route.
+     */
     private static final Pattern SESSION_SCOPED = Pattern.compile(
-            "^/api/v1/sessions/([^/]+)/(frames|challenges/validate)/?$");
+            "^/api/v1/sessions/([^/]+)/(frames|challenges/validate|active-liveness)/?$");
     private static final String SESSION_CREATE = "/api/v1/sessions";
 
     /**
@@ -173,7 +176,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             windowMs = frameWindowMs;
             bucket = BUCKET_FRAMES;
             resource = "frame submission";
-            message = "Too many frames submitted for this session. Slow down and retry.";
+            message = "Too many requests for this session. Slow down and retry.";
             framesBudget = true;
         }
 
@@ -201,12 +204,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (slot[1] > limit) {
             long retryAfterSec = Math.max(1, (resetMs + 999) / 1000);
             record(framesBudget, false);
-            response.setStatus(429);
             response.setHeader("Retry-After", String.valueOf(retryAfterSec));
-            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-            response.getWriter().write("{\"error\":\"RATE_LIMITED\",\"message\":\""
-                    + message + "\",\"status\":429,\"timestamp\":\""
-                    + OffsetDateTime.now() + "\"}");
+            FilterRefusal.write(request, response, 429, "RATE_LIMITED", message);
             return;
         }
         record(framesBudget, true);

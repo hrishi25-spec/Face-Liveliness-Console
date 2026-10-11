@@ -185,6 +185,37 @@ public class DesktopLivenessAdapter {
     }
 
     /**
+     * Start a new liveness session owned by the given subject reference.
+     * The session will be protected by session ownership checks.
+     *
+     * @param subjectRef   the resident/operator/supervisor this session belongs to,
+     *                     or {@code null} for an anonymous session
+     * @throws LivenessClientException when the service cannot be reached — the
+     *                                 host decides there whether to bypass,
+                                 *                                 retry or fail the capture
+     */
+    public void startSession(String subjectRef) {
+        LivenessClient client = clientSupplier.get();
+        String workflow = workflowSupplier.get();
+        String device = deviceSupplier.get();
+
+        LivenessClient.SessionInfo session = client.createSession(workflow, device, subjectRef);
+        this.currentSessionId = session.id();
+        this.livenessPassed = false;
+        this.livenessFailed = false;
+        // The policy frozen on the session is what lets the overlay render the
+        // challenge counter and the attempt budget on this path (nullable on
+        // sessions created before the service froze one).
+        this.policy = session.policy();
+        this.attemptsUsed = 0;
+        this.challengeIndex = 1;
+        this.challengeType = null;
+        this.challengeId = null;
+
+        deliver(ServiceLivenessEventMapper.started(context()));
+    }
+
+    /**
      * Called by Streamer's frame listener on every decoded frame.
      * Routes the frame to the liveness engine and dispatches the result.
      */

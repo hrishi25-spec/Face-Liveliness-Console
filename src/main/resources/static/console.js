@@ -8,6 +8,9 @@
   const video = $("video");
 
   let stream = null, running = false, sessionId = null, lastChallenge = null;
+  // The manual extra check is offered only once the session has passed on the
+  // passive stage (above threshold, so the engine issued no challenge).
+  let sessionPassed = false;
 
   // ---------- helpers ----------
   const logEl = $("log");
@@ -58,6 +61,20 @@
     $("verdict-action").textContent = action || "";
     $("verdict-msg").textContent = message || "";
   }
+
+  // "Run active liveness" is enabled only while the current session has passed.
+  function setActiveCheckEnabled(on) {
+    $("btn-active").disabled = !on;
+  }
+
+  // The three ways a spent retry budget can end a session (docs/configuration.md):
+  // which headline to show, and — only for `failed` — that a fresh session is
+  // allowed. Keyed by the server's own action, never guessed from the message.
+  const TERMINAL_VERDICTS = {
+    locked: ["reject", "LOCKED OUT"],
+    escalate_to_operator: ["escalate", "ESCALATE TO OPERATOR"],
+    failed: ["reject", "FAILED"]
+  };
 
   async function api(path, options) {
     const opts = options || {};
@@ -142,6 +159,8 @@
     $("btn-run").disabled = true;
     $("btn-stop").disabled = false;
     resetSteps();
+    sessionPassed = false;
+    setActiveCheckEnabled(false);
     $("audit").textContent = "No entries yet.";
     $("last").innerHTML = "<dt>—</dt><dd>—</dd>";
 
@@ -182,7 +201,10 @@
           + (r.padAttackType ? ` pad=${r.padAttackType}` : ""));
 
         if (r.action === "escalate_to_active") { escalated = r; break; }
-        if (r.action === "proceed" || r.action === "reject") { outcome = r; break; }
+        // Anything that is not "keep going" is a verdict. The terminal vocabulary
+        // includes the budget-exhausted outcomes (locked / escalate_to_operator /
+        // failed), so looping on them would re-submit a closed session forever.
+        if (r.action !== "retry_passive" && r.action !== "continue") { outcome = r; break; }
         await sleep(350);
       }
 
@@ -199,6 +221,12 @@
         setStep(4, "active");
         if (outcome && outcome.action === "proceed") {
           verdict("proceed", "PROCEED", outcome.message || "Liveness verified.");
+          // Passed on the passive stage: the extra active check is now offered.
+          sessionPassed = true;
+        } else if (outcome && TERMINAL_VERDICTS[outcome.action]) {
+          const [kind, headline] = TERMINAL_VERDICTS[outcome.action];
+          verdict(kind, headline, (outcome.message || "Check could not be completed.")
+            + (outcome.mayRetrySession ? " You may start a new session." : ""));
         } else if (outcome) {
           verdict("reject", "REJECT", outcome.message || "Liveness could not be verified.");
         } else {
@@ -215,6 +243,7 @@
       running = false;
       $("btn-run").disabled = false;
       $("btn-stop").disabled = true;
+      setActiveCheckEnabled(sessionPassed);
     }
   });
 
@@ -287,8 +316,15 @@
 
       if (!running) return { action: null, message: "Stopped by user." };
       if (!outcome) return { action: null, message: "Challenge window elapsed without a verdict." };
-      if (outcome.action === "proceed" || outcome.action === "reject") {
-        return { action: outcome.action, message: outcome.message };
+      // Terminal for this check: a session verdict, or a manual extra check's
+      // own verdict. (The response carries the challenge it just resolved, so
+      // falling through would re-validate a FAILED id and get a 409.)
+      if (outcome.action === "proceed" || outcome.action === "reject"
+          || outcome.action === "manual_check_passed"
+          || outcome.action === "manual_check_failed"
+          || TERMINAL_VERDICTS[outcome.action]) {
+        return { action: outcome.action, message: outcome.message,
+                 mayRetrySession: outcome.mayRetrySession === true };
       }
       // retry_challenge — the response carries the next challenge
       challenge = outcome.challenge;
@@ -297,6 +333,55 @@
     }
     return { action: null, message: "Challenge budget exhausted." };
   }
+
+  // ---------- manual active liveness (extra check) ----------
+  //
+  // Active liveness normally runs only when the passive stage escalates: above
+  // the threshold the session passes with no challenge at all. This button asks
+  // for one challenge anyway. The server marks it as a manual extra check — it
+  // is recorded on its challenge row and in the audit trail, and it never
+  // rewrites the session verdict (a missed action leaves the session PASSED).
+  $("btn-active").addEventListener("click", async () => {
+    if (running || !sessionId || !sessionPassed) return;
+    running = true;
+    $("btn-active").disabled = true;
+    $("btn-run").disabled = true;
+    $("btn-stop").disabled = false;
+
+    try {
+      setStep(3, "active");
+      const challenge = await api(`/sessions/${sessionId}/active-liveness`, {
+        method: "POST"
+      });
+      log(`extra active check requested: ${challenge.challengeType}`
+        + ` (challenge ${challenge.id})`);
+      const outcome = await runChallenges({
+        challenge,
+        message: "Extra active check — the session verdict is unchanged either way."
+      });
+      setStep(3, "done");
+      if (outcome.action === "manual_check_passed") {
+        verdict("proceed", "EXTRA CHECK PASSED",
+          outcome.message || "Action detected.");
+      } else if (outcome.action === "manual_check_failed") {
+        verdict("escalate", "EXTRA CHECK FAILED",
+          outcome.message || "Action not detected.");
+      } else {
+        verdict("escalate", "EXTRA CHECK INCOMPLETE",
+          outcome.message || "No verdict was reached for the extra check.");
+      }
+      await refreshAudit();
+      await refreshMetrics();
+    } catch (e) {
+      log("extra check error: " + e.message);
+      verdict("reject", "ERROR", e.message);
+    } finally {
+      running = false;
+      $("btn-run").disabled = false;
+      $("btn-stop").disabled = true;
+      setActiveCheckEnabled(sessionPassed);
+    }
+  });
 
   $("btn-stop").addEventListener("click", () => {
     running = false;
@@ -381,6 +466,8 @@
         + ` challenges=${s.totalChallengesIssued} duration=${s.durationMs}ms`);
       $("pill-session").textContent = "session " + sessionId.slice(0, 8) + " (" + s.status + ")";
       $("pill-session").className = "pill";
+      sessionPassed = false;
+      setActiveCheckEnabled(false);
       await refreshAudit();
     } catch (e) { log("close error: " + e.message); }
   });
@@ -394,7 +481,7 @@
   // of only discovering it through a failed request.
   const RL_BUCKETS = {
     "session-create": "Session creation — per client IP, 60s window",
-    frames: "Frames + challenge validation — per session, 10s window"
+    frames: "Frames, challenges + extra checks — per session, 10s window"
   };
   const rlState = new Map();   // bucket -> { limit, remaining, resetAt, limited }
   const rlRows = new Map();    // bucket -> { row, num, fill, sub }

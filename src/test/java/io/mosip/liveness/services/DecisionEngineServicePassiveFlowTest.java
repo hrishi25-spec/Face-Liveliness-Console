@@ -4,7 +4,7 @@ import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.PadAttackType;
 import io.mosip.liveness.core.PadVerdict;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 import io.mosip.liveness.crud.AuditLogRepository;
 import io.mosip.liveness.crud.ChallengeRepository;

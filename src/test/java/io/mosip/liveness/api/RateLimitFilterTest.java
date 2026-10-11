@@ -132,6 +132,18 @@ class RateLimitFilterTest {
                 "validate posts frames too and must share the session budget");
     }
 
+    @Test
+    void manualActiveCheck_sharesTheSessionFrameBudget() throws Exception {
+        RateLimitFilter filter = filter(30, 2);
+        String frames = "/api/v1/sessions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/frames";
+        String extra = "/api/v1/sessions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/active-liveness";
+
+        assertTrue(run(filter, "POST", frames, "10.0.0.1").passed());
+        assertTrue(run(filter, "POST", extra, "10.0.0.1").passed());
+        assertEquals(429, run(filter, "POST", extra, "10.0.0.1").response().getStatus(),
+                "the manual extra check writes per session and must share its budget");
+    }
+
     // ------------------------------------------------------------------ pass-through
 
     @Test

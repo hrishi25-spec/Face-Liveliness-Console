@@ -10,7 +10,9 @@ the spec:
   4. Passive score < threshold -> escalate to ACTIVE stage, issue a
      dynamically selected challenge.
   5. Active challenge validated -> proceed (PASSED). Failed/timeout ->
-     retry (new challenge) up to max_retry_count, then FAILED.
+     retry (new challenge) up to max_retry_count, then the terminal action
+     the session's on_repeated_failure policy selects (`locked` / `failed` /
+     `escalate_to_operator`, matching the Spring service).
 
 This module is transport-agnostic: it takes decoded frames/DB session and
 returns plain result objects; the API layer turns those into HTTP responses.
@@ -51,7 +53,21 @@ class FrameDecision:
 @dataclass
 class ChallengeDecision:
     passed: bool
-    action: str  # proceed | retry_challenge | reject
+    action: str  # proceed | retry_challenge | reject | locked |
+                 # escalate_to_operator | failed
+    message: str
+    # Set only on a terminal budget-exhausted verdict: True when the frozen
+    # policy lets the client open a fresh session (ALLOW_RETRY), False for
+    # LOCK/ESCALATE. None on every non-terminal verdict.
+    may_retry_session: bool | None = None
+
+
+@dataclass(frozen=True)
+class RepeatedFailureAction:
+    """Outcome of exhausting the retry budget."""
+    action: str
+    failure_reason: str
+    may_retry_session: bool
     message: str
 
 
@@ -239,15 +255,37 @@ def process_challenge_validation(
     db.commit()
 
     if sess.retry_count >= policy.max_retry_count:
-        reason = "max_retries_exceeded"
-        if policy.on_repeated_failure == FailurePolicy.LOCK:
-            reason = "max_retries_exceeded_locked"
-        elif policy.on_repeated_failure == FailurePolicy.ESCALATE:
-            reason = "max_retries_exceeded_escalated"
-        _finalize(db, sess, False, reason)
+        # The policy, not this branch, decides what the client is told: LOCK
+        # locks the session out, ESCALATE flags it for an operator, and
+        # ALLOW_RETRY is the only one that may open a fresh session. Reporting
+        # all three as `reject` made a per-workflow on_repeated_failure stored
+        # config rather than behaviour (the Spring service had the same gap).
+        # Map FailurePolicy to RepeatedFailureAction for the terminal verdict
+        policy_mapping = {
+            FailurePolicy.LOCK: RepeatedFailureAction(
+                action="locked",
+                failure_reason="max_retries_exceeded:locked_out",
+                may_retry_session=False,
+                message="Face verification failed. Please contact an operator for assistance."
+            ),
+            FailurePolicy.ESCALATE: RepeatedFailureAction(
+                action="escalate_to_operator",
+                failure_reason="max_retries_exceeded:escalation_required",
+                may_retry_session=False,
+                message="Face verification could not be completed. An operator will assist you."
+            ),
+            FailurePolicy.ALLOW_RETRY: RepeatedFailureAction(
+                action="failed",
+                failure_reason="max_retries_exceeded",
+                may_retry_session=True,
+                message="We could not verify face liveness. Please try again."
+            )
+        }
+        outcome = policy_mapping[policy.on_repeated_failure]
+        _finalize(db, sess, False, outcome.failure_reason)
         return ChallengeDecision(
-            passed=False, action="reject",
-            message="We could not verify face liveness. Please try again.",
+            passed=False, action=outcome.action, message=outcome.message,
+            may_retry_session=outcome.may_retry_session,
         )
 
     return ChallengeDecision(

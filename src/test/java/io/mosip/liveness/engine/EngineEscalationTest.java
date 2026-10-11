@@ -218,7 +218,7 @@ class EngineEscalationTest {
                         .passiveMinFrames(1)
                         .maxRetries(0)
                         .passiveThresholdActive(0.0)  // disable passive re-eval during active
-                        .onRepeatedFailure(io.mosip.liveness.core.RepeatedFailureAction.FALLBACK)
+                        .onRepeatedFailure(io.mosip.liveness.shared.definitions.RepeatedFailureAction.FALLBACK)
                         .build(),
                 backend, audit, new MetricsCollector(), clock);
         String sid = fallbackEngine.initSession(io.mosip.liveness.core.WorkflowType.SUPERVISOR_AUTH);

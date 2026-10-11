@@ -56,6 +56,36 @@ class FramesControllerTest {
                 .build();
     }
 
+    /**
+     * Frames are the session's biometrics: an owned session answers only its
+     * owner, and the guard runs before the frame is decoded or scored.
+     */
+    @Test
+    void framesOfAnOwnedSessionRequireItsSubjectRef() throws Exception {
+        session.setSubjectRef("resident-42");
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+
+        mockMvc.perform(post("/api/v1/sessions/" + sessionId + "/frames")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"frameBase64\":\"dGVzdA==\"}"))
+                .andExpect(status().isForbidden());
+        verify(decisionEngine, never()).processFrame(any(), any(), any());
+
+        Mat frame = mock(Mat.class);
+        when(imageUtils.decodeBase64Frame(anyString())).thenReturn(frame);
+        when(decisionEngine.processFrame(eq(session), eq(frame), eq(imageUtils)))
+                .thenReturn(FrameProcessResult.builder()
+                        .sessionId(sessionId).stage(LivenessStage.PASSIVE)
+                        .faceDetected(true).action("retry_passive").build());
+
+        mockMvc.perform(post("/api/v1/sessions/" + sessionId + "/frames")
+                        .header("X-Subject-Ref", "resident-42")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"frameBase64\":\"dGVzdA==\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.action").value("retry_passive"));
+    }
+
     @Test
     void submitFrame_activeSession_returns200() throws Exception {
         when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));

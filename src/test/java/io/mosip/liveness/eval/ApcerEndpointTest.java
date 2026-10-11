@@ -4,8 +4,6 @@ import io.mosip.liveness.audit.MetricsCollector;
 import io.mosip.liveness.audit.MetricsSnapshot;
 import io.mosip.liveness.dto.OperationalMetrics;
 import io.mosip.liveness.core.PadAttackType;
-import io.mosip.liveness.metrics.PipelineTimers;
-import io.mosip.liveness.services.PassiveScoringService;
 import io.mosip.liveness.api.RateLimitCounters;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,9 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * by simulating what MetricsController does.
  */
 class ApcerEndpointTest {
-
-    @Mock
-    private PassiveScoringService passiveScoringService;
 
     @Mock
     private RateLimitCounters rateLimitCounters;

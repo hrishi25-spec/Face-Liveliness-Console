@@ -19,7 +19,9 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -32,6 +34,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code RouteInventory}'s two lists, so adding an endpoint forces the
  * decision — the same reason {@code scripts/check-project-boundaries.mjs}
  * exists for documentation.</p>
+ *
+ * <p>The classification is not the whole story for a session-scoped route: those
+ * are also only reachable by their owner, and {@code SessionOwnershipFilter}
+ * decides that from {@code RouteInventory.SESSION_SCOPED}. A new endpoint under
+ * {@code /api/v1/sessions/{sessionId}} therefore has to appear in that list too,
+ * or it is guarded by nothing — which is what
+ * {@link #everySessionScopedRouteOptsIntoOwnership} fails on, since the filter
+ * itself has no per-handler call that could be forgotten.</p>
  *
  * <p>The split lives in {@code RouteInventory} (main code) because
  * {@code AdminKeyFilter} and {@code RateLimitFilter} both read it; this test
@@ -58,6 +68,7 @@ class ApiRouteInventoryTest {
         Set<String> discovered = new TreeSet<>(discoverRoutes().keySet());
         Set<String> classified = new TreeSet<>(RouteInventory.CLIENT_FACING);
         classified.addAll(RouteInventory.ADMIN_KEYED);
+        classified.addAll(RouteInventory.SESSION_SCOPED);
 
         Set<String> unclassified = new TreeSet<>(discovered);
         unclassified.removeAll(classified);
@@ -76,6 +87,97 @@ class ApiRouteInventoryTest {
         Set<String> both = new TreeSet<>(RouteInventory.CLIENT_FACING);
         both.retainAll(RouteInventory.ADMIN_KEYED);
         assertTrue(both.isEmpty(), "A route cannot be both open and keyed: " + both);
+    }
+
+    /**
+     * A route that carries a session id is session-scoped whether or not anyone
+     * said so, and {@code SessionOwnershipFilter} only guards what
+     * {@code RouteInventory.SESSION_SCOPED} lists — so a new endpoint under a
+     * session path that is missing from that list is reachable by anybody. This is
+     * the test that makes forgetting the opt-in a failure instead of an open
+     * route: the filter has no call inside a handler to leave out, and no other
+     * check would notice.
+     */
+    @Test
+    void everySessionScopedRouteOptsIntoOwnership() {
+        Set<String> discovered = new TreeSet<>(discoverRoutes().keySet());
+
+        Set<String> unguarded = new TreeSet<>();
+        for (String route : discovered) {
+            if (pathOf(route).contains("/{sessionId}")
+                    && !RouteInventory.SESSION_SCOPED.contains(route)) {
+                unguarded.add(route);
+            }
+        }
+        assertTrue(unguarded.isEmpty(),
+                "Session-scoped route(s) missing from RouteInventory.SESSION_SCOPED: " + unguarded
+                        + " — add each there, or nothing checks who may reach it: the "
+                        + "ownership filter guards the list, not the path shape.");
+
+        Set<String> stale = new TreeSet<>(RouteInventory.SESSION_SCOPED);
+        stale.removeAll(discovered);
+        assertTrue(stale.isEmpty(),
+                "Session-scoped route(s) no longer declared: " + stale
+                        + " — remove them from RouteInventory too, so the list stays the truth.");
+
+        // A session-scoped route is reached with the owner's own header, never the
+        // admin key: if one lands in ADMIN_KEYED the two filters both claim it and
+        // the owner cannot reach their own session.
+        Set<String> keyed = new TreeSet<>(RouteInventory.SESSION_SCOPED);
+        keyed.retainAll(RouteInventory.ADMIN_KEYED);
+        assertTrue(keyed.isEmpty(), "A session-scoped route cannot also be admin-keyed: " + keyed);
+    }
+
+    /**
+     * The ownership filter reads the session id off the path through
+     * {@code RouteInventory.sessionIdIn}, so its matcher has to agree with the
+     * list: every session-scoped route must yield its own id, and no other route
+     * may yield one — a filter that guards too little is an open route, and one
+     * that guards too much refuses a request that has no session to own.
+     */
+    @Test
+    void theOwnershipGuardMatchesExactlyTheSessionScopedRoutes() {
+        for (String route : RouteInventory.SESSION_SCOPED) {
+            assertEquals(SESSION_ID,
+                    RouteInventory.sessionIdIn(verbOf(route), sessionPathOf(route)),
+                    "SessionOwnershipFilter would not read the id off " + route
+                            + " — listed as session-scoped, but the id is not matched");
+        }
+
+        Set<String> others = new TreeSet<>(RouteInventory.CLIENT_FACING);
+        others.addAll(RouteInventory.ADMIN_KEYED);
+        others.removeAll(RouteInventory.SESSION_SCOPED);
+        for (String route : others) {
+            assertNull(RouteInventory.sessionIdIn(verbOf(route), samplePathOf(route)),
+                    "SessionOwnershipFilter would refuse " + route
+                            + " — a route with no session of its own must never match");
+        }
+    }
+
+    /**
+     * The shape of the gate, not just its agreement with the list: what is not a
+     * session-scoped request must pass, and what looks like one must not be
+     * reachable by spelling it differently.
+     */
+    @Test
+    void onlyASessionScopedRequestIsGuarded() {
+        // Creation has no session to own yet — it is the route that decides the owner.
+        assertNull(RouteInventory.sessionIdIn("POST", "/api/v1/sessions"));
+        // The verb is part of the route, and a browser's preflight OPTIONS cannot
+        // carry the ownership claim (custom headers are not sent on it), so it has
+        // to reach the CORS processor rather than being refused as a stranger.
+        assertNull(RouteInventory.sessionIdIn("OPTIONS", sessionPathOf("POST /api/v1/sessions/{sessionId}/frames")));
+        assertNull(RouteInventory.sessionIdIn("PUT", sessionPathOf("GET /api/v1/sessions/{sessionId}")));
+        // A resolved path lands on the route it resolves to, as with the admin guard.
+        assertEquals(SESSION_ID, RouteInventory.sessionIdIn("GET", "/api/v1/sessions/./" + SESSION_ID));
+        // And a walk that leaves the session tree lands on a path with no id in it.
+        assertNull(RouteInventory.sessionIdIn("GET", "/api/v1/config/../sessions"));
+        // The id is one segment: a deeper path is not the route above it.
+        assertNull(RouteInventory.sessionIdIn("POST",
+                "/api/v1/sessions/" + SESSION_ID + "/frames/extra"));
+        // And a path with no id at all is nobody's session.
+        assertNull(RouteInventory.sessionIdIn("GET", "/api/v1/sessions"));
+        assertNull(RouteInventory.sessionIdIn("GET", "/api/v1/sessions/"));
     }
 
     /**
@@ -133,13 +235,26 @@ class ApiRouteInventoryTest {
         assertTrue(RouteInventory.isAdminRoute("PUT", "/api/v1/config/../config/RESIDENT"));
     }
 
+    /** A fixed, well-formed session id, so a matched segment is readable as the id. */
+    private static final String SESSION_ID = "5c8f1c9e-0000-4000-8000-000000000001";
+
     private static String verbOf(String route) {
         return route.substring(0, route.indexOf(' '));
     }
 
+    /** The route's path template, without its verb. */
+    private static String pathOf(String route) {
+        return route.substring(route.indexOf(' ') + 1);
+    }
+
     /** The template with its variables filled in, as a real request would spell it. */
     private static String samplePathOf(String route) {
-        return route.substring(route.indexOf(' ') + 1).replaceAll("\\{[^}]+}", "sample");
+        return pathOf(route).replaceAll("\\{[^}]+}", "sample");
+    }
+
+    /** The template with {@code {sessionId}} filled in, as a real session request would spell it. */
+    private static String sessionPathOf(String route) {
+        return pathOf(route).replace("{sessionId}", SESSION_ID);
     }
 
     /** Every mapping declared on every controller in the engine, mapped to its handler. */
