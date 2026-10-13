@@ -800,6 +800,7 @@ parallel, independent jobs so one failure cannot cancel the other.
 | --- | --- | --- |
 | Project boundaries | `node scripts/check-project-boundaries.mjs` | Guidance per project, project-map entries, no cross-scope toolchain instructions, **every documented verification command actually runs in CI**, and **every CI gate is documented**. |
 | Packaged jar boots | `./scripts/smoke-jar.sh` | The fat jar boots and reports the engine available. |
+| Windows launcher | `pwsh -NoProfile -File ./scripts/smoke-windows-launcher.ps1` | The full jar boots through `start.bat` on Windows — JDK probe, port check, `/health` wait and engine report — with a JDK under a path with a space. |
 | Jar size | `./scripts/check-jar-size.sh 'target/pad-liveness-backend-*-slim.jar' 110 'slim jar'` | Size ceilings (110 MiB slim / 245 MiB full — pass the pattern, ceiling and label). |
 | Cold boot median | `./scripts/boot-median.sh` | Median of 5 cold-cache boots under budget. |
 | Docker image | `./scripts/smoke-docker.sh` | Image builds, boots, non-root, `/health` ok. |
@@ -809,13 +810,13 @@ declares it in the root map with `boundary-allow-no-ci: <reason>`; a single line
 `boundary-allow: <reason>` to exempt a legitimate exception. Both are printed with their
 reason on every run, so escapes stay visible instead of silently weakening the gate.
 
-### 16.3 CI jobs (13)
+### 16.3 CI jobs (14)
 
 `test` (Unit / Integration matrix) · `console` · `boundaries` · `secrets` · `python-backend` ·
-`cross-backend` · `android-client` · `package` (full + slim matrix) · `docker` · `boot-time` ·
-`schema` · `release` (tag only) · `docker-release` (tag only).
+`cross-backend` · `android-client` · `package` (full + slim matrix) · `windows-launcher` ·
+`docker` · `boot-time` · `schema` · `release` (tag only) · `docker-release` (tag only).
 
-Every push and pull request runs the first eleven (`release` and `docker-release` are gated on a
+Every push and pull request runs the first twelve (`release` and `docker-release` are gated on a
 `refs/tags/v*` ref); tags additionally publish a GitHub Release with both jars plus `.sha256`
 checksums, and a `ghcr.io` image. Artifact uploads are gated on the
 default branch or a `v*` tag, so no fork can write to storage.
@@ -829,6 +830,13 @@ default branch or a `v*` tag, so no fork can write to storage.
 - **Packaging** — the test jobs run against `target/classes` with the full `~/.m2` classpath,
   so they cannot catch a packaging-only regression (lost natives, wrong `Start-Class`,
   truncated repackage).
+- **Windows launcher** — every other gate runs on Linux, so nothing that ships to a Windows
+  user was executed. `start.bat` reads `java -version` (stderr) through `cmd.exe`, which strips
+  the quotes around an executable in a piped `for /f`, so a JDK under `C:\Program Files` was read
+  as `C:\Program` — invisible on a runner whose JDK sits in `C:\hostedtoolcache`. The job installs
+  a JDK under Program Files on purpose, and the smoke script refuses to run against one whose
+  path has no space, so a green run cannot mean the quoting path was skipped. It also boots the
+  full jar through the launcher, which is the only place its Windows OpenCV native is loaded.
 
 ---
 

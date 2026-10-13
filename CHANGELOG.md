@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 2026-10-11
 
+<<<<<<< Updated upstream
 ### Changed — A capture budget on the browser console, and a configurable analysis cap
 
 - The console sent the camera's **native** frame: 1280x720 on a webcam that
@@ -86,6 +87,42 @@ All notable changes to this project will be documented in this file.
 - `BackendPerFrameLatencyTest` now measures two workloads (`repeated-frame`,
   `distinct-frames`) and labels them in the results line, because a memoized
   backend makes a repeated input measure nothing.
+=======
+### Added — Windows launcher boot gate
+
+- Every gate in this repository ran on Linux, so the two things a Windows user
+  actually touches were covered by hand only: `start.bat`, and the Windows
+  native inside the full jar. The launcher's version probe read `java -version`
+  — which prints on stderr — through `cmd.exe`, and cmd strips the quotes around
+  an executable when a `for /f` command contains a pipe, so a JDK under
+  `C:\Program Files` was read as the path `C:\Program` and the launcher gave up
+  before starting anything. The probe now writes the banner to a file and
+  `findstr`s it, and nothing could have caught that shape coming back: a Linux
+  runner has no `cmd.exe`, and a Windows runner's own JDK sits in
+  `C:\hostedtoolcache`, a path with no space in it to strip quotes around.
+- `scripts/smoke-windows-launcher.ps1` boots the packaged full jar through
+  `start.bat --no-build` and asserts what the launcher printed: `[ok] JDK
+  <major> -> <the JDK under test>`, the port free, `[ok] Service is up`, `Engine
+  available` (a live `/health` read — the Windows half of what
+  `scripts/smoke-jar.sh` asserts on Linux) and `[ok] Stopped`. It reads the jar
+  name back out of `start.bat` rather than repeating it, so it cannot assert
+  against a jar the launcher would not find; it asserts the resolved JDK is the
+  one under test, so a silent fall back to another JDK fails instead of passing
+  vacuously; and it closes the launcher's stdin, because `pause` otherwise waits
+  for a keypress no CI job can send. Anything left listening on the port is
+  killed even when an assertion fails after the boot.
+- It refuses to run at all against a JDK whose path has no space (exit 2): on
+  such a machine the check would pass without covering the quoting path at all,
+  and a green run would mean nothing. Also exit 2 with no packaged jar, or with
+  only the `-slim` one — that profile keeps linux/x86_64 natives only, so on
+  Windows it boots and then reports the engine unavailable by design.
+- CI: a *Windows launcher (full jar)* job on `windows-latest` installs Temurin
+  21 under `C:\Program Files` with Chocolatey — the JDK version this launcher
+  used to reject, installed the way `winget` installs it locally — packages the
+  full jar with the same Maven command the packaging job runs, and boots it
+  through the launcher. The README gate table lists the new job and the PRD
+  moved to 14 jobs; the *Project boundaries* gate checks both sides.
+>>>>>>> Stashed changes
 
 ### Changed — Session ownership moved into a filter, and a new session route cannot skip it
 

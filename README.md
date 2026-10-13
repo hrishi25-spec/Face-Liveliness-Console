@@ -157,6 +157,8 @@ start.bat                  rem Windows
 | `--port N` | serve on port N (default 8000) |
 | `--profile NAME` | Spring profile: `dev` (H2, default) or `default` (PostgreSQL) |
 | `--no-browser` | do not open a browser |
+| `--doctor` | `start.bat` only: report what would block a start — JDK, port and jar, plus the engine: the live `/health` of a service already on the port, or the jar's Windows-native entries when nothing is running. Never builds, starts or stops anything. Exits 1 when something would block a start. |
+| `--help` | show the options and exit |
 
 A successful launch looks like:
 
@@ -172,10 +174,13 @@ A successful launch looks like:
 ```
 
 Press `Ctrl+C` (or any key in the Windows window) to stop the service cleanly.
-Both scripts fail fast with an actionable message if the JDK is too old, the port
-is taken, the build breaks, or the service never becomes healthy.
 
-### 2. Browser console
+On **Windows** the launcher to use is `start.bat`; the older minimal `run.bat` is
+kept for compatibility only. It needs a stock JDK 17+, and the arrangement CI
+tests is an install under `C:\Program Files\Eclipse Adoptium` — what
+`winget install EclipseAdoptium.Temurin.21.JDK` gives you — because that space in
+the path is what used to break `start.bat`'s version probe. See
+[Tests and gates](#tests-and-gates) for the gate and how to run it locally.
 
 `http://localhost:8000/` serves a **zero-dependency test console** that drives the
 real API — no build step and no CDN, so it works fully offline. It creates a
@@ -357,6 +362,7 @@ Maven because Maven cannot reach what they check:
 | Project boundaries (guidance, instruction scope, documented gates) | `node scripts/check-project-boundaries.mjs` | *Project boundaries* |
 | Secret scan (committed credentials, keys, real biometrics) | `./scripts/check-secrets.sh` | *Secret scan* |
 | Packaged jar boots and serves | `./scripts/smoke-jar.sh` | *Package … jar* |
+| Windows launcher boots the full jar (JDK under a path with a space) | `pwsh -NoProfile -File ./scripts/smoke-windows-launcher.ps1` | *Windows launcher (full jar)* |
 | Jar size ceiling | `./scripts/check-jar-size.sh 'target/pad-liveness-backend-*-slim.jar' 110 'slim jar'` | *Package … jar* |
 | Cold boot time (median of 5) | `./scripts/boot-median.sh` | *Cold boot time (median)* |
 | Docker image boots, non-root, `/health` ok | `./scripts/smoke-docker.sh` | *Docker image* |

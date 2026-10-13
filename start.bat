@@ -7,6 +7,7 @@ rem    start.bat --no-build      skip Maven and launch the existing jar (fast)
 rem    start.bat --rebuild       clean build + full test suite
 rem    start.bat --port 9000     serve on a different port
 rem    start.bat --no-browser    do not open a browser
+rem    start.bat --doctor        report what would block a start, without starting
 rem    start.bat --profile prod  run against PostgreSQL instead of H2
 rem ============================================================================
 setlocal EnableExtensions EnableDelayedExpansion
@@ -18,6 +19,7 @@ set "DO_BUILD=1"
 set "DO_CLEAN=0"
 set "RUN_TESTS=0"
 set "OPEN_BROWSER=1"
+set "DOCTOR=0"
 set "JAR=target\pad-liveness-backend-1.0.0-SNAPSHOT.jar"
 set "LOG=target\mossip-startup.log"
 set "JAVA_BIN="
@@ -45,6 +47,7 @@ if /i "%~1"=="--no-build" ( set "DO_BUILD=0" & shift & goto parse )
 if /i "%~1"=="--rebuild"  ( set "DO_BUILD=1" & set "DO_CLEAN=1" & set "RUN_TESTS=1" & shift & goto parse )
 if /i "%~1"=="--test"     ( set "RUN_TESTS=1" & shift & goto parse )
 if /i "%~1"=="--no-browser" ( set "OPEN_BROWSER=0" & shift & goto parse )
+if /i "%~1"=="--doctor"    ( set "DOCTOR=1" & shift & goto parse )
 echo [X] Unknown option: %~1  (try start.bat --help)
 exit /b 2
 :parsed
@@ -71,8 +74,15 @@ if not defined JAVA_BIN (
   exit /b 1
 )
 
+rem java prints its version banner on stderr. Probe it through a file rather than
+rem a pipe inside for /f: cmd.exe strips the quotes around the executable when a
+rem for /f command contains a pipe, so a JDK under "C:\Program Files" is read as
+rem the path "C:\Program" and the version cannot be determined.
 set "JVER="
-for /f "tokens=3" %%v in ('"%JAVA_BIN%" -version 2^>^&1 ^| findstr /i "version"') do if not defined JVER set "JVER=%%v"
+set "JVERFILE=target\java-version.txt"
+"%JAVA_BIN%" -version > "%JVERFILE%" 2>&1
+for /f "tokens=3" %%v in ('findstr /i "version" "%JVERFILE%"') do if not defined JVER set "JVER=%%v"
+del "%JVERFILE%" >nul 2>&1
 if defined JVER set "JVER=!JVER:"=!"
 if not defined JVER (
   echo [X] Could not determine the Java version from "%JAVA_BIN%".
@@ -89,6 +99,10 @@ if !JMAJOR! LSS 17 (
   exit /b 1
 )
 echo [ok] JDK !JMAJOR! -^> %JAVA_BIN%
+
+rem The doctor reports and stops here: building or launching is the opposite of
+rem what it is for, and a usable JDK is a precondition for the checks below.
+if "%DOCTOR%"=="1" goto doctor
 
 rem ---------------------------------------------------------------- 2. find Maven
 set "MVN="
@@ -154,17 +168,17 @@ for /l %%i in (1,1,120) do (
       if not errorlevel 1 set "READY=1"
     ) else (
       rem No curl (pre-1803 Windows): fall back to a fixed wait.
-      timeout /t 1 /nobreak >nul 2>&1
+      call :sleep1
       set /a WAITED+=1
       if !WAITED! GEQ 45 set "READY=1"
     )
-    if "!READY!"=="0" timeout /t 1 /nobreak >nul 2>&1
+    if "!READY!"=="0" call :sleep1
   )
 )
 
 if not "!READY!"=="1" (
   echo.
-  echo [!] The service did not become healthy in time.
+  echo [X] The service did not become healthy in time.
   if exist "%LOG%" (
     echo     Last lines of %LOG%:
     echo     ------------------------------------------------------------
@@ -205,6 +219,13 @@ echo [ok] Stopped
 exit /b 0
 
 rem ---------------------------------------------------------------- subroutines
+rem One-second pause. "timeout /t 1" cannot be used: Git for Windows ships a
+rem coreutils timeout.exe ahead of System32 on PATH, which rejects "/t", and
+rem System32's own timeout.exe refuses to wait when stdin is redirected.
+:sleep1
+ping -n 2 127.0.0.1 >nul 2>&1
+exit /b 0
+
 :stopservice
 set "APPPID="
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /i "LISTENING" ^| findstr /c:":%PORT% "') do set "APPPID=%%p"
@@ -218,6 +239,134 @@ rem Close the service console window if it is still around.
 taskkill /F /FI "WINDOWTITLE eq MOSIP Liveness Service*" >nul 2>&1
 exit /b 0
 
+rem ------------------------------------------------------------------- doctor
+rem start.bat --doctor: report whether each of the preconditions to a successful
+rem start looks OK - JDK, port, jar and (when nothing is running) the OpenCV
+rem engine. When something is already on the port, it reports the live state of
+rem that /health endpoint instead of pretending it can inspect the jar. It never
+rem builds, launches or kills anything, so it is safe to run while diagnosing.
+rem Exit code 0 when nothing would block a start, 1 when something would, which
+rem makes it usable from a script as well as by hand.
+:doctor
+echo  Self-check only - nothing is built, started or stopped
+echo  ------------------------------------------------------------------
+set "DFAIL=0"
+
+rem ------------------------------------------------------------- port ----
+set "PORTPID="
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /i "LISTENING" ^| findstr /c:":%PORT% "') do if not defined PORTPID set "PORTPID=%%p"
+if not defined PORTPID (
+  echo [ok] Port     %PORT% is free
+  goto doctor_jar
+)
+rem Something is listening. Ask it whether it is this service: only our own
+rem /health answers with an "engine" field, so any other HTTP app holding the
+rem port must be reported as a conflict, not as a running instance.
+set "HEALTHJSON="
+for /f "delims=" %%E in ('curl -s -f -m 2 "http://127.0.0.1:%PORT%/health" 2^>nul') do if not defined HEALTHJSON set "HEALTHJSON=%%E"
+set "ISOURS="
+echo !HEALTHJSON! | findstr /c:"engine" >nul 2>&1 && set "ISOURS=1"
+if not defined ISOURS (
+  echo [X] Port     %PORT% is in use by PID !PORTPID!, and /health did not answer as this service
+  echo        stop that process, or use another port:  start.bat --port 8001
+  set /a DFAIL+=1
+  goto doctor_jar
+)
+rem The marker here is "[.]", not the "[!]" this script might otherwise use:
+rem with EnableDelayedExpansion on, cmd eats a literal "!" anywhere on a line -
+rem a lone one prints as "[]", and one that can pair with a later !var! swallows
+rem the text between them. %PORTPID% is safe because this line runs after the
+rem loop above, not inside a block.
+echo [.] Port     %PORT% already serves this service ^(PID %PORTPID%^) - the engine line below is live
+
+:doctor_jar
+rem -------------------------------------------------------------- jar ----
+if not exist "%JAR%" goto doctor_jar_missing
+set "JSIZE="
+for %%A in ("%JAR%") do set "JSIZE=%%~zA"
+if not defined JSIZE goto doctor_jar_missing
+set /a JMB=!JSIZE! / 1048576
+echo [ok] Jar      %JAR% ^(!JMB! MiB^)
+goto doctor_engine
+
+:doctor_jar_missing
+echo [X] Jar      %JAR% is missing - there is nothing to launch
+set "HAVE_MAVEN="
+if exist "mvnw.cmd" set "HAVE_MAVEN=1"
+if not defined HAVE_MAVEN for %%i in (mvn.cmd) do if not "%%~$PATH:i"=="" set "HAVE_MAVEN=1"
+if defined HAVE_MAVEN (
+  echo        run start.bat once and it builds the jar with Maven
+) else (
+  echo        and no Maven was found either - install it, or restore a built jar
+)
+set /a DFAIL+=1
+
+:doctor_engine
+rem ------------------------------------------------------------ engine ----
+rem /health is the authoritative answer here, because it reports
+rem AppConfig.isOpenCvAvailable - the natives having actually loaded on this
+rem machine, which no amount of inspecting the jar can prove.
+if defined HEALTHJSON goto doctor_engine_live
+if not exist "%JAR%" goto doctor_done
+rem Otherwise inspect what this jar would load on Windows. The full build nests
+rem every platform inside the openpnp jar; the -Pslim profile keeps linux/x86_64
+rem only, which is exactly the jar that boots on Windows and then rejects every
+rem frame as engine-unavailable.
+set "JAR_TOOL="
+if defined JAVA_BIN if exist "!JAVA_BIN:java.exe=jar.exe!" set "JAR_TOOL=!JAVA_BIN:java.exe=jar.exe!"
+if not defined JAR_TOOL if defined JAVA_HOME if exist "!JAVA_HOME!\bin\jar.exe" set "JAR_TOOL=!JAVA_HOME!\bin\jar.exe"
+if not defined JAR_TOOL (
+  echo [.] Engine   not verified: no jar.exe found to inspect the jar - boot once, then re-run this
+  goto doctor_done
+)
+set "JARLIST=target\jar-contents.txt"
+del "%JARLIST%" >nul 2>&1
+"!JAR_TOOL!" -tf "%JAR%" > "%JARLIST%" 2>nul
+if errorlevel 1 (
+  echo [.] Engine   not verified: jar.exe could not list the jar - boot once, then re-run this
+  del "%JARLIST%" >nul 2>&1
+  goto doctor_done
+)
+set "NATIVESTATE="
+findstr /i /b /c:"BOOT-INF/lib/opencv-" "%JARLIST%" >nul 2>&1 && set "NATIVESTATE=BOOT-INF/lib/opencv-*.jar, the full cross-platform build"
+if not defined NATIVESTATE (
+  findstr /i /b /c:"BOOT-INF/classes/nu/pattern/opencv/windows/" "%JARLIST%" >nul 2>&1 && set "NATIVESTATE=BOOT-INF/classes, windows natives unpacked"
+)
+del "%JARLIST%" >nul 2>&1
+if defined NATIVESTATE (
+  echo [ok] Engine   Windows OpenCV natives are bundled: !NATIVESTATE!
+  echo        that is what a fresh boot needs; /health is the live confirmation
+  goto doctor_done
+)
+echo [X] Engine   the jar carries no Windows OpenCV natives
+echo        built with -Pslim? that profile keeps linux/x86_64 only, so this jar
+echo        would boot here but report the engine unavailable to every frame
+echo        rebuild with:  mvnw.cmd clean package -DskipTests
+set /a DFAIL+=1
+goto doctor_done
+
+:doctor_engine_live
+set "ENGINE=unknown"
+echo !HEALTHJSON! | findstr /c:"\"engine\":\"available\"" >nul 2>&1 && set "ENGINE=available"
+echo !HEALTHJSON! | findstr /c:"\"engine\":\"unavailable\"" >nul 2>&1 && set "ENGINE=unavailable"
+if "!ENGINE!"=="available" (
+  echo [ok] Engine   loaded - the running service reports engine available
+goto doctor_done
+)
+echo [X] Engine   the running service reports engine !ENGINE!
+echo        it started, but OpenCV did not load on this platform - check the
+echo        startup log for the loader's own message
+set /a DFAIL+=1
+
+:doctor_done
+echo.
+if !DFAIL! EQU 0 (
+  echo [ok] Self-check passed - start.bat should start cleanly on port %PORT%
+  exit /b 0
+)
+echo [X] Self-check found !DFAIL! blocking problem^(s^) - fix them before starting
+exit /b 1
+
 :usage
 echo.
 echo  Usage: start.bat [options]
@@ -228,6 +377,7 @@ echo    --test          run tests during the build
 echo    --port N        serve on port N (default 8000)
 echo    --profile NAME  spring profile: dev (H2, default) or default (PostgreSQL)
 echo    --no-browser    do not open a browser
+echo    --doctor        report JDK, port, jar and OpenCV engine state, then exit
 echo    --help          show this help
 echo.
 exit /b 0

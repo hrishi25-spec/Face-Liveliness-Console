@@ -1,0 +1,968 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>README preview — MOSIP Face Liveness &amp; PAD Service</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 32px 16px 80px;
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: #ffffff; color: #1f2328;
+}
+.markdown-body { max-width: 900px; margin: 0 auto; }
+.markdown-body h1 { font-size: 2em; border-bottom: 1px solid #d1d9e0; padding-bottom: .3em; }
+.markdown-body h2 { font-size: 1.5em; border-bottom: 1px solid #d1d9e0; padding-bottom: .3em; margin-top: 1.6em; }
+.markdown-body h3 { font-size: 1.25em; margin-top: 1.4em; }
+.markdown-body code {
+  background: #eff1f3; padding: .2em .4em; border-radius: 6px;
+  font: 85% ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.markdown-body pre {
+  background: #f6f8fa; padding: 16px; border-radius: 6px; overflow: auto;
+}
+.markdown-body pre code { background: none; padding: 0; font-size: 85%; }
+.markdown-body table { border-collapse: collapse; display: block; overflow: auto; margin: 1em 0; }
+.markdown-body th, .markdown-body td { border: 1px solid #d1d9e0; padding: 6px 13px; }
+.markdown-body th { background: #f6f8fa; }
+.markdown-body blockquote {
+  margin: 1em 0; padding: .5em 1em; color: #59636e;
+  border-left: .25em solid #d1d9e0; background: #f6f8fa; border-radius: 0 6px 6px 0;
+}
+.markdown-body img { max-width: 100%; height: auto; }
+.markdown-body details {
+  border: 1px solid #d1d9e0; border-radius: 6px; padding: .5em 1em; margin: 1em 0; background: #fbfcfd;
+}
+.markdown-body summary { cursor: pointer; font-weight: 600; }
+.markdown-body hr { border: 0; border-top: 1px solid #d1d9e0; margin: 2em 0; }
+.markdown-body a { color: #0969da; text-decoration: none; }
+.markdown-body a:hover { text-decoration: underline; }
+.banner-note { max-width: 900px; margin: 0 auto 24px; font-size: 13px; color: #b35900;
+  background: #fff8e6; border: 1px solid #ffd591; border-radius: 6px; padding: 10px 14px; }
+@media (prefers-color-scheme: dark) {
+  body { background: #0d1117; color: #e6edf3; }
+  .markdown-body h1, .markdown-body h2 { border-color: #30363d; }
+  .markdown-body code { background: #262c36; }
+  .markdown-body pre { background: #161b22; }
+  .markdown-body th, .markdown-body td { border-color: #30363d; }
+  .markdown-body th { background: #161b22; }
+  .markdown-body blockquote { background: #161b22; color: #9198a1; border-color: #30363d; }
+  .markdown-body details { background: #161b22; border-color: #30363d; }
+  .markdown-body a { color: #4493f8; }
+  .banner-note { background: #2b2109; border-color: #9e6a03; color: #e3b341; }
+}
+</style>
+</head>
+<body>
+<div class="banner-note">
+  Local preview of <code>README.md</code>. Image slots (banner, diagrams, Swagger UI, demo)
+  are placeholders and will appear broken until real files are added to <code>assets/</code>.
+  The Mermaid diagram is shown as code because no renderer is bundled.
+</div>
+<div class="markdown-body">
+<p><a id="top"></a></p>
+<p align="center">
+  <!-- TODO: add banner.png (1280x640) -->
+  <img src="assets/banner.png" alt="MOSIP Face Liveness & PAD Service banner" width="800">
+</p>
+
+<h1 align="center">MOSIP Face Liveness &amp; PAD Service</h1>
+
+<p align="center"><b>Offline, vendor-independent face liveness and presentation-attack detection for the MOSIP Registration Client.</b></p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-TBD-lightgrey?style=flat-square" alt="License: TBD"></a>
+  <a href="pom.xml"><img src="https://img.shields.io/badge/Java-17-orange?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17"></a>
+  <a href="pom.xml"><img src="https://img.shields.io/badge/Spring%20Boot-3.3.3-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot 3.3.3"></a>
+  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/tests-132%20passing-brightgreen?style=flat-square" alt="Tests"></a>
+  <a href="#-quick-start"><img src="https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
+  <a href="#-api-reference"><img src="https://img.shields.io/badge/API-Swagger%20UI-85EA2D?style=flat-square&logo=swagger&logoColor=black" alt="API docs"></a>
+  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/ISO%2FIEC%2030107-aligned-blue?style=flat-square" alt="ISO/IEC 30107 aligned"></a>
+  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome"></a>
+</p>
+
+<p align="center"><b><a href="#-quick-start">Get Started</a> · <a href="#-key-features">Features</a> · <a href="#-how-it-works">How It Works</a> · <a href="#-api-reference">API</a> · <a href="#-architecture">Architecture</a> · <a href="#-configuration">Configuration</a> · <a href="#-contributing">Contributing</a></b></p>
+
+<hr>
+<blockquote>
+<p>⚠️ <strong>Disclaimer</strong></p>
+<ul>
+<li>This is an <strong>independent / community project</strong> and is not an official MOSIP product. <strong>[CONFIRM: affiliation with MOSIP]</strong> — the repository is maintained at <a href="https://github.com/hrishi25-spec/MOSSIP-Vibe-Coded"><code>hrishi25-spec/MOSSIP-Vibe-Coded</code></a> and its relation to the MOSIP organisation has not been confirmed.</li>
+<li>The bundled liveness and PAD logic is <strong>NOT certified</strong> against any standard.</li>
+<li>The shipped engines are <strong>mock / OpenCV-heuristic placeholders</strong>, not a trained or evaluated model. See <a href="#-testing--evaluation">Testing &amp; Evaluation</a>.</li>
+<li>A <strong>real, ISO/IEC 30107-3 evaluated model is required before any production use.</strong> Do not deploy this as a security control in its current state.</li>
+</ul>
+</blockquote>
+<h2>🎯 Overview</h2>
+<p>This service verifies that the face in front of the camera belongs to a <strong>live person physically present</strong> — not a printed photo, a phone or monitor replay, or a replayed video. It is built for the <a href="https://mosip.io/">MOSIP</a> Registration Client and covers three workflows:</p>
+<table>
+<thead>
+<tr>
+<th>Workflow</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Resident registration</strong></td>
+<td>Confirm a resident's face at enrolment, before it enters the registry.</td>
+</tr>
+<tr>
+<td><strong>Operator authentication</strong></td>
+<td>Confirm the operator logging in is physically present.</td>
+</tr>
+<tr>
+<td><strong>Supervisor authentication</strong></td>
+<td>Confirm the supervisor approving registrations is physically present.</td>
+</tr>
+</tbody>
+</table>
+<p>It is designed to run as a <strong>local process on the registration host</strong> so that liveness and PAD enforcement never depend on network availability. It consumes already-decoded frames, so it works with any compliant L0/L1 device without touching the device protocol.</p>
+<p>The active codebase is a <strong>Java 17 / Spring Boot 3</strong> REST service. A Python FastAPI implementation of the same contract is kept for reference (see <a href="#-python-reference-implementation">Python Reference Implementation</a>).</p>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>✨ Key Features</h2>
+<ul>
+<li><strong>Passive liveness first</strong> — a per-frame confidence score with <strong>temporal median voting</strong> (median, not mean, so a single blurred frame cannot swing the verdict).</li>
+<li><strong>Randomized active challenges</strong> — a challenge is selected with <code>SecureRandom</code> from the configured pool and never repeats back-to-back while alternatives remain.</li>
+<li><strong>Terminal PAD</strong> — a detected presentation attack fails the session immediately, with a distinct audit event. There is no retry after a PAD hit.</li>
+<li><strong>Per-workflow policy overrides</strong> — resident, operator and supervisor policies are stored per workflow and can be updated at runtime without a redeploy.</li>
+<li><strong>Offline-first design</strong> — all checks run locally; no mandatory cloud call.</li>
+<li><strong>Generic user messages</strong> — responses never reveal <em>why</em> a frame failed (print vs. screen vs. video), so attackers cannot probe the detector.</li>
+<li><strong>Audit trail and metrics</strong> — every decision is persisted to <code>audit_logs</code>; anonymized operational metrics are exposed at <code>/api/v1/metrics</code>.</li>
+<li><strong>Pluggable backends</strong> — a <code>LivenessBackend</code> SPI allows a mock, a TFLite MiniFASNet model, a MediaPipe FaceMesh model, or a vendor SDK to be swapped in without touching the API or UI.</li>
+<li><strong>Device adapters</strong> — vendor-agnostic frame sources for SBI L1 streams, L0 burst capture, and a mock device.</li>
+<li><strong>Evaluation harness</strong> — an ISO/IEC 30107-style APCER/BPCER/ACER harness (<code>AttackScenarioHarness</code>) that runs labeled presentations through the real engine pipeline.</li>
+</ul>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🧠 How It Works</h2>
+<p align="center"><img src="assets/decision-flow.png" alt="Decision flow diagram" width="800"></p>
+<!-- TODO: replace with real image -->
+
+<pre><code class="language-mermaid">flowchart TD
+    A[&quot;POST /api/v1/sessions&lt;br/&gt;workflow: RESIDENT | OPERATOR | SUPERVISOR&quot;] --&gt; B[&quot;POST /api/v1/sessions/{id}/frames&quot;]
+    B --&gt; C{&quot;Face detected?&quot;}
+    C -- &quot;no / multiple&quot; --&gt; B
+    C -- &quot;yes&quot; --&gt; D[&quot;PAD check (every frame)&quot;]
+    D -- &quot;attack&quot; --&gt; R1[&quot;action: reject&lt;br/&gt;session: FAILED&quot;]
+    D -- &quot;bona fide&quot; --&gt; E[&quot;Passive liveness score&quot;]
+    E --&gt; F{&quot;score &gt;= threshold?&quot;}
+    F -- &quot;yes&quot; --&gt; P[&quot;action: proceed&lt;br/&gt;session: PASSED&quot;]
+    F -- &quot;no&quot; --&gt; G[&quot;Issue randomized challenge&quot;]
+    G --&gt; H[&quot;POST /api/v1/sessions/{id}/challenges/validate&quot;]
+    H --&gt; I{&quot;Challenge passed?&quot;}
+    I -- &quot;yes, more required&quot; --&gt; G
+    I -- &quot;yes, enough&quot; --&gt; P
+    I -- &quot;no, retries left&quot; --&gt; G
+    I -- &quot;no, retries exhausted&quot; --&gt; R2[&quot;action: reject&lt;br/&gt;session: FAILED&quot;]
+</code></pre>
+<h3>Numbered walkthrough</h3>
+<ol>
+<li><strong>Create a session</strong> with a workflow, a <code>deviceId</code> and an optional <code>subjectRef</code>. The DB policy row for that workflow is resolved on every call.</li>
+<li><strong>Stream frames</strong> (<code>POST /api/v1/sessions/{id}/frames</code>). Each frame is decoded (base64 → OpenCV <code>Mat</code>), the face is detected, and <strong>PAD runs on every frame</strong>. If the face is missing or duplicated the response asks the client to retry passively.</li>
+<li><strong>PAD gate</strong> — an attack verdict fails the session immediately (<code>action: reject</code>, distinct audit event).</li>
+<li><strong>Passive score</strong> — at or above <code>passiveThreshold</code> the session passes (<code>action: proceed</code>); below it the session moves to the <code>ACTIVE</code> stage and a challenge is issued (<code>action: escalate_to_active</code>).</li>
+<li><strong>Validate and resolve</strong> (<code>POST .../challenges/validate</code>) with a frame burst. PAD runs across the burst first, then the action is evaluated: enough passed challenges pass the session, otherwise the client receives a fresh challenge (<code>action: retry_challenge</code>) or, once retries are exhausted, a rejection (<code>action: reject</code>).</li>
+</ol>
+<h3>Session states and terminal states</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Status</td>
+<td><code>ACTIVE</code></td>
+<td>Open and accepting frames.</td>
+</tr>
+<tr>
+<td>Status</td>
+<td><code>PASSED</code></td>
+<td>Liveness verified (terminal).</td>
+</tr>
+<tr>
+<td>Status</td>
+<td><code>FAILED</code></td>
+<td>Rejected — PAD attack, retries exhausted, or passive fail with active disabled (terminal).</td>
+</tr>
+<tr>
+<td>Status</td>
+<td><code>EXPIRED</code></td>
+<td>Closed by the client before a verdict (terminal).</td>
+</tr>
+<tr>
+<td>Stage</td>
+<td><code>PASSIVE</code></td>
+<td>Single-frame passive scoring + PAD.</td>
+</tr>
+<tr>
+<td>Stage</td>
+<td><code>ACTIVE</code></td>
+<td>Challenge-response window.</td>
+</tr>
+<tr>
+<td>Stage</td>
+<td><code>COMPLETED</code></td>
+<td>Session reached a verdict.</td>
+</tr>
+</tbody>
+</table>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🚀 Quick Start</h2>
+<p><strong>Prerequisites</strong> — <strong>JDK 17+</strong> (verified on JDK 21). Maven is <strong>not</strong> required if you use the bundled wrapper (<code>./mvnw</code>) or <a href="scripts/start.sh"><code>scripts/start.sh</code></a>. Docker is optional.</p>
+<p>All three options serve the API on port <strong>8000</strong> by default (<code>SERVER_PORT</code> overrides it). Once running:</p>
+<ul>
+<li>Browser console — <code>http://localhost:8000/</code></li>
+<li>Swagger UI — <code>http://localhost:8000/swagger-ui/index.html</code></li>
+<li>Health — <code>http://localhost:8000/health</code></li>
+</ul>
+<h3>Option 1 — Docker (PostgreSQL + API)</h3>
+<p>The <a href="Dockerfile"><code>Dockerfile</code></a> copies a <strong>pre-built</strong> jar (<code>COPY target/pad-liveness-backend-*.jar app.jar</code>) and is <strong>not</strong> multi-stage, so you must build the jar before <code>docker compose</code> can build the image:</p>
+<pre><code class="language-bash">./mvnw clean package            # produces target/pad-liveness-backend-1.0.0-SNAPSHOT.jar
+cp .env.example .env            # edit POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+docker compose up --build       # PostgreSQL 16 + API on http://localhost:8000
+</code></pre>
+<blockquote>
+<p>⚠️ The base image is <code>eclipse-temurin:17-jre-alpine</code>, which is <strong>musl</strong>-based. The native OpenCV library bundled by <code>org.openpnp:opencv:4.9.0-0</code> is a <strong>glibc</strong> build (it needs <code>libc.so.6</code>, <code>libstdc++.so.6</code>, <code>libgcc_s.so.1</code> and <code>ld-linux-x86-64.so.2</code>). On Alpine it therefore <strong>fails to load</strong>: the service still starts, but <code>/health</code> reports <code>"engine":"unavailable"</code> and every frame endpoint returns <strong>503</strong>. To make OpenCV work in Docker, switch the base image to a glibc variant (e.g. <code>eclipse-temurin:17-jre</code>) — <strong>[CONFIRM: verify the base image before publishing Docker as fully working]</strong>.</p>
+</blockquote>
+<h3>Option 2 — JAR with PostgreSQL (default profile)</h3>
+<pre><code class="language-bash">./mvnw clean package
+POSTGRES_HOST=localhost POSTGRES_USER=mosip POSTGRES_PASSWORD=change_me POSTGRES_DB=pad_liveness \
+  java -jar target/pad-liveness-backend-1.0.0-SNAPSHOT.jar
+</code></pre>
+<p>With the default profile, Flyway applies <a href="src/main/resources/db/migration/V1__init_schema.sql"><code>db/migration/V1__init_schema.sql</code></a> on startup and Hibernate only validates the schema (<code>ddl-auto: validate</code>).</p>
+<h3>Option 3 — Dev profile with H2 (no database, no Docker)</h3>
+<pre><code class="language-bash">./mvnw clean package
+java -jar target/pad-liveness-backend-1.0.0-SNAPSHOT.jar --spring.profiles.active=dev
+</code></pre>
+<p>The <code>dev</code> profile uses an in-memory H2 database (schema created by Hibernate, Flyway disabled) and enables the H2 console at <code>/h2-console</code>.</p>
+<h3>One command (<code>start.sh</code> / <code>start.bat</code>)</h3>
+<p><a href="scripts/start.sh"><code>scripts/start.sh</code></a> builds if needed, starts the service, waits for <code>/health</code>, then opens the console. Verified flags: <code>--no-build</code>, <code>--rebuild</code>, <code>--test</code>, <code>--port N</code>, <code>--profile NAME</code>, <code>--no-browser</code>; the default profile is <strong>dev (H2)</strong>. Run <code>./scripts/start.sh</code>.</p>
+<h3>End-to-end example (curl)</h3>
+<pre><code class="language-bash"># 1. Create a session
+SESSION_ID=$(curl -s -X POST localhost:8000/api/v1/sessions \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;workflowType&quot;:&quot;RESIDENT&quot;,&quot;deviceId&quot;:&quot;L1-CAM-01&quot;}' \
+  | python3 -c &quot;import sys,json;print(json.load(sys.stdin)['id'])&quot;)
+
+# 2. Submit a frame (base64 JPEG). Repeat until action != retry_passive.
+curl -s -X POST localhost:8000/api/v1/sessions/$SESSION_ID/frames \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &quot;{\&quot;frameBase64\&quot;:\&quot;$(base64 -w0 face.jpg)\&quot;}&quot;
+# -&gt; {&quot;stage&quot;:&quot;PASSIVE&quot;,&quot;action&quot;:&quot;proceed&quot;, ...}                     (passed)
+# -&gt; {&quot;stage&quot;:&quot;ACTIVE&quot;,&quot;action&quot;:&quot;escalate_to_active&quot;,&quot;challenge&quot;:{...}} (needs a challenge)
+
+# 3. If escalated: validate the challenge with a short burst of frames
+curl -s -X POST localhost:8000/api/v1/sessions/$SESSION_ID/challenges/validate \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &quot;{\&quot;challengeId\&quot;:\&quot;&lt;from previous response&gt;\&quot;,\&quot;framesBase64\&quot;:[\&quot;&lt;f1&gt;\&quot;,\&quot;&lt;f2&gt;\&quot;,\&quot;&lt;f3&gt;\&quot;]}&quot;
+# -&gt; {&quot;passed&quot;:true,&quot;action&quot;:&quot;proceed&quot;} | {&quot;passed&quot;:false,&quot;action&quot;:&quot;retry_challenge&quot;} | {&quot;action&quot;:&quot;reject&quot;}
+
+# 4. Fetch the audit trail
+curl -s localhost:8000/api/v1/sessions/$SESSION_ID/audit
+</code></pre>
+<p><code>face.jpg</code> must contain a detectable face; without the vendored Haar cascades in <a href="src/main/resources/"><code>src/main/resources/</code></a> no frame can pass (see <a href="#-architecture">Architecture</a>).</p>
+<p align="center"><img src="assets/demo.gif" alt="Demo of the active challenge flow in the browser console" width="800"></p>
+<!-- TODO: replace with real image -->
+
+<p><a href="#top">↑ Back to top</a></p>
+<h2>📡 API Reference</h2>
+<p>Base URL: <code>http://localhost:8000</code>. All request/response bodies are JSON with <strong>camelCase</strong> field names.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/health</code></td>
+<td>Liveness probe; reports whether OpenCV is loaded.</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/api/v1/sessions</code></td>
+<td>Create a session. Returns <strong>201</strong>.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/v1/sessions/{sessionId}</code></td>
+<td>Fetch session state.</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/api/v1/sessions/{sessionId}/close</code></td>
+<td>Close a session; returns a summary.</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/api/v1/sessions/{sessionId}/frames</code></td>
+<td>Submit one frame; runs passive liveness + PAD.</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/api/v1/sessions/{sessionId}/challenges/validate</code></td>
+<td>Validate a challenge over a frame burst.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/v1/sessions/{sessionId}/audit</code></td>
+<td>Full audit trail for a session.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/v1/config/{workflowType}</code></td>
+<td>Read the stored policy for a workflow.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/v1/config/{workflowType}/effective</code></td>
+<td>Read the computed effective policy.</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/api/v1/config/{workflowType}</code></td>
+<td>Update a workflow policy at runtime.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/v1/metrics</code></td>
+<td>Anonymized operational metrics.</td>
+</tr>
+</tbody>
+</table>
+<p><code>{workflowType}</code> is one of <code>RESIDENT</code>, <code>OPERATOR</code>, <code>SUPERVISOR</code>.</p>
+<p align="center"><img src="assets/swagger-ui.png" alt="Swagger UI showing the liveness endpoints" width="800"></p>
+<!-- TODO: replace with real image -->
+
+<h3>Frame submission</h3>
+<pre><code class="language-http">POST /api/v1/sessions/{sessionId}/frames
+Content-Type: application/json
+
+{ &quot;frameBase64&quot;: &quot;&lt;base64 JPEG (raw or data:image/jpeg;base64,...&gt;&quot; }
+</code></pre>
+<pre><code class="language-json">{
+  &quot;sessionId&quot;: &quot;5b1e...&quot;,
+  &quot;stage&quot;: &quot;ACTIVE&quot;,
+  &quot;faceDetected&quot;: true,
+  &quot;multipleFaces&quot;: false,
+  &quot;faceQuality&quot;: 0.87,
+  &quot;livenessScore&quot;: 0.42,
+  &quot;padFlag&quot;: false,
+  &quot;action&quot;: &quot;escalate_to_active&quot;,
+  &quot;challenge&quot;: {
+    &quot;challengeId&quot;: &quot;9f3c...&quot;,
+    &quot;challengeType&quot;: &quot;BLINK&quot;,
+    &quot;timeoutMs&quot;: 8000,
+    &quot;attemptNumber&quot;: 1
+  },
+  &quot;message&quot;: &quot;Please blink.&quot;
+}
+</code></pre>
+<p><code>action</code> is one of <code>proceed</code>, <code>escalate_to_active</code>, <code>reject</code>, <code>retry_passive</code>.</p>
+<h3>Challenge validation</h3>
+<pre><code class="language-http">POST /api/v1/sessions/{sessionId}/challenges/validate
+Content-Type: application/json
+
+{ &quot;challengeId&quot;: &quot;9f3c...&quot;, &quot;framesBase64&quot;: [&quot;&lt;f1&gt;&quot;, &quot;&lt;f2&gt;&quot;, &quot;&lt;f3&gt;&quot;] }
+</code></pre>
+<pre><code class="language-json">{
+  &quot;sessionId&quot;: &quot;5b1e...&quot;,
+  &quot;challenge&quot;: { &quot;id&quot;: &quot;c21a...&quot;, &quot;challengeType&quot;: &quot;SMILE&quot;, &quot;status&quot;: &quot;ISSUED&quot;, &quot;timeoutMs&quot;: 8000 },
+  &quot;passed&quot;: false,
+  &quot;action&quot;: &quot;retry_challenge&quot;,
+  &quot;message&quot;: &quot;We could not verify that action. Let's try a different one.&quot;
+}
+</code></pre>
+<p><code>action</code> is one of <code>proceed</code>, <code>retry_challenge</code>, <code>reject</code>. On <code>retry_challenge</code> the returned <code>challenge</code> is the <strong>newly issued</strong> one, ready for immediate validation.</p>
+<h3>Standard error format</h3>
+<pre><code class="language-json">{
+  &quot;error&quot;: &quot;INVALID_FRAME&quot;,
+  &quot;message&quot;: &quot;Frame could not be decoded as an image&quot;,
+  &quot;status&quot;: 422,
+  &quot;timestamp&quot;: &quot;2026-10-08T12:00:00Z&quot;
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th><code>error</code></th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td><code>VALIDATION_ERROR</code> / <code>BAD_REQUEST</code></td>
+<td>Bad request body or field validation failure.</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>NOT_FOUND</code></td>
+<td>Session, challenge or resource missing.</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>CONFLICT</code></td>
+<td>Session not active, or challenge already resolved.</td>
+</tr>
+<tr>
+<td>422</td>
+<td><code>INVALID_FRAME</code></td>
+<td>Frame is not valid base64 or not a decodable image.</td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>ENGINE_UNAVAILABLE</code></td>
+<td>OpenCV native library not loaded.</td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>INTERNAL_ERROR</code></td>
+<td>Unexpected server error (generic message only).</td>
+</tr>
+</tbody>
+</table>
+<p>Error messages are deliberately generic and never expose model internals, stack traces or PII.</p>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>⚙️ Configuration</h2>
+<p>Two configuration systems exist and populate the <strong>same</strong> <code>EffectivePolicy</code> shape from different sources. Know which one you are changing.</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Where</th>
+<th>Defaults</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Engine / library defaults</strong></td>
+<td><code>LivenessConfig</code> + <code>AppConfig</code> (<code>mosip.liveness.*</code> in <a href="src/main/resources/application.yml"><code>application.yml</code></a>)</td>
+<td>threshold <strong>0.80</strong>, min challenges <strong>2</strong>, timeout <strong>10000 ms</strong>, retries <strong>2</strong></td>
+<td>Embedded engine (<code>FaceLivenessEngine</code>), tests, harness</td>
+</tr>
+<tr>
+<td><strong>DB policy defaults</strong></td>
+<td><code>config_policies</code> seed in <a href="src/main/resources/db/migration/V1__init_schema.sql"><code>V1__init_schema.sql</code></a> and <code>ConfigController.getOrCreatePolicy()</code></td>
+<td>threshold <strong>0.75</strong>, min challenges <strong>1</strong>, timeout <strong>8000 ms</strong>, retries <strong>3</strong>, failure <strong>LOCK</strong>, challenges <code>[blink, smile, turn_left, turn_right]</code></td>
+<td>The <strong>REST API</strong> decision path</td>
+</tr>
+</tbody>
+</table>
+<p>The REST path (<code>DecisionEngineService</code>) reads <code>EffectivePolicy</code> from the DB row via <a href="src/main/java/io/mosip/liveness/services/ConfigService.java"><code>ConfigService</code></a> on <strong>every call</strong>. Fields the DB does not store are filled with hard-coded engine fallbacks: <code>minFaceQuality 0.50</code>, <code>passiveMinFrames 5</code>, <code>passiveWindowFrames 7</code>, <code>maxSessionDurationMs 30000</code>, <code>frameSamplingRate 2</code>, <code>frameSamplingMinFps 15</code>, <code>combinedPassiveWeight 0.4</code>, <code>combinedActiveWeight 0.6</code>.</p>
+<blockquote>
+<p>⚠️ The <code>LivenessConfig</code> and <code>MockLivenessBackend</code> Spring beans are created by <a href="src/main/java/io/mosip/liveness/app/config/AppConfig.java"><code>AppConfig</code></a> but are <strong>not consumed by the REST services</strong> — the REST path scores frames with OpenCV heuristics in <code>LivenessEngineService</code> / <code>PadEngineService</code> directly. <strong>[CONFIRM: whether the two config systems should be unified]</strong></p>
+</blockquote>
+<h3>Per-workflow policy fields</h3>
+<details>
+<summary><b>Full config policy reference</b></summary>
+
+| Field | Type | Range / values | DB default | Engine default |
+|-------|------|----------------|-----------|----------------|
+| `livenessEnabled` | boolean | `true` / `false` | `true` | `true` |
+| `passiveThreshold` | double | 0.0 – 1.0 | `0.75` | `0.80` |
+| `activeLivenessEnabled` | boolean | `true` / `false` | `true` | `true` |
+| `minChallengeCount` | int | 1 – 5 | `1` | `2` |
+| `challengeTypes` | string[] | challenge names | `["blink","smile","turn_left","turn_right"]` | all types |
+| `challengeTimeoutMs` | int | 1000 – 60000 | `8000` | `10000` |
+| `maxRetryCount` | int | 0 – 10 | `3` | `2` |
+| `onRepeatedFailure` | string | `LOCK` \| `ESCALATE` \| `ALLOW_RETRY` | `LOCK` | `LOCK_OUT` |
+| `minFaceQuality` | double | 0.0 – 1.0 | — (not stored) | `0.50` |
+| `passiveMinFrames` | int | ≥ 1 | — (not stored) | `5` |
+| `passiveWindowFrames` | int | ≥ `passiveMinFrames` | — (not stored) | `7` |
+
+</details>
+
+<h3>Changing policy at runtime</h3>
+<p><code>PUT /api/v1/config/{workflowType}</code> updates the stored row; the decision engine re-reads it on the next call, so <strong>no redeploy is required</strong>. Values are validated and rejected with <strong>400</strong> when out of range (e.g. <code>passiveThreshold</code> outside <code>[0,1]</code>, <code>challengeTimeoutMs &lt; 1000</code>).</p>
+<pre><code class="language-bash">curl -X PUT localhost:8000/api/v1/config/SUPERVISOR \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;passiveThreshold&quot;:0.90,&quot;minChallengeCount&quot;:2,&quot;maxRetryCount&quot;:1,&quot;onRepeatedFailure&quot;:&quot;LOCK&quot;}'
+</code></pre>
+<h3>Environment variables</h3>
+<p>From <a href=".env.example"><code>.env.example</code></a>, consumed by <a href="src/main/resources/application.yml"><code>application.yml</code></a>:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POSTGRES_HOST</code></td>
+<td><code>localhost</code></td>
+<td>JDBC URL</td>
+</tr>
+<tr>
+<td><code>POSTGRES_PORT</code></td>
+<td><code>5432</code></td>
+<td>JDBC URL</td>
+</tr>
+<tr>
+<td><code>POSTGRES_DB</code></td>
+<td><code>pad_liveness</code></td>
+<td>JDBC URL</td>
+</tr>
+<tr>
+<td><code>POSTGRES_USER</code></td>
+<td><code>mosip</code></td>
+<td>Datasource</td>
+</tr>
+<tr>
+<td><code>POSTGRES_PASSWORD</code></td>
+<td><code>change_me</code></td>
+<td>Datasource</td>
+</tr>
+<tr>
+<td><code>SERVER_PORT</code></td>
+<td><code>8000</code></td>
+<td>HTTP port</td>
+</tr>
+<tr>
+<td><code>APP_ENV</code>, <code>LOG_LEVEL</code></td>
+<td><code>development</code>, <code>INFO</code></td>
+<td>⚠️ declared in <code>.env.example</code> but <strong>not read by the Spring application</strong>; logging is controlled by <code>logging.level.*</code> in <code>application.yml</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🏗️ Architecture</h2>
+<p align="center"><img src="assets/architecture.png" alt="Architecture diagram" width="800"></p>
+<!-- TODO: replace with real image -->
+
+<pre><code>API layer (controllers)  →  services (decision / liveness / PAD)  →  engine + config
+        │                                                                    │
+        └────────────────────────── JPA repositories ────────────────────────┘
+                                                                             │
+   Device adapters  →  Frame  →  LivenessBackend SPI  →  Mock / TFLite / MediaPipe
+</code></pre>
+<h3>Packages</h3>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/api/"><code>io/mosip/liveness/api/</code></a></td>
+<td>REST controllers + <code>GlobalExceptionHandler</code>.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/services/"><code>io/mosip/liveness/services/</code></a></td>
+<td>Decision orchestration, OpenCV passive/PAD scoring, config bridging, challenge selection, image utilities.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/engine/"><code>io/mosip/liveness/engine/</code></a></td>
+<td>Standalone liveness state machine (<code>FaceLivenessEngine</code>, <code>LivenessSession</code>, <code>LivenessDecisionLogic</code>).</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/backend/"><code>io/mosip/liveness/backend/</code></a></td>
+<td><code>LivenessBackend</code> SPI + Mock, TFLite MiniFASNet and MediaPipe FaceMesh implementations.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/challenge/"><code>io/mosip/liveness/challenge/</code></a></td>
+<td><code>ChallengeEvaluators</code> (batch + per-frame) and <code>ChallengeSelector</code>.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/config/"><code>io/mosip/liveness/config/</code></a></td>
+<td><code>LivenessConfig</code>, <code>LivenessPolicy</code>, <code>EffectivePolicy</code>.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/core/"><code>io/mosip/liveness/core/</code></a></td>
+<td>Domain types: <code>Frame</code>, <code>FaceSignals</code>, <code>PadVerdict</code>, enums, error codes.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/device/"><code>io/mosip/liveness/device/</code></a></td>
+<td>Device adapter layer + MJPEG/pixel helpers + mock device.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/audit/"><code>io/mosip/liveness/audit/</code></a></td>
+<td>Structured audit logging and metrics collection.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/eval/"><code>io/mosip/liveness/eval/</code></a></td>
+<td>ISO/IEC 30107-style attack-scenario harness and PAD metrics.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/crud/"><code>io/mosip/liveness/crud/</code></a></td>
+<td>Spring Data JPA repositories.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/dto/"><code>io/mosip/liveness/dto/</code></a></td>
+<td>Request/response DTOs.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/models/"><code>io/mosip/liveness/models/</code></a></td>
+<td>JPA entities, enums, JSON converters.</td>
+</tr>
+<tr>
+<td><a href="src/main/java/io/mosip/liveness/client/"><code>io/mosip/liveness/client/</code></a></td>
+<td>HTTP client + Desktop/Android adapter examples.</td>
+</tr>
+</tbody>
+</table>
+<h3>Liveness backends</h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Model file</th>
+<th>What it does</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MockLivenessBackend</code></td>
+<td>none</td>
+<td>Fully scriptable <code>Subject</code> (face, blink, smile, turn, PAD verdicts) with per-frame signal overrides.</td>
+<td>Unit tests, CI, the attack harness. This is the only backend wired as a Spring bean.</td>
+</tr>
+<tr>
+<td><code>TfLiteMiniFasNetBackend</code></td>
+<td><code>*.tflite</code> via the required <code>modelPath</code> option</td>
+<td>Loads a TFLite model by <strong>reflection</strong>, crops the Haar-detected face to 80×80 (default <code>inputSize</code>) and classifies live vs print/screen-replay.</td>
+<td>Real PAD when a TFLite model and a TFLite runtime are on the classpath.</td>
+</tr>
+<tr>
+<td><code>MediaPipeFaceMeshBackend</code></td>
+<td><code>face_mesh.tflite</code> via the required <code>faceMeshModelPath</code> option</td>
+<td>468/478-point landmark extraction (192×192 input) for precise EAR, smile, head pose (<code>solvePnP</code>) and iris gaze; temporal liveness over a 15-frame rolling buffer.</td>
+<td>High-fidelity active-challenge evaluation.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ None of the real-model backends is wired by default — <code>AppConfig</code> returns <code>MockLivenessBackend</code>. The TFLite backend additionally requires a TFLite runtime that is not a declared dependency, so it cannot initialise as shipped.</p>
+</blockquote>
+<h3>Device adapters</h3>
+<table>
+<thead>
+<tr>
+<th>Adapter</th>
+<th>Role</th>
+<th>Key defaults</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SbiStreamDeviceAdapter</code></td>
+<td>Consumes an SBI L1 device's <code>GET /stream</code> MJPEG feed with reconnect backoff.</td>
+<td><code>streamPath=/stream</code>, <code>maxFps=15</code>, <code>maxReconnectAttempts=5</code>, backoff 200 ms → 4000 ms.</td>
+</tr>
+<tr>
+<td><code>BurstRCaptureDeviceAdapter</code></td>
+<td>Polls an L0 device's discrete <code>rCapture</code> <code>CaptureSource</code> at a target FPS.</td>
+<td><code>targetFps=10</code>, <code>maxConsecutiveFailures=3</code>.</td>
+</tr>
+<tr>
+<td><code>MockL0L1Device</code></td>
+<td>In-process simulated device rendering <code>SyntheticScene</code>, with failure injection and an embedded SBI HTTP server.</td>
+<td>scriptable (<code>failOnOpen</code>, frame corruption, disconnect).</td>
+</tr>
+</tbody>
+</table>
+<p>Supporting classes: <code>MjpegDecoder</code>, <code>PixelFormats</code>, <code>SyntheticScene</code>, <code>FrameListener</code>, <code>CaptureSource</code>, <code>DeviceCapabilities</code>.</p>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🎭 Challenge Types</h2>
+<p>Two evaluators exist with different mechanics. The <strong>REST path</strong> (<code>DecisionEngineService</code> → <code>LivenessEngineService</code>) evaluates challenges from OpenCV face/eye geometry; the <strong>engine path</strong> (<code>ChallengeEvaluators</code>) evaluates them from backend landmark signals.</p>
+<details>
+<summary><b>Challenge criteria (engine path — <code>ChallengeEvaluators</code>)</b></summary>
+
+| Challenge | Pass criterion | Threshold constants |
+|-----------|----------------|---------------------|
+| `BLINK` | EAR drops below close value, then recovers above open value. | close `0.22`, open `0.27` |
+| `SMILE` | Smile score exceeds threshold at least once. | `0.55` |
+| `TURN_HEAD_LEFT` / `TURN_HEAD_RIGHT` | \|yaw\| reaches the target angle. | `12°` |
+| `LOOK_DIRECTION` / `LOOK_UP` / `LOOK_DOWN` / `LOOK_LEFT` / `LOOK_RIGHT` | Gaze within tolerance of the target for ≥ 50% of frames. | tolerance `0.35` |
+| (per-frame UI) | Action confirmed after N frames → `HOLD_STILL`. | `ACTION_CONFIRM_FRAMES = 2` |
+
+</details>
+
+<details>
+<summary><b>Challenge criteria (REST path — <code>LivenessEngineService</code>)</b></summary>
+
+| Challenge (`models.enums.ChallengeType`) | Pass criterion | Threshold |
+|------------------------------------------|----------------|-----------|
+| `BLINK` | Eye cascade count reaches 0, then ≥ 1 in a later frame. | eye cascade |
+| `SMILE` | Mouth-ROI Laplacian variance range across frames exceeds a floor. | range > `50` |
+| `TURN_LEFT` / `TURN_RIGHT` | Face-box horizontal travel (egocentric mapping). | > `±15 px` |
+| `LOOK_LEFT` / `LOOK_RIGHT` | Face-box horizontal travel. | > `±10 px` |
+| `LOOK_DIRECTION` | \|face-box horizontal travel\| exceeds the gaze floor. | > `10 px` |
+| `LOOK_UP` / `LOOK_DOWN` | **Always fail closed** (vertical gaze is not recoverable from a horizontal face box). | `false` |
+
+**Note:** `LOOK_UP` and `LOOK_DOWN` can never pass in the REST path. Do not enable them for a workflow until vertical gaze tracking is implemented.
+
+</details>
+
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🔐 Security &amp; Privacy</h2>
+<ul>
+<li><strong>PAD is terminal.</strong> A presentation-attack verdict fails the session immediately, with a distinct <code>PAD_REJECTED</code> audit event. Retries are not offered.</li>
+<li><strong>Median, not mean.</strong> Temporal scoring uses the median of the sliding window so one anomalous frame cannot pass or fail a subject.</li>
+<li><strong>Randomized challenges.</strong> <code>SecureRandom</code> drives a shuffled bag so every allowed challenge appears before any repeats, and no challenge repeats back-to-back while alternatives remain.</li>
+<li><strong>No raw frames or model internals leave the process.</strong> Audit records and API responses contain decisions and scores, never frames, embeddings, or detector internals.</li>
+<li><strong>Generic failure messages.</strong> Every error maps through <code>LivenessErrorCode.userMessage()</code> (e.g. <em>"Face verification could not be completed. Please try again."</em>), so a client cannot learn which detector fired.</li>
+<li><strong>No PII in logs or device ids.</strong> Audit lines carry session id, workflow and decision fields only.</li>
+</ul>
+<h3>🔒 Security considerations</h3>
+<blockquote>
+<p><strong>The API has no authentication or authorization.</strong> There is no Spring Security dependency and no key/token check on any endpoint — including <code>PUT /api/v1/config/{workflowType}</code>, which lets any caller rewrite policy. CORS is restricted to <code>localhost</code> / <code>127.0.0.1</code> origins only.</p>
+</blockquote>
+<p>Until authentication is added, deploy this service <strong>only as a local or internal service</strong> bound to the registration host, and never expose it to an untrusted network. <strong>[CONFIRM: authentication requirements and threat model]</strong></p>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🧪 Testing &amp; Evaluation</h2>
+<h3>Running the tests</h3>
+<pre><code class="language-bash">./mvnw test          # full suite
+./mvnw clean package # build + full suite
+</code></pre>
+<p>The suite covers the engine state machine (pass, escalation, PAD blocking, error conditions), decision logic, all challenge evaluators and the selector, per-workflow config merging, every REST controller, the device adapter layer, entity persistence, and the attack harness. The most recent recorded Maven Surefire run reported <strong>132 tests, 0 failures</strong> across <strong>21 test classes</strong>. <strong>[CONFIRM: re-run <code>./mvnw test</code> and update this count if it has changed]</strong></p>
+<p><code>ImageUtilsCascadeTest</code> fails the build if the vendored Haar cascades are missing, so a build that silently disables face detection cannot pass.</p>
+<h3>The attack-scenario harness</h3>
+<p><code>AttackScenarioHarness</code> generates labeled presentations — <code>BONA_FIDE</code>, <code>PRINTED_PHOTO</code>, <code>SCREEN_REPLAY</code>, <code>VIDEO_REPLAY</code> — runs them end-to-end through the real <code>FaceLivenessEngine</code>, and reports <strong>APCER</strong>, <strong>BPCER</strong>, <strong>ACER</strong> (plus escalation rate) via <code>PadMetrics</code>.</p>
+<blockquote>
+<p>⚠️ <strong>These numbers are not a measure of real model accuracy.</strong> The harness uses <code>MockLivenessBackend</code> with <em>configured, simulated</em> imperfection rates — a <strong>3% attack-miss rate</strong> and a <strong>1% bona-fide false-positive rate</strong> (<code>SIMULATED_ATTACK_MISS_RATE</code>, <code>SIMULATED_BONAFIDE_FP_RATE</code>). It validates orchestration (PAD terminality, escalation, retries), not detection performance. Reporting them as ISO/IEC 30107-3 results would be misleading.</p>
+</blockquote>
+<p><strong>ISO/IEC 30107 alignment</strong> means <em>taxonomy- and telemetry-aligned</em>: PAD runs per frame, attack types map to the standard's species, and structured telemetry supports APCER/BPCER computation. <strong>Certification is not claimed and has not been performed.</strong></p>
+<p>For real numbers, swap in a real backend and a labeled corpus of physical presentations, then run the harness against it. No such corpus ships with this repository.</p>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🗺️ Project Status &amp; Roadmap</h2>
+<h3>Status and known limitations</h3>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Status</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>REST API (sessions, frames, challenges, config, metrics, audit)</td>
+<td>✅ Working</td>
+<td>Mock/heuristic-backed; endpoints and DTOs implemented and tested.</td>
+</tr>
+<tr>
+<td>Passive liveness + PAD used by the REST path</td>
+<td>⚠️ Heuristic placeholder</td>
+<td>OpenCV heuristics only: FFT energy (currently a hard-coded <code>0.1</code>, so the screen-replay branch never fires), texture variance, brightness.</td>
+</tr>
+<tr>
+<td>Pluggable backends (Mock / TFLite / MediaPipe)</td>
+<td>🚧 Not wired to the API</td>
+<td>Wired as Spring beans but unused by the REST path; TFLite backend cannot initialise without a TFLite runtime.</td>
+</tr>
+<tr>
+<td>Real PAD model</td>
+<td>❌ Not integrated</td>
+<td>No model file ships; requires a chosen runtime + evaluated model.</td>
+</tr>
+<tr>
+<td>Attack calibration corpus</td>
+<td>❌ Not available</td>
+<td>Only simulated proxy data; no labelled physical captures in-repo.</td>
+</tr>
+<tr>
+<td>API authentication</td>
+<td>❌ Not implemented</td>
+<td>No Spring Security; all endpoints including config writes are open.</td>
+</tr>
+<tr>
+<td>Device adapters (SBI stream, L0 burst, mock)</td>
+<td>✅ Implemented</td>
+<td>Tested in isolation; not wired into the REST request flow.</td>
+</tr>
+<tr>
+<td>Android / Flutter integration</td>
+<td>❌ Not implemented</td>
+<td>The engine is designed to be embedded; <code>client/</code> holds Desktop/Android adapter sketches only. <strong>[CONFIRM: Android delivery plan]</strong></td>
+</tr>
+<tr>
+<td>Docker deployment</td>
+<td>🚧 Caveated</td>
+<td>Requires a pre-built jar; Alpine base image likely cannot load OpenCV.</td>
+</tr>
+<tr>
+<td>ISO/IEC 30107-3 certification</td>
+<td>❌ Not done</td>
+<td>Taxonomy-aligned only.</td>
+</tr>
+</tbody>
+</table>
+<h3>Roadmap</h3>
+<ol>
+<li><strong>Unify configuration</strong> — one source of truth for thresholds across the engine and the REST path.</li>
+<li><strong>Integrate a real, evaluated PAD model</strong> behind <code>LivenessBackend</code> and remove the heuristics from the API path.</li>
+<li><strong>Add authentication</strong> and gate config writes.</li>
+<li><strong>Fix the Docker image</strong> (glibc base) and make the build multi-stage so <code>docker compose up --build</code> works from a clean checkout.</li>
+<li><strong>Collect a real attack corpus</strong> and publish genuine APCER/BPCER.</li>
+<li><strong>Implement vertical gaze</strong> so <code>LOOK_UP</code> / <code>LOOK_DOWN</code> can pass.</li>
+<li><strong>Wire the device adapters into the REST flow</strong> for a true end-to-end device demo.</li>
+</ol>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🔧 Extending the Project</h2>
+<h3>Add a backend</h3>
+<ol>
+<li>Implement <code>LivenessBackend</code> (<code>id</code>, <code>initialize</code>, <code>analyzeFrame</code>, <code>scorePassiveLiveness</code>, <code>assessPad</code>, <code>shutdown</code>).</li>
+<li>Return it from <code>AppConfig#livenessBackend()</code> (or inject it where the engine is constructed).</li>
+<li>No engine, UI or config changes are required.</li>
+</ol>
+<h3>Add a challenge type</h3>
+<ol>
+<li>Add the value to <code>core.ChallengeType</code> and <code>models.enums.ChallengeType</code>.</li>
+<li>Add an evaluator branch in <code>ChallengeEvaluators</code> (batch + per-frame) and/or <code>LivenessEngineService</code>.</li>
+<li>Generate any parameters in <code>ChallengeSelector.parametersFor()</code>.</li>
+</ol>
+<h3>Add a workflow</h3>
+<ol>
+<li>Add the value to <code>core.WorkflowType</code> and <code>models.enums.WorkflowType</code>.</li>
+<li>Map it in <code>ConfigService.toCoreWorkflow</code> / <code>toDbWorkflow</code>.</li>
+<li>Add a seed row in a new Flyway migration and, if needed, a <code>LivenessPolicy</code> override.</li>
+</ol>
+<h3>Add a device adapter</h3>
+<ol>
+<li>Implement <code>DeviceAdapter</code> (<code>open</code> → <code>startCapture</code> → <code>stopCapture</code> → <code>close</code>).</li>
+<li>Return a <code>DeviceCapabilities</code> that describes streaming vs. burst capture.</li>
+<li>Deliver normalized <code>Frame</code> objects to the <code>FrameListener</code>.</li>
+</ol>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🐍 Python Reference Implementation</h2>
+<p><a href="pad_liveness_backend/"><code>pad_liveness_backend/</code></a> is the <strong>original FastAPI + PostgreSQL implementation</strong> of the same REST contract, kept for reference and comparison. It uses Pydantic schemas, SQLAlchemy and Alembic migrations, and its engines are equally placeholders.</p>
+<p>The <strong>Java Spring Boot service in <a href="src/"><code>src/</code></a> is the active codebase.</strong> The Python backend is not built by the Maven project and is not maintained in lockstep with the Java service.</p>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>📁 Repository Layout</h2>
+<ul>
+<li><strong><a href="src/main/java/io/mosip/liveness/"><code>src/main/java/io/mosip/liveness/</code></a></strong> — active Java service (API, services, engine, backends, device, audit, eval, models).</li>
+<li><strong><a href="src/main/resources/"><code>src/main/resources/</code></a></strong> — <code>application.yml</code>, <code>application-dev.yml</code>, the Flyway migration, the browser console <a href="src/main/resources/static/index.html"><code>static/index.html</code></a>, and the vendored Haar cascades.</li>
+<li><strong><a href="src/test/java/io/mosip/liveness/"><code>src/test/java/io/mosip/liveness/</code></a></strong> — 21 test classes plus <code>MutableClock</code>, <code>RecordingAuditLogger</code>, <code>TestConfig</code>.</li>
+<li><strong><a href="pad_liveness_backend/"><code>pad_liveness_backend/</code></a></strong> — Python FastAPI reference implementation.</li>
+<li><strong><a href="docs/"><code>docs/</code></a></strong> — design and reference documentation (see below).</li>
+<li><strong><a href="training/"><code>training/</code></a></strong> — synthetic-data training pipeline for a MiniFASNet-style model (TensorFlow, not part of the build).</li>
+<li><strong><a href="scripts/"><code>scripts/</code></a></strong> — <a href="scripts/start.sh"><code>start.sh</code></a> and <a href="scripts/start.bat"><code>start.bat</code></a>.</li>
+<li><strong><a href="assets/"><code>assets/</code></a></strong> — README images (see <a href="assets/README.md"><code>assets/README.md</code></a>).</li>
+<li><strong><a href="pom.xml"><code>pom.xml</code></a></strong> — Maven build. <strong><a href="Dockerfile"><code>Dockerfile</code></a></strong> and <strong><a href="docker-compose.yml"><code>docker-compose.yml</code></a></strong> — container setup. <strong><a href=".env.example"><code>.env.example</code></a></strong> — environment template.</li>
+<li><strong><a href="docs/brain.md"><code>brain.md</code></a></strong> — internal reference for agents and maintainers.</li>
+</ul>
+<h3>Documentation</h3>
+<table>
+<thead>
+<tr>
+<th>Document</th>
+<th>What it covers</th>
+<th>Link</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Technical design</td>
+<td>Architecture, sequence flows, ISO mapping, evaluation methodology</td>
+<td><a href="docs/design.md"><code>docs/design.md</code></a></td>
+</tr>
+<tr>
+<td>Status report</td>
+<td>Feasibility findings, model blocker, caveats</td>
+<td><a href="docs/status-report.md"><code>docs/status-report.md</code></a></td>
+</tr>
+<tr>
+<td>Backend swapping</td>
+<td>How to replace the liveness/PAD backend</td>
+<td><a href="docs/backend-swapping.md"><code>docs/backend-swapping.md</code></a></td>
+</tr>
+<tr>
+<td>Configuration</td>
+<td>Full engine configuration reference</td>
+<td><a href="docs/configuration.md"><code>docs/configuration.md</code></a></td>
+</tr>
+<tr>
+<td>Client integration</td>
+<td>Integrating the engine into Desktop/Android clients</td>
+<td><a href="docs/client-integration-guide.md"><code>docs/client-integration-guide.md</code></a></td>
+</tr>
+<tr>
+<td>Agent reference</td>
+<td>The single-file codebase reference</td>
+<td><a href="docs/brain.md"><code>brain.md</code></a></td>
+</tr>
+<tr>
+<td>Environment template</td>
+<td>PostgreSQL + app environment variables</td>
+<td><a href=".env.example"><code>.env.example</code></a></td>
+</tr>
+<tr>
+<td>Container stack</td>
+<td>PostgreSQL + API compose definition</td>
+<td><a href="docker-compose.yml"><code>docker-compose.yml</code></a></td>
+</tr>
+<tr>
+<td>Python backend</td>
+<td>Reference implementation README</td>
+<td><a href="pad_liveness_backend/README.md"><code>pad_liveness_backend/README.md</code></a></td>
+</tr>
+</tbody>
+</table>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🤝 Contributing</h2>
+<ul>
+<li>Create a branch from the current default branch (<code>development</code>).</li>
+<li>Make <strong>one focused change per pull request</strong> and describe the <em>why</em>.</li>
+<li>Run the tests before opening a PR:</li>
+</ul>
+<p><code>bash
+  ./mvnw test</code></p>
+<ul>
+<li>Keep user-facing error messages generic and never log raw frames or PII.</li>
+<li>Read <a href="CODE_OF_CONDUCT.md"><code>CODE_OF_CONDUCT.md</code></a> before contributing.</li>
+</ul>
+<blockquote>
+<p>⚠️ <a href="CONTRIBUTING.md"><code>CONTRIBUTING.md</code></a> and <a href="CODE_OF_CONDUCT.md"><code>CODE_OF_CONDUCT.md</code></a> are currently <strong>stubs</strong> and <a href="SECURITY.md"><code>SECURITY.md</code></a> contains a placeholder contact address. <strong>[CONFIRM: contribution process, security contact, code of conduct owner]</strong></p>
+</blockquote>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>📄 License</h2>
+<p><strong>[CONFIRM: license]</strong> — the <a href="LICENSE"><code>LICENSE</code></a> file currently contains a placeholder (<em>"Please add a LICENSE file to this repository"</em>). No license has been chosen, so the project is <strong>all rights reserved by default</strong>. Add a real <code>LICENSE</code> before anyone reuses or redistributes this code.</p>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>📝 Citation</h2>
+<p>Until a license and release are confirmed, cite the repository directly. Replace the placeholders when a paper or release exists.</p>
+<pre><code class="language-bibtex">@software{mosip_face_liveness_pad_2026,
+  title   = {MOSIP Face Liveness &amp; Presentation Attack Detection Service},
+  author  = {[CONFIRM: authors]},
+  year    = {2026},
+  version = {1.0.0-SNAPSHOT},
+  url     = {https://github.com/hrishi25-spec/MOSSIP-Vibe-Coded},
+  note    = {Independent community project; not ISO/IEC 30107-3 certified}
+}
+</code></pre>
+<p><a href="#top">↑ Back to top</a></p>
+<h2>🙏 Acknowledgements</h2>
+<ul>
+<li><strong><a href="https://mosip.io/">MOSIP</a></strong> — the Registration Client and SBI device model this service targets.</li>
+<li><strong><a href="https://opencv.org/">OpenCV</a></strong> (via <code>org.openpnp:opencv</code>) — face detection and image processing.</li>
+<li><strong><a href="https://developers.google.com/mediapipe">MediaPipe Face Mesh</a></strong> — 468-point facial landmark model.</li>
+<li><strong><a href="https://www.tensorflow.org/lite">TensorFlow Lite</a></strong> and <strong><a href="https://github.com/minivision-ai/Silent-Face-Anti-Spoofing">MiniFASNet / Silent-Face-Anti-Spoofing</a></strong> — the PAD model runtime and architecture the TFLite backend targets.</li>
+<li><strong><a href="https://www.iso.org/standard/53227.html">ISO/IEC 30107</a></strong> — the standard whose taxonomy and metrics this project follows.</li>
+<li><strong><a href="https://spring.io/projects/spring-boot">Spring Boot</a></strong>, <strong><a href="https://flywaydb.org/">Flyway</a></strong> and <strong><a href="https://springdoc.org/">springdoc-openapi</a></strong> — framework, migrations and API docs.</li>
+</ul>
+<p><a href="#top">↑ Back to top</a></p>
+<hr>
+<p align="center">
+  <b>If this project is useful to you, please ⭐ star the repository.</b><br>
+  Questions and ideas → <a href="https://github.com/hrishi25-spec/MOSSIP-Vibe-Coded/issues">Issues</a> ·
+  Discussions → <a href="https://github.com/hrishi25-spec/MOSSIP-Vibe-Coded/discussions">Discussions</a>
+</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,1878 @@
+{
+  "document": {
+    "title": "MOSIP Face Liveness & Presentation Attack Detection (PAD) Service — API Documentation",
+    "api_name": "MOSIP Face Liveness & PAD Service",
+    "api_version": "1.0.0-SNAPSHOT",
+    "api_prefix": "/api/v1",
+    "revision": 2,
+    "revision_note": "Revision 2 is the corrected edition. Revision 1 described features this build does not have (admin API key, rate limiting, security headers, request-body cap, config audit chain, threshold sweep, per-session policy snapshots, median-window passive voting, a 'continue' challenge action). Those sections were not merely imprecise — the code to implement them does not exist. See changed_from_revision_1 for the item-by-item mapping, and docs/api-documentation-review.md for the evidence.",      "generated_from": "the source code of this repository, cross-checked against the running service",
+    "source_revision": "development @ 1ed5eaa",
+    "verified_on": "2026-10-10",
+    "verification_method": [
+      "Every endpoint, status code, error body and response field below was exercised with curl against the service started from target/pad-liveness-backend-1.0.0-SNAPSHOT.jar with --spring.profiles.active=dev --server.port=8011.",
+      "The endpoint inventory was cross-checked against the service's own OpenAPI document at GET /v3/api-docs (10 paths).",
+      "Behaviour not reachable without a real biometric face (PAD rejection, passive score clearing the threshold, active-challenge success) is derived from source reading and is marked derived_from_source where it appears."
+    ],
+    "verified_environment": "JDK 17, dev profile (in-memory H2, Flyway disabled, ddl-auto create-drop); the JVM default offset observed in every response was +05:30",
+    "not_verified": [
+      "The default profile (PostgreSQL + Flyway) was not exercised. The timestamp defect in known_issues was observed on H2 only and may behave differently on PostgreSQL.",
+      "ENGINE_UNAVAILABLE (503) was not reproduced — OpenCV loaded successfully in the verification environment. The handler exists and /health reports the engine state."
+    ],
+    "documentation_scope": [
+      "Every HTTP endpoint exposed by this build (controllers in io.mosip.liveness.api) — 10 paths",
+      "Request and response payloads as serialized by Jackson (DTOs in io.mosip.liveness.dto)",
+      "Validation rules that are actually enforced, and their exact error text",
+      "Cross-cutting behaviour that exists: the error envelope, null-field omission, CORS as configured, and the size limits that are really in effect",
+      "Known defects and gaps, so integrators are not surprised at runtime"
+    ],
+    "not_in_scope": [
+      "The in-process client adapters (io.mosip.liveness.client.DesktopLivenessAdapter / AndroidLivenessAdapter) — they call this API in-process, they are not endpoints",
+      "The L0/L1 device abstraction layer (io.mosip.liveness.device) — a library interface, not HTTP",
+      "The standalone engine layer (io.mosip.liveness.engine.FaceLivenessEngine / LivenessDecisionLogic) and the eval harness (io.mosip.liveness.eval.AttackScenarioHarness). This layer implements median-window passive voting, challenge windows and repeated-failure actions, but the REST controllers do not use it: nothing in io.mosip.liveness.api or io.mosip.liveness.services references it. See known_issues.engine_layer_unused_by_http.",
+      "The legacy Python scaffold under pad_liveness_backend/ — superseded by this Java service",
+      "The model backends under io.mosip.liveness.backend — not invoked by the HTTP decision path"
+    ],
+    "authoritative_sources": [
+      "src/main/java/io/mosip/liveness/api/*Controller.java",
+      "src/main/java/io/mosip/liveness/api/GlobalExceptionHandler.java",
+      "src/main/java/io/mosip/liveness/services/DecisionEngineService.java",
+      "src/main/java/io/mosip/liveness/services/ConfigService.java",
+      "src/main/java/io/mosip/liveness/services/LivenessEngineService.java",
+      "src/main/java/io/mosip/liveness/services/PadEngineService.java",
+      "src/main/java/io/mosip/liveness/services/ImageUtils.java",
+      "src/main/java/io/mosip/liveness/app/config/AppConfig.java",
+      "src/main/java/io/mosip/liveness/dto/*.java",
+      "src/main/java/io/mosip/liveness/models/enums/*.java",
+      "src/main/resources/application.yml",
+      "src/main/resources/application-dev.yml",
+      "src/main/resources/db/migration/V1__init_schema.sql"
+    ],
+    "note": "Fields whose value is null are omitted from responses (Jackson default-property-inclusion: non_null). Field names are camelCase. Timestamps are ISO-8601 but their offset is not stable — see conventions.timestamps."
+  },
+
+  "server": {
+    "base_url": "http://localhost:8000",
+    "default_port": 8000,
+    "port_configurable_via": [
+      "SERVER_PORT environment variable (application.yml binds server.port to ${SERVER_PORT:8000})",
+      "--server.port N on the command line",
+      "scripts/start.sh --port N"
+    ],
+    "launcher": "scripts/start.sh (and scripts/start.bat). It builds if needed, waits for /health, then opens the console. There is no start script at the repository root.",
+    "interactive_api_browser": "http://localhost:8000/swagger-ui/index.html",
+    "openapi_document": "http://localhost:8000/v3/api-docs",
+    "browser_test_console": "http://localhost:8000/ (the bundled static console; browsers only expose the camera on a secure origin, so open it on localhost)",
+    "content_type": "application/json",
+    "charset": "UTF-8",
+    "profiles": {
+      "dev": "in-memory H2, Flyway disabled, ddl-auto create-drop — used by scripts/start.sh",
+      "default": "PostgreSQL with Flyway migrations, ddl-auto validate"
+    }
+  },
+
+  "conventions": {
+    "field_case": "camelCase",
+    "null_handling": "null fields are omitted from JSON responses",
+    "identifiers": "UUID strings (session id, challenge id)",
+    "timestamps": {
+      "format": "ISO-8601 with an offset",
+      "observed_forms": [
+        "Freshly created or freshly updated objects serialized from memory: the JVM default offset, e.g. 2026-10-10T23:05:36.1755725+05:30 (7 fractional digits)",
+        "Objects read back from the database: UTC with a Z suffix and microsecond precision, e.g. 2026-10-10T12:06:20.834717Z"
+      ],
+      "warning": "On the H2 dev profile the two forms are not the same instant for the same row, and repeated read-back shifts the value further. Do not do timestamp arithmetic across responses. See known_issues.timestamps_and_duration_shift."
+    },
+    "enums": "serialized by name in UPPER_SNAKE_CASE, except config/DB challenge types which use lower snake case (see enumerations.ChallengeType_wire_values)",
+    "frame_encoding": "base64-encoded JPEG (or PNG) bytes. A data-URI prefix (data:image/jpeg;base64,...) is tolerated and stripped; plain base64 is the expected form.",
+    "idempotency": "frame submission is not idempotent: every accepted frame is scored and recorded again. Re-submitting the same bytes produces an identical-looking response but a new FrameEvent row, and it consumes the session's frame rate budget in any deployment that adds one.",
+    "request_body_required_on": [
+      "POST /api/v1/sessions",
+      "POST /api/v1/sessions/{sessionId}/frames",
+      "POST /api/v1/sessions/{sessionId}/challenges/validate",
+      "PUT /api/v1/config/{workflowType}"
+    ]
+  },
+
+  "authentication": {
+    "summary": "There is NO authentication or authorization anywhere in this build. Every endpoint, including PUT /api/v1/config/{workflowType}, is open. The service is designed to run as a local process beside the Registration Client.",
+    "schemes": [
+      {
+        "id": "none",
+        "type": "none",
+        "applies_to": "all 10 endpoints",
+        "verified": "PUT /api/v1/config/RESIDENT with no Authorization or API-key header returned 200 and persisted the new value."
+      }
+    ],
+    "no_admin_key": "X-Admin-API-Key does not appear anywhere in this repository (any branch), and no MOSIP_ADMIN_API_KEY property is read. Configuration is therefore writable by anything that can reach the port.",
+    "no_audit_chain": "There is no hash chain over audit rows and no HMAC keyed variant. The audit_logs table has no prev_hash/hash columns.",
+    "recommended_exposure": "Because config updates decide whether liveness passes or fails, do not expose this port beyond the local host until an authentication layer exists (see known_issues.no_protection_on_config_writes)."
+  },
+
+  "authorization_notes": [
+    "There is no per-user or per-role model. Policy is expressed per workflow type (RESIDENT, OPERATOR, SUPERVISOR), not per authenticated principal.",
+    "In this build all three workflows carry identical stored policy, so the three-way distinction described in the project narrative is not visible through the API. See known_issues.identical_per_workflow_defaults.",
+    "A session is the unit of consent for one liveness check, and retry limits are counted per session."
+  ],
+
+  "rate_limiting": {
+    "implemented": false,
+    "detail": "This build contains no rate limiter. There is no RateLimitFilter, no mosip.security.rate-limit.* property, no X-RateLimit-* response header, and no RATE_LIMITED error code.",
+    "verified": "40 consecutive POST /api/v1/sessions from one address returned 40 x 201 with no 429 and no rate-limit headers.",
+    "consequence": "Clients must throttle themselves. Any deployment beyond localhost needs a limiter in front of the service (reverse proxy) or added to it.",
+    "earlier_revision_claim": "Revision 1 documented a 30-per-60s per-IP session-create bucket and a 60-per-10s shared frames bucket, both with headers and 429 bodies. None of that exists."
+  },
+
+  "limits": {
+    "enforced_by_bean_validation": {
+      "SessionCreateRequest.workflowType": "@NotNull -> 400 VALIDATION_ERROR 'workflowType: workflow_type is required' when absent; an unknown name such as 'FOO' is a deserialization failure and returns 'Request body is malformed or unreadable.' instead",
+      "SessionCreateRequest.deviceId": "@NotBlank -> 400 VALIDATION_ERROR 'deviceId: device_id is required' when absent or blank",
+      "ChallengeValidateRequest.challengeId": "@NotNull -> 400 VALIDATION_ERROR 'challengeId: challenge_id is required'",
+      "ChallengeValidateRequest.framesBase64": "@NotEmpty -> 400 VALIDATION_ERROR 'framesBase64: frames_base64 must contain at least one frame'; no maximum",
+      "ConfigPolicyUpdate.passiveThreshold": "@Min(0) @Max(1) -> 400 VALIDATION_ERROR outside [0,1]. 0 and 1 are accepted, so a threshold of 0 makes every frame that reaches scoring pass",
+      "ConfigPolicyUpdate.minChallengeCount": "@Min(1) @Max(5)",
+      "ConfigPolicyUpdate.challengeTimeoutMs": "@Min(1000) @Max(60000) — there is no higher floor than 1000 ms",
+      "ConfigPolicyUpdate.maxRetryCount": "@Min(0) @Max(10)",
+      "ConfigPolicyUpdate.challengeTypes": "not annotated; an empty list is rejected in the controller with 400 BAD_REQUEST",
+      "note": "Bean-validation failures are reported one field per response as '<field>: <message>'; several fields failing at once are joined with '; '."
+    },
+    "request_body": {
+      "max_bytes": null,
+      "detail": "No request-body cap is configured or enforced: there is no filter, no spring.servlet.multipart or server.max-http-form-post-size tuning, and no 413 path in the error handler.",
+      "observed_behaviour": "A 9,000,000-character frameBase64 body was accepted and reached the image decoder. A 19,900,000-character payload returned 422 INVALID_FRAME (decoder reached). A 21,000,000-character payload and a 26 MB payload both returned 400 VALIDATION_ERROR 'Request body is malformed or unreadable.'",
+      "effective_ceiling": "between 19,900,000 and 21,000,000 characters per string value — consistent with Jackson's default StreamReadConstraints maximum string length of 20,000,000. This is an inherited framework boundary, not a configured or documented service limit (inferred from the observed boundary; not asserted by any configuration in this repository)."
+    },
+    "decoded_frame": {
+      "max_bytes": null,
+      "max_dimension_px": null,
+      "max_pixels": null,
+      "downscale": "none — frames are decoded at their native size and analysed as-is (there is no resize on the request path)",
+      "supported_input": "anything OpenCV's imdecode can read (JPEG, PNG, ...); failures return 422 INVALID_FRAME with 'Frame could not be decoded as an image'"
+    },
+    "active_challenge_burst": {
+      "min_frames": 1,
+      "max_frames": null,
+      "note": "validateActive requires at least 2 frames to evaluate any action; a 1-frame burst is accepted (200) but can never pass a challenge.",
+      "earlier_revision_claim": "Revision 1 documented a maximum of 60 frames. Not enforced."
+    }
+  },
+
+  "security_headers": {
+    "implemented": false,
+    "detail": "No security headers are added. There is no SecurityHeadersFilter.",
+    "verified": "GET /health response headers contain none of X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Cross-Origin-Opener-Policy, Permissions-Policy or Content-Security-Policy.",
+    "earlier_revision_claim": "Revision 1 documented nosniff, DENY framing, a strict CSP and a Permissions-Policy limited to the camera. None of it exists."
+  },
+
+  "cors": {
+    "configured_in": "src/main/java/io/mosip/liveness/app/config/AppConfig.java (the corsConfigurer bean)",
+    "allowed_origins_as_written": [
+      "http://localhost:*",
+      "http://127.0.0.1:*"
+    ],
+    "allowed_methods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "OPTIONS"
+    ],
+    "allowed_headers": [
+      "Content-Type",
+      "Authorization"
+    ],
+    "exposed_headers": [],
+    "allow_credentials": false,
+    "defect": "These are registered with allowedOrigins(), which treats them as LITERAL origins; wildcard port patterns require allowedOriginPatterns(). Verified: a preflight from Origin: http://localhost:3000 returns 403 and so does the follow-up POST, while Origin: http://localhost:* is the only origin echoed back. Any browser client served from another port (a Vite dev server, for example) is therefore blocked. See known_issues.cors_rejects_real_origins."
+  },
+
+  "error_handling": {
+    "shape": {
+      "error": "short machine-readable code",
+      "message": "safe, user-facing message (never a stack trace, class name or model internal)",
+      "status": "HTTP status code as a number",
+      "timestamp": "ISO-8601 with an offset"
+    },
+    "example": {
+      "error": "VALIDATION_ERROR",
+      "message": "deviceId: device_id is required",
+      "status": 400,
+      "timestamp": "2026-10-10T23:05:36.644373200+05:30"
+    },
+    "codes": [
+      {
+        "status": 400,
+        "error": "VALIDATION_ERROR",
+        "when": "bean validation failed on a request DTO, the JSON body is unreadable (including an unknown enum constant such as workflowType 'FOO'), or the body is empty",
+        "verified_messages": [
+          "workflowType: workflow_type is required",
+          "deviceId: device_id is required",
+          "frameBase64: frame_base64 is required",
+          "challengeId: challenge_id is required",
+          "framesBase64: frames_base64 must contain at least one frame",
+          "minChallengeCount: must be greater than or equal to 1",
+          "Request body is malformed or unreadable."
+        ]
+      },
+      {
+        "status": 400,
+        "error": "BAD_REQUEST",
+        "when": "an invariant is rejected inside a controller after bean validation passes",
+        "verified_messages": [
+          "onRepeatedFailure must be one of: LOCK, ESCALATE, ALLOW_RETRY",
+          "challengeTypes must not be empty when activeLiveness is enabled"
+        ]
+      },
+      {
+        "status": 404,
+        "error": "NOT_FOUND",
+        "when": "unknown session id, a challenge that does not belong to the session (or does not exist), or a path that matches no route and no static resource ('Resource not found.')"
+      },
+      {
+        "status": 409,
+        "error": "CONFLICT",
+        "when": "the session is not ACTIVE ('Session is not active (status=...)'), or the challenge is not ISSUED ('Challenge is not awaiting validation (status=...)')"
+      },
+      {
+        "status": 422,
+        "error": "INVALID_FRAME",
+        "when": "a frame is not decodable (bad base64, or not an image OpenCV can read)"
+      },
+      {
+        "status": 500,
+        "error": "INTERNAL_ERROR",
+        "when": "any unhandled exception. Two common causes are worth knowing: a path variable that cannot be converted (a non-UUID sessionId, or an unknown workflowType such as /api/v1/config/FOO) and a GET to /api/v1/config/audit, which matches the /config/{workflowType} route and fails enum conversion. All three return 500 where 400 or 404 would be correct — see known_issues.misleading_500s."
+      },
+      {
+        "status": 503,
+        "error": "ENGINE_UNAVAILABLE",
+        "when": "the OpenCV native library is unavailable, so frame processing cannot run",
+        "derived_from_source": true
+      }
+    ],
+    "codes_that_do_not_exist": [
+      {
+        "status": 413,
+        "error": "PAYLOAD_TOO_LARGE",
+        "note": "Revision 1 documented a 24 MiB body cap rejected with 413. There is no such cap, no such code, and no filter that could produce it."
+      },
+      {
+        "status": 429,
+        "error": "RATE_LIMITED",
+        "note": "Revision 1 documented rate limiting. There is no limiter in this build."
+      },
+      {
+        "status": 403,
+        "error": "FORBIDDEN",
+        "note": "The handler maps FORBIDDEN, but nothing in the API throws it — it is unreachable."
+      }
+    ],
+    "never_leaks": [
+      "stack traces",
+      "exception class names",
+      "model internals",
+      "PII"
+    ]
+  },
+
+  "enumerations": {
+    "WorkflowType": {
+      "applies_to": "session creation, config endpoints, session responses",
+      "values": [
+        "RESIDENT",
+        "OPERATOR",
+        "SUPERVISOR"
+      ],
+      "notes": "Distinct from the engine-level enum (RESIDENT_REGISTRATION, OPERATOR_AUTH, SUPERVISOR_AUTH); ConfigService owns the mapping."
+    },
+    "SessionStatus": {
+      "values": [
+        "ACTIVE",
+        "PASSED",
+        "FAILED",
+        "EXPIRED"
+      ],
+      "notes": "EXPIRED is set when an ACTIVE session is closed explicitly via POST .../close."
+    },
+    "LivenessStage": {
+      "values": [
+        "PASSIVE",
+        "ACTIVE",
+        "COMPLETED"
+      ]
+    },
+    "ChallengeStatus": {
+      "values": [
+        "ISSUED",
+        "PASSED",
+        "FAILED",
+        "TIMEOUT"
+      ],
+      "notes": "TIMEOUT is declared but is never written by the HTTP path: no challenge window is evaluated. Only the standalone engine layer sets it."
+    },
+    "ChallengeType_wire_values": {
+      "notes": "Two spellings exist on the wire. Config and DB rows use lower snake case; challenge responses and frame responses use UPPER_SNAKE_CASE names.",
+      "config_and_db": [
+        "blink",
+        "smile",
+        "turn_left",
+        "turn_right",
+        "look_direction",
+        "look_up",
+        "look_down",
+        "look_left",
+        "look_right"
+      ],
+      "response_names": [
+        "BLINK",
+        "SMILE",
+        "TURN_LEFT",
+        "TURN_RIGHT",
+        "LOOK_DIRECTION",
+        "LOOK_UP",
+        "LOOK_DOWN",
+        "LOOK_LEFT",
+        "LOOK_RIGHT"
+      ],
+      "mapping_note": "The wire name TURN_LEFT corresponds to the engine challenge TURN_HEAD_LEFT (and TURN_RIGHT to TURN_HEAD_RIGHT), which is how it appears in EffectivePolicy.allowedChallenges. Config values that are not recognised map to BLINK rather than failing: the conversion falls back to ChallengeType.BLINK for any unknown name.",
+      "persistence_note": "Challenge rows store the name in upper snake case (for example TURN_LEFT), while the config row stores the lower-case form."
+    },
+    "FailurePolicy_config_values": {
+      "applies_to": "onRepeatedFailure in GET/PUT /api/v1/config/{workflowType}",
+      "values": [
+        "LOCK",
+        "ESCALATE",
+        "ALLOW_RETRY"
+      ],
+      "engine_equivalent": [
+        "LOCK_OUT",
+        "ESCALATE_TO_OPERATOR",
+        "FALLBACK"
+      ],
+      "notes": "GET /api/v1/config/{workflowType}/effective reports the engine equivalents."
+    },
+    "PadAttackType": {
+      "values": [
+        "PRINTED_PHOTO",
+        "SCREEN_REPLAY",
+        "VIDEO_REPLAY",
+        "OTHER"
+      ],
+      "appears_in": "FrameProcessResult.padAttackType and the session failureReason 'presentation_attack:<TYPE>'",
+      "notes": "OTHER is a valid value. In the current heuristic PAD implementation the SCREEN_REPLAY branch cannot be reached (see known_issues.pad_heuristic_limits)."
+    },
+    "FrameAction": {
+      "notes": "The action vocabulary the frame endpoint actually returns.",
+      "values": {
+        "proceed": "liveness satisfied — session PASSED (passive score at or above the threshold)",
+        "escalate_to_active": "a challenge is required; the payload carries it",
+        "retry_passive": "non-terminal: either no face was observed or more than one face was observed. Keep submitting frames.",
+        "reject": "terminal failure: confirmed presentation attack, or passive score below the threshold with active liveness disabled"
+      }
+    },
+    "ChallengeAction": {
+      "notes": "The action vocabulary the challenge validation endpoint actually returns.",
+      "values": {
+        "retry_challenge": "a NEW challenge is returned in the payload. Emitted both when the submitted challenge passed but minChallengeCount is not yet satisfied, and when the attempt failed with retry budget remaining",
+        "proceed": "liveness verified — session PASSED",
+        "reject": "terminal failure: PAD attack detected in the burst, or the retry budget is exhausted"
+      },
+      "not_present": "There is no 'continue' action and no challenge time window. The first validation that does not detect the requested action fails the challenge and increments retryCount."
+    },
+    "failure_reason_values": [
+      "presentation_attack:PRINTED_PHOTO",
+      "presentation_attack:SCREEN_REPLAY",
+      "presentation_attack:VIDEO_REPLAY",
+      "presentation_attack:OTHER",
+      "passive_liveness_below_threshold",
+      "max_retries_exceeded"
+    ]
+  },
+
+  "datamodels": {
+    "SessionCreateRequest": {
+      "fields": {
+        "workflowType": {
+          "type": "WorkflowType",
+          "required": true,
+          "notes": "@NotNull. An unknown value is rejected as unreadable JSON: 400 VALIDATION_ERROR 'Request body is malformed or unreadable.'"
+        },
+        "deviceId": {
+          "type": "string",
+          "required": true,
+          "notes": "@NotBlank; blank and whitespace-only values are rejected. Your label for the L0/L1 device."
+        },
+        "subjectRef": {
+          "type": "string",
+          "required": false,
+          "notes": "optional opaque reference from the client (for example an applicant id). It is stored but not echoed back — SessionResponse has no subjectRef field."
+        },
+        "online": {
+          "type": "boolean",
+          "required": false,
+          "default": true,
+          "notes": "client-declared connectivity; recorded with the session and echoed back. It does not change enforcement."
+        }
+      },
+      "example": {
+        "workflowType": "RESIDENT",
+        "deviceId": "L1-CAM-01",
+        "subjectRef": "applicant-000431",
+        "online": true
+      }
+    },
+    "SessionResponse": {
+      "returned_by": [
+        "POST /api/v1/sessions (201)",
+        "GET /api/v1/sessions/{sessionId} (200)"
+      ],
+      "fields": {
+        "id": {
+          "type": "uuid"
+        },
+        "workflowType": {
+          "type": "WorkflowType"
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "SessionStatus"
+        },
+        "currentStage": {
+          "type": "LivenessStage"
+        },
+        "retryCount": {
+          "type": "integer"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "finalResult": {
+          "type": "boolean",
+          "notes": "omitted while the session is undecided"
+        },
+        "failureReason": {
+          "type": "string",
+          "notes": "omitted unless the session failed"
+        },
+        "createdAt": {
+          "type": "string (ISO-8601)"
+        },
+        "updatedAt": {
+          "type": "string (ISO-8601)"
+        },
+        "closedAt": {
+          "type": "string (ISO-8601)",
+          "notes": "omitted until the session ends"
+        }
+      },
+      "no_policy_field": "There is no policy field and no policy snapshot. The workflow policy is re-read from the database on every frame, so a config edit does take effect on an in-flight session — the opposite of an immutable snapshot.",
+      "example": {
+        "id": "b647ea93-3863-47af-8e48-a1ff6ca20dc4",
+        "workflowType": "RESIDENT",
+        "deviceId": "L1-CAM-01",
+        "status": "ACTIVE",
+        "currentStage": "PASSIVE",
+        "retryCount": 0,
+        "online": true,
+        "createdAt": "2026-10-10T23:05:36.1755725+05:30",
+        "updatedAt": "2026-10-10T23:05:36.1755725+05:30"
+      }
+    },
+    "SessionSummary": {
+      "returned_by": "POST /api/v1/sessions/{sessionId}/close",
+      "fields": {
+        "id": {
+          "type": "uuid"
+        },
+        "workflowType": {
+          "type": "WorkflowType"
+        },
+        "status": {
+          "type": "SessionStatus"
+        },
+        "finalResult": {
+          "type": "boolean",
+          "notes": "omitted for a session closed while ACTIVE, because it was never decided"
+        },
+        "failureReason": {
+          "type": "string",
+          "notes": "omitted unless the session failed"
+        },
+        "totalFramesEvaluated": {
+          "type": "integer",
+          "notes": "count of recorded frame events, including frames with no face"
+        },
+        "totalChallengesIssued": {
+          "type": "integer"
+        },
+        "retryCount": {
+          "type": "integer"
+        },
+        "durationMs": {
+          "type": "integer",
+          "notes": "elapsed time between createdAt and closedAt. Unreliable in this build — see known_issues.timestamps_and_duration_shift."
+        }
+      },
+      "example": {
+        "id": "ebe62cbb-e90b-44a0-ba55-2f16740a6472",
+        "workflowType": "RESIDENT",
+        "status": "EXPIRED",
+        "totalFramesEvaluated": 2,
+        "totalChallengesIssued": 0,
+        "retryCount": 0,
+        "durationMs": 19805407
+      }
+    },
+    "FrameSubmitRequest": {
+      "fields": {
+        "frameBase64": {
+          "type": "string",
+          "required": true,
+          "max_length": null,
+          "notes": "@NotBlank only. base64 image bytes; no data-URI prefix required."
+        }
+      },
+      "example": {
+        "frameBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD..."
+      }
+    },
+    "FrameProcessResult": {
+      "fields": {
+        "sessionId": {
+          "type": "uuid"
+        },
+        "stage": {
+          "type": "LivenessStage",
+          "notes": "the stage of the session when the frame was processed"
+        },
+        "faceDetected": {
+          "type": "boolean"
+        },
+        "multipleFaces": {
+          "type": "boolean"
+        },
+        "faceQuality": {
+          "type": "number",
+          "notes": "0..1 OpenCV heuristic computed over the WHOLE frame (0.5 x Laplacian sharpness + 0.5 x brightness proximity to mid-grey); present only when a single face was observed. The configured minFaceQuality (0.50) is NOT enforced anywhere on this path — it is reported, not used as a gate."
+        },
+        "livenessScore": {
+          "type": "number",
+          "notes": "0..1 passive score for THIS frame only: 0.4 x faceQuality + 0.4 x eyeSymmetry + 0.2 x sharpness, where eyeSymmetry is 1.0 when the eye cascade finds two or more eyes in the face box and 0.4 otherwise. There is no sliding window and no median: the single value is compared with the threshold. Present only on frames that were scored (a frame with no face omits it)."
+        },
+        "padFlag": {
+          "type": "boolean",
+          "notes": "true when this frame's PAD verdict flagged an attack"
+        },
+        "padAttackType": {
+          "type": "PadAttackType",
+          "notes": "omitted unless padFlag is true"
+        },
+        "action": {
+          "type": "FrameAction"
+        },
+        "challenge": {
+          "type": "object",
+          "notes": "present only on escalate_to_active",
+          "fields": {
+            "challengeId": {
+              "type": "uuid"
+            },
+            "challengeType": {
+              "type": "ChallengeType (response naming)"
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "notes": "copied from the configured challengeTimeoutMs (8000 by default). It is informational: no timer is enforced."
+            },
+            "attemptNumber": {
+              "type": "integer",
+              "notes": "1 for the challenge issued on escalation"
+            }
+          }
+        },
+        "message": {
+          "type": "string",
+          "notes": "safe, user-facing text intended to be shown to the subject"
+        }
+      },
+      "field_that_does_not_exist": "mayRetrySession. Revision 1 described it as declared-but-never-populated; it is not declared at all. Clients must read the session status and failureReason instead.",
+      "examples": {
+        "no_face": {
+          "sessionId": "ebe62cbb-e90b-44a0-ba55-2f16740a6472",
+          "stage": "PASSIVE",
+          "faceDetected": false,
+          "multipleFaces": false,
+          "padFlag": false,
+          "action": "retry_passive",
+          "message": "No face detected. Please position your face in the frame."
+        },
+        "multiple_faces": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "stage": "PASSIVE",
+          "faceDetected": true,
+          "multipleFaces": true,
+          "padFlag": false,
+          "action": "retry_passive",
+          "message": "Multiple faces detected. Only one person may be captured at a time.",
+          "derived_from_source": true
+        },
+        "passive_pass": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "stage": "COMPLETED",
+          "faceDetected": true,
+          "multipleFaces": false,
+          "faceQuality": 0.87,
+          "livenessScore": 0.94,
+          "padFlag": false,
+          "action": "proceed",
+          "message": "Liveness verified.",
+          "derived_from_source": true
+        },
+        "escalated_to_challenge": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "stage": "ACTIVE",
+          "faceDetected": true,
+          "faceQuality": 0.72,
+          "livenessScore": 0.41,
+          "padFlag": false,
+          "action": "escalate_to_active",
+          "challenge": {
+            "challengeId": "b41a2c77-2f3e-4b8a-9c11-77de9a4b6a02",
+            "challengeType": "BLINK",
+            "timeoutMs": 8000,
+            "attemptNumber": 1
+          },
+          "message": "Please blink.",
+          "derived_from_source": true
+        },
+        "pad_rejected": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "stage": "COMPLETED",
+          "faceDetected": true,
+          "faceQuality": 0.66,
+          "padFlag": true,
+          "padAttackType": "PRINTED_PHOTO",
+          "action": "reject",
+          "message": "Face verification could not be completed. Please try again.",
+          "derived_from_source": true,
+          "note": "A single flagged frame is terminal. There is no confirmation across two frames."
+        },
+        "passive_failed_active_disabled": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "stage": "COMPLETED",
+          "faceDetected": true,
+          "faceQuality": 0.61,
+          "livenessScore": 0.42,
+          "padFlag": false,
+          "action": "reject",
+          "message": "We could not verify face liveness. Please try again.",
+          "derived_from_source": true,
+          "failureReason": "passive_liveness_below_threshold"
+        }
+      }
+    },
+    "ChallengeValidateRequest": {
+      "fields": {
+        "challengeId": {
+          "type": "uuid",
+          "required": true,
+          "notes": "@NotNull (not @NotBlank, which would throw on a UUID)"
+        },
+        "framesBase64": {
+          "type": "array<string>",
+          "required": true,
+          "min_items": 1,
+          "max_items": null,
+          "notes": "the frame burst captured while the subject performed the action. At least 2 frames are needed for any action to be detectable."
+        }
+      },
+      "example": {
+        "challengeId": "b41a2c77-2f3e-4b8a-9c11-77de9a4b6a02",
+        "framesBase64": [
+          "/9j/4AAQSkZJRg...",
+          "/9j/4AAQSkZJRg..."
+        ]
+      }
+    },
+    "ChallengeValidationResult": {
+      "fields": {
+        "sessionId": {
+          "type": "uuid"
+        },
+        "challenge": {
+          "type": "ChallengeResponse",
+          "notes": "the challenge that now matters for the client: on retry_challenge this is the NEWLY issued challenge (the submitted one is already PASSED or FAILED)"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "action": {
+          "type": "ChallengeAction"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "examples": {
+        "verified": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "challenge": {
+            "id": "b41a2c77-2f3e-4b8a-9c11-77de9a4b6a02",
+            "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+            "challengeType": "BLINK",
+            "status": "PASSED",
+            "attemptNumber": 1,
+            "timeoutMs": 8000,
+            "issuedAt": "2026-10-08T22:31:12.100+05:30",
+            "completedAt": "2026-10-08T22:31:14.882+05:30"
+          },
+          "passed": true,
+          "action": "proceed",
+          "message": "Liveness verified.",
+          "derived_from_source": true
+        },
+        "second_challenge": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "challenge": {
+            "id": "c9e5b120-88aa-4d1e-9f3c-1a2b3c4d5e6f",
+            "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+            "challengeType": "SMILE",
+            "status": "ISSUED",
+            "attemptNumber": 2,
+            "timeoutMs": 8000,
+            "issuedAt": "2026-10-08T22:31:16.004+05:30"
+          },
+          "passed": true,
+          "action": "retry_challenge",
+          "message": "Action detected. One more check required.",
+          "derived_from_source": true
+        },
+        "attempt_failed_budget_remains": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "challenge": {
+            "id": "c9e5b120-88aa-4d1e-9f3c-1a2b3c4d5e6f",
+            "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+            "challengeType": "SMILE",
+            "status": "FAILED",
+            "attemptNumber": 2,
+            "timeoutMs": 8000,
+            "issuedAt": "2026-10-08T22:31:16.004+05:30",
+            "completedAt": "2026-10-08T22:31:18.510+05:30"
+          },
+          "passed": false,
+          "action": "retry_challenge",
+          "message": "We could not verify that action. Let's try a different one.",
+          "derived_from_source": true,
+          "note": "retryCount is incremented on the first undetected burst — there is no 'still within the window' state."
+        },
+        "retries_exhausted": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "challenge": {
+            "id": "d47f8a21-5b6c-49d0-8e77-ff31c9a2b034",
+            "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+            "challengeType": "TURN_HEAD_LEFT",
+            "status": "FAILED",
+            "attemptNumber": 3,
+            "timeoutMs": 8000,
+            "issuedAt": "2026-10-08T22:31:16.004+05:30",
+            "completedAt": "2026-10-08T22:31:36.510+05:30"
+          },
+          "passed": false,
+          "action": "reject",
+          "message": "We could not verify face liveness. Please try again.",
+          "derived_from_source": true,
+          "failureReason": "max_retries_exceeded"
+        }
+      }
+    },
+    "ChallengeResponse": {
+      "fields": {
+        "id": {
+          "type": "uuid"
+        },
+        "sessionId": {
+          "type": "uuid"
+        },
+        "challengeType": {
+          "type": "ChallengeType (response naming)"
+        },
+        "status": {
+          "type": "ChallengeStatus"
+        },
+        "attemptNumber": {
+          "type": "integer",
+          "notes": "counts the challenges issued for the session: the challenge created on escalation is 1, and each replacement increments. It is not a count of failed attempts"
+        },
+        "timeoutMs": {
+          "type": "integer"
+        },
+        "issuedAt": {
+          "type": "string (ISO-8601)"
+        },
+        "completedAt": {
+          "type": "string (ISO-8601)",
+          "notes": "omitted while the challenge is still ISSUED"
+        }
+      }
+    },
+    "ConfigPolicyUpdate": {
+      "notes": "Partial update: omit any field to leave it unchanged. There is no cross-field or merged-policy validation: each field is checked on its own, so combinations that are internally inconsistent (for example minChallengeCount larger than the configured challenge pool) are accepted.",
+      "fields": {
+        "livenessEnabled": {
+          "type": "boolean",
+          "notes": "stored and returned, but NOT consulted by the decision path: setting it to false does not skip scoring or challenges in this build"
+        },
+        "passiveThreshold": {
+          "type": "number",
+          "range": "[0, 1]",
+          "notes": "@Min(0) @Max(1). 0 is accepted even though it makes every scored frame pass (only frames that reach scoring — a missing face still cannot pass)"
+        },
+        "activeLivenessEnabled": {
+          "type": "boolean",
+          "notes": "this one IS honoured: false turns a below-threshold passive score into an immediate terminal failure instead of a challenge"
+        },
+        "minChallengeCount": {
+          "type": "integer",
+          "range": "[1, 5]",
+          "notes": "not checked against the size of challengeTypes"
+        },
+        "challengeTypes": {
+          "type": "array<string>",
+          "notes": "lower snake case. An empty array is refused with 400 BAD_REQUEST; unknown names silently fall back to BLINK"
+        },
+        "challengeTimeoutMs": {
+          "type": "integer",
+          "range": "[1000, 60000]",
+          "notes": "stored, echoed in challenge payloads, and never enforced"
+        },
+        "maxRetryCount": {
+          "type": "integer",
+          "range": "[0, 10]",
+          "notes": "the session fails when retryCount >= maxRetryCount, evaluated after the increment, so with the default 3 a session survives 2 failed bursts and fails on the 3rd"
+        },
+        "onRepeatedFailure": {
+          "type": "string",
+          "values": [
+            "LOCK",
+            "ESCALATE",
+            "ALLOW_RETRY"
+          ],
+          "notes": "stored and returned, but NOT applied by the HTTP path: retry exhaustion always returns action 'reject' with failureReason 'max_retries_exceeded' regardless of this setting"
+        }
+      },
+      "examples": {
+        "raise_threshold": {
+          "passiveThreshold": 0.85
+        },
+        "tighten_supervisor": {
+          "minChallengeCount": 2,
+          "challengeTypes": [
+            "blink",
+            "smile",
+            "turn_left",
+            "turn_right"
+          ],
+          "challengeTimeoutMs": 15000,
+          "maxRetryCount": 1,
+          "onRepeatedFailure": "LOCK"
+        }
+      }
+    },
+    "ConfigPolicyResponse": {
+      "fields": {
+        "id": {
+          "type": "uuid"
+        },
+        "workflowType": {
+          "type": "WorkflowType"
+        },
+        "livenessEnabled": {
+          "type": "boolean"
+        },
+        "passiveThreshold": {
+          "type": "number"
+        },
+        "activeLivenessEnabled": {
+          "type": "boolean"
+        },
+        "minChallengeCount": {
+          "type": "integer"
+        },
+        "challengeTypes": {
+          "type": "array<string>"
+        },
+        "challengeTimeoutMs": {
+          "type": "integer"
+        },
+        "maxRetryCount": {
+          "type": "integer"
+        },
+        "onRepeatedFailure": {
+          "type": "FailurePolicy (config naming)"
+        },
+        "updatedAt": {
+          "type": "string (ISO-8601)"
+        }
+      },
+      "example": {
+        "id": "b3830c60-dbba-48dc-8c13-0da0a8500954",
+        "workflowType": "RESIDENT",
+        "livenessEnabled": true,
+        "passiveThreshold": 0.75,
+        "activeLivenessEnabled": true,
+        "minChallengeCount": 1,
+        "challengeTypes": [
+          "blink",
+          "smile",
+          "turn_left",
+          "turn_right"
+        ],
+        "challengeTimeoutMs": 8000,
+        "maxRetryCount": 3,
+        "onRepeatedFailure": "LOCK",
+        "updatedAt": "2026-10-10T23:05:38.0616156+05:30"
+      },
+      "defaults": "A row is created on first access using ONE hard-coded default set for every workflow: passiveThreshold 0.75, activeLivenessEnabled true, minChallengeCount 1, challengeTypes [blink, smile, turn_left, turn_right], challengeTimeoutMs 8000, maxRetryCount 3, onRepeatedFailure LOCK. Verified for RESIDENT, OPERATOR and SUPERVISOR alike — the three workflows are not differentiated in this build. (V1__init_schema.sql seeds the same values into all three rows.)"
+    },
+    "EffectivePolicy": {
+      "returned_by": [
+        "GET /api/v1/config/{workflowType}/effective",
+        "POST /api/v1/sessions/{sessionId}/frames and .../challenges/validate (in-process only: decision-time re-read, not returned to the client)"
+      ],
+      "notes": "The fully-resolved policy the decision path uses: the stored DB row merged with hard-coded engine defaults. Values that have no DB column (minFaceQuality, passiveMinFrames, passiveWindowFrames, maxSessionDurationMs, frameSamplingRate, frameSamplingMinFps, combined weights) are constants, not configuration.",
+      "fields": {
+        "livenessEnabled": {
+          "type": "boolean",
+          "notes": "reported but not enforced (see known_issues.liveness_disabled_not_enforced)"
+        },
+        "activeLivenessEnabled": {
+          "type": "boolean"
+        },
+        "passiveThreshold": {
+          "type": "number"
+        },
+        "minFaceQuality": {
+          "type": "number",
+          "notes": "constant 0.5; not enforced as a gate"
+        },
+        "passiveMinFrames": {
+          "type": "integer",
+          "notes": "constant 5; not used — there is no cold-start window"
+        },
+        "passiveWindowFrames": {
+          "type": "integer",
+          "notes": "constant 7; not used — there is no median window"
+        },
+        "minChallengeCount": {
+          "type": "integer"
+        },
+        "maxRetries": {
+          "type": "integer",
+          "notes": "the DB field maxRetryCount"
+        },
+        "challengeTimeoutMs": {
+          "type": "integer"
+        },
+        "allowedChallenges": {
+          "type": "array<string>",
+          "notes": "engine challenge names (BLINK, SMILE, TURN_HEAD_LEFT, TURN_HEAD_RIGHT, LOOK_DIRECTION, ...), derived from the DB challengeTypes. An empty or fully unrecognised list falls back to BLINK rather than failing"
+        },
+        "onRepeatedFailure": {
+          "type": "string",
+          "values": [
+            "LOCK_OUT",
+            "ESCALATE_TO_OPERATOR",
+            "FALLBACK"
+          ],
+          "notes": "engine naming of the DB value; not applied by the HTTP path"
+        },
+        "passiveThresholdActive": {
+          "type": "number",
+          "notes": "reported as the same value as passiveThreshold; the active stage does not re-score passives separately"
+        },
+        "maxSessionDurationMs": {
+          "type": "integer",
+          "notes": "constant 30000; not enforced — sessions do not expire on their own"
+        },
+        "frameSamplingRate": {
+          "type": "integer",
+          "notes": "constant 2; no sampling is performed by the API"
+        },
+        "frameSamplingMinFps": {
+          "type": "integer",
+          "notes": "constant 15; not enforced — there is no frame-rate gate"
+        },
+        "combinedPassiveWeight": {
+          "type": "number",
+          "notes": "constant 0.4; no combined score is computed"
+        },
+        "combinedActiveWeight": {
+          "type": "number",
+          "notes": "constant 0.6; no combined score is computed"
+        }
+      },
+      "example": {
+        "livenessEnabled": true,
+        "activeLivenessEnabled": true,
+        "passiveThreshold": 0.75,
+        "minFaceQuality": 0.5,
+        "passiveMinFrames": 5,
+        "passiveWindowFrames": 7,
+        "minChallengeCount": 1,
+        "maxRetries": 3,
+        "challengeTimeoutMs": 8000,
+        "allowedChallenges": [
+          "BLINK",
+          "SMILE",
+          "TURN_HEAD_LEFT",
+          "TURN_HEAD_RIGHT"
+        ],
+        "onRepeatedFailure": "LOCK_OUT",
+        "passiveThresholdActive": 0.75,
+        "maxSessionDurationMs": 30000,
+        "frameSamplingRate": 2,
+        "frameSamplingMinFps": 15,
+        "combinedPassiveWeight": 0.4,
+        "combinedActiveWeight": 0.6
+      }
+    },
+    "AuditLogEntry": {
+      "returned_by": "GET /api/v1/sessions/{sessionId}/audit",
+      "fields": {
+        "id": {
+          "type": "uuid"
+        },
+        "eventType": {
+          "type": "string",
+          "notes": "the HTTP path writes exactly five values: PAD_REJECTED, SESSION_PASSED, CHALLENGE_ISSUED, CHALLENGE_PASSED, CHALLENGE_FAILED"
+        },
+        "details": {
+          "type": "object",
+          "notes": "event-specific payload, always present (an empty object when the event carries nothing). PAD_REJECTED carries attackType, confidence and stage; SESSION_PASSED carries via; CHALLENGE_* carry challengeType; CHALLENGE_ISSUED also carries attemptNumber and timeoutMs"
+        },
+        "createdAt": {
+          "type": "string (ISO-8601)"
+        }
+      },
+      "no_workflow_type_field": "There is no workflowType field in this payload.",
+      "sparsity": "The trail is intentionally sparse on the request path: a frame that is rejected for having no face or multiple faces writes a FrameEvent row but NO audit row, so a session that only ever saw unusable frames returns an empty array (verified: [] after two no-face frames). There is also no SESSION_CREATED, FRAME_SCORED, MAX_RETRIES_EXCEEDED or CONFIG_CHANGED entry, and no per-session config-change record of any kind.",
+      "examples": {
+        "pad_rejected": {
+          "id": "9f2c1e70-1c6c-4a1e-9d33-2a4b5c6d7e8f",
+          "eventType": "PAD_REJECTED",
+          "details": {
+            "attackType": "PRINTED_PHOTO",
+            "confidence": 0.83,
+            "stage": "PASSIVE"
+          },
+          "createdAt": "2026-10-08T22:31:07.412+05:30",
+          "derived_from_source": true
+        },
+        "session_passed": {
+          "id": "1b2c3d4e-5f60-4718-9a2b-3c4d5e6f7081",
+          "eventType": "SESSION_PASSED",
+          "details": {
+            "via": "passive"
+          },
+          "createdAt": "2026-10-08T22:31:07.412+05:30",
+          "derived_from_source": true
+        }
+      }
+    },
+    "OperationalMetrics": {
+      "fields": {
+        "totalSessions": {
+          "type": "integer"
+        },
+        "passedSessions": {
+          "type": "integer"
+        },
+        "failedSessions": {
+          "type": "integer"
+        },
+        "activeSessions": {
+          "type": "integer"
+        },
+        "passRate": {
+          "type": "number",
+          "notes": "passedSessions / totalSessions, rounded to 4 decimals; 0.0 when there are no sessions"
+        },
+        "avgPassiveToActiveEscalationRate": {
+          "type": "number",
+          "notes": "distinct sessions that recorded at least one frame in the ACTIVE stage, divided by totalSessions"
+        },
+        "avgFramesPerSession": {
+          "type": "number"
+        },
+        "avgChallengesPerSession": {
+          "type": "number"
+        },
+        "livenessRetryRate": {
+          "type": "number",
+          "notes": "sum of session retryCount divided by totalSessions"
+        },
+        "livenessFailureRate": {
+          "type": "number",
+          "notes": "failedSessions / totalSessions"
+        },
+        "padRejectionRate": {
+          "type": "number",
+          "notes": "sessions whose failureReason starts with 'presentation_attack:' divided by totalSessions"
+        }
+      },
+      "notes": "These eleven fields are the complete response. There is no pipeline-timing block (no decode/facedetect/onnxscore phases are measured) and no rate-limit counters. All values are derived from the database on each call; nothing here is in-memory-only.",
+      "example": {
+        "totalSessions": 2,
+        "passedSessions": 0,
+        "failedSessions": 0,
+        "activeSessions": 2,
+        "passRate": 0.0,
+        "avgPassiveToActiveEscalationRate": 0.0,
+        "avgFramesPerSession": 0.0,
+        "avgChallengesPerSession": 0.0,
+        "livenessRetryRate": 0.0,
+        "livenessFailureRate": 0.0,
+        "padRejectionRate": 0.0
+      }
+    },
+    "ErrorResponse": {
+      "fields": {
+        "error": "string",
+        "message": "string",
+        "status": "integer",
+        "timestamp": "string (ISO-8601)"
+      }
+    }
+  },
+
+  "endpoints": [
+    {
+      "id": "health",
+      "method": "GET",
+      "path": "/health",
+      "summary": "Liveness of the service and of the frame-processing engine",
+      "description": "Reports whether the process is up and whether the OpenCV native library loaded. Frame-processing endpoints cannot work when the engine is unavailable.",
+      "auth": "none",
+      "rate_limited": false,
+      "response": {
+        "status": 200,
+        "schema": "object",
+        "example": {
+          "status": "ok",
+          "service": "MOSIP Face Liveness & PAD Service",
+          "engine": "available"
+        },
+        "notes": "engine is 'available' or 'unavailable'; the value reflects native-library loading at startup, not a per-request probe."
+      },
+      "use_cases": [
+        "Startup readiness probe (scripts/start.sh waits on this)",
+        "Container or orchestrator health check",
+        "Diagnose a frame endpoint returning 503"
+      ]
+    },
+    {
+      "id": "create-session",
+      "method": "POST",
+      "path": "/api/v1/sessions",
+      "summary": "Start a liveness/PAD session",
+      "description": "Stores the session with status ACTIVE, stage PASSIVE and retryCount 0. No policy snapshot is taken and no cross-field policy validation happens here: the workflow policy is looked up from the database on every frame and on every challenge validation.",
+      "auth": "none",
+      "rate_limited": false,
+      "request_body": {
+        "required": true,
+        "schema": "SessionCreateRequest"
+      },
+      "responses": {
+        "201": {
+          "schema": "SessionResponse",
+          "notes": "online defaults to true when omitted"
+        },
+        "400": {
+          "error": "VALIDATION_ERROR",
+          "when": "workflowType missing or unknown, deviceId missing or blank, or the body is empty/unreadable"
+        }
+      },
+      "examples": {
+        "curl": "curl -s -X POST $BASE/api/v1/sessions -H 'Content-Type: application/json' -d '{\"workflowType\":\"RESIDENT\",\"deviceId\":\"L1-CAM-01\"}'",
+        "response_201": {
+          "id": "b647ea93-3863-47af-8e48-a1ff6ca20dc4",
+          "workflowType": "RESIDENT",
+          "deviceId": "L1-CAM-01",
+          "status": "ACTIVE",
+          "currentStage": "PASSIVE",
+          "retryCount": 0,
+          "online": true,
+          "createdAt": "2026-10-10T23:05:36.1755725+05:30",
+          "updatedAt": "2026-10-10T23:05:36.1755725+05:30"
+        },
+        "error_400": {
+          "error": "VALIDATION_ERROR",
+          "message": "deviceId: device_id is required",
+          "status": 400,
+          "timestamp": "2026-10-10T23:05:36.644373200+05:30"
+        }
+      },
+      "use_cases": [
+        "Resident face capture during enrolment",
+        "Operator biometric authentication",
+        "Supervisor biometric authentication"
+      ]
+    },
+    {
+      "id": "get-session",
+      "method": "GET",
+      "path": "/api/v1/sessions/{sessionId}",
+      "summary": "Read the current state of a session",
+      "description": "Returns the session row as stored. There is no policy snapshot on it, so this call does not tell you which operating point the session was created under — read GET /api/v1/config/{workflowType}/effective instead, bearing in mind that a config edit changes the effective policy for sessions that are already in flight.",
+      "auth": "none",
+      "rate_limited": false,
+      "path_params": {
+        "sessionId": {
+          "type": "uuid",
+          "required": true
+        }
+      },
+      "responses": {
+        "200": {
+          "schema": "SessionResponse"
+        },
+        "404": {
+          "error": "NOT_FOUND",
+          "when": "no such session ('Session not found')"
+        },
+        "500": {
+          "error": "INTERNAL_ERROR",
+          "when": "sessionId is not a valid UUID — the type conversion failure is not handled and falls through to the catch-all handler (verified)"
+        }
+      },
+      "examples": {
+        "curl": "curl -s $BASE/api/v1/sessions/ebe62cbb-e90b-44a0-ba55-2f16740a6472"
+      },
+      "use_cases": [
+        "Poll the final state after a terminal frame response, once the session has stopped accepting frames",
+        "Confirm the retry budget a session consumed"
+      ]
+    },
+    {
+      "id": "submit-frame",
+      "method": "POST",
+      "path": "/api/v1/sessions/{sessionId}/frames",
+      "summary": "Submit one face frame for passive liveness + PAD + policy decision",
+      "description": "The core decision endpoint. Per frame it: re-reads the workflow policy from the database; detects faces with a Haar cascade and treats multiple faces as retryable; runs the PAD heuristics and rejects on the first flagged frame; then, for a single detected face, computes a per-frame passive score and compares it directly with passiveThreshold. At or above the threshold the session PASSES; below it the session escalates to an active challenge (a challenge is selected from allowedChallenges and persisted), or fails immediately when active liveness is disabled for the workflow. There is no sliding window, no median vote and no cold-start stage: the first usable frame can pass or fail the session. The decision path never consults livenessEnabled.",
+      "auth": "none",
+      "rate_limited": false,
+      "path_params": {
+        "sessionId": {
+          "type": "uuid",
+          "required": true
+        }
+      },
+      "request_body": {
+        "required": true,
+        "schema": "FrameSubmitRequest"
+      },
+      "responses": {
+        "200": {
+          "schema": "FrameProcessResult",
+          "notes": "action decides what the client does next. A 200 does not mean the frame was usable."
+        },
+        "400": {
+          "error": "VALIDATION_ERROR",
+          "when": "frameBase64 missing or blank; malformed JSON"
+        },
+        "404": {
+          "error": "NOT_FOUND",
+          "when": "session does not exist"
+        },
+        "409": {
+          "error": "CONFLICT",
+          "when": "session is not ACTIVE; message pattern 'Session is not active (status=...)'"
+        },
+        "422": {
+          "error": "INVALID_FRAME",
+          "when": "the payload is not decodable base64, or not an image OpenCV can read"
+        },
+        "503": {
+          "error": "ENGINE_UNAVAILABLE",
+          "when": "the OpenCV native library is unavailable",
+          "derived_from_source": true
+        }
+      },
+      "action_meanings": {
+        "retry_passive": "non-terminal — keep streaming frames (no face, multiple faces, or a presentation attack was flagged)",
+        "escalate_to_active": "present challenge.challengeType to the subject, collect a burst, then call challenge validate",
+        "proceed": "face accepted; session PASSED",
+        "reject": "terminal — session FAILED (confirmed presentation attack, or passive score below the threshold with active liveness disabled)"
+      },
+      "examples": {
+        "curl": "curl -s -X POST $BASE/api/v1/sessions/$SESSION_ID/frames -H 'Content-Type: application/json' -d \"{\\\"frameBase64\\\":\\\"$(base64 -w0 face.jpg)\\\"}\"",
+        "verified_no_face": {
+          "sessionId": "ebe62cbb-e90b-44a0-ba55-2f16740a6472",
+          "stage": "PASSIVE",
+          "faceDetected": false,
+          "multipleFaces": false,
+          "padFlag": false,
+          "action": "retry_passive",
+          "message": "No face detected. Please position your face in the frame."
+        },
+        "verified_invalid_frame": {
+          "error": "INVALID_FRAME",
+          "message": "Frame could not be decoded as an image",
+          "status": 422,
+          "timestamp": "2026-10-10T23:05:58.226898+05:30"
+        }
+      },
+      "use_cases": [
+        "Streaming L0/L1 face frames during resident capture",
+        "Demonstrating that a PAD-flagged frame is terminal and never earns a challenge",
+        "Building a client loop: keep submitting while action is retry_passive, switch flow on escalate_to_active, and stop on proceed or reject"
+      ]
+    },
+    {
+      "id": "validate-challenge",
+      "method": "POST",
+      "path": "/api/v1/sessions/{sessionId}/challenges/validate",
+      "summary": "Submit the frame burst captured during an active challenge",
+      "description": "Re-runs PAD over the burst first (an attack here is terminal). The requested action is then evaluated across the burst (at least 2 frames are required). If it was observed, the challenge PASSES: when the number of PASSED challenges for the session has reached minChallengeCount the session PASSES, otherwise a NEW challenge is issued and returned with action retry_challenge. If the action was NOT observed, the challenge FAILS immediately, retryCount is incremented, and the response is retry_challenge with a new challenge while budget remains, or reject once retryCount >= maxRetryCount. no challenge window is evaluated and no TIMEOUT status is produced.",
+      "auth": "none",
+      "rate_limited": false,
+      "path_params": {
+        "sessionId": {
+          "type": "uuid",
+          "required": true
+        }
+      },
+      "request_body": {
+        "required": true,
+        "schema": "ChallengeValidateRequest"
+      },
+      "responses": {
+        "200": {
+          "schema": "ChallengeValidationResult"
+        },
+        "400": {
+          "error": "VALIDATION_ERROR",
+          "when": "challengeId missing; framesBase64 missing or empty"
+        },
+        "404": {
+          "error": "NOT_FOUND",
+          "when": "the session does not exist, or the challenge does not exist or belongs to a different session ('Challenge not found for this session')"
+        },
+        "409": {
+          "error": "CONFLICT",
+          "when": "the session is not ACTIVE, or the challenge is not ISSUED (already PASSED, FAILED or TIMEOUT)"
+        },
+        "422": {
+          "error": "INVALID_FRAME",
+          "when": "a frame in the burst is not decodable"
+        }
+      },
+      "action_meanings": {
+        "retry_challenge": "use the newly returned challenge.challengeId for the next validation — the submitted one is closed",
+        "proceed": "liveness verified, session PASSED",
+        "reject": "terminal; session FAILED (PAD attack in the burst, or the retry budget is exhausted)"
+      },
+      "client_rule": "Always drive the NEXT validation from the challenge object in the response, never from the one you submitted: after retry_challenge the submitted challenge is already resolved and reusing it returns 409.",
+      "examples": {
+        "curl": "curl -s -X POST $BASE/api/v1/sessions/$SESSION_ID/challenges/validate -H 'Content-Type: application/json' -d '{\"challengeId\":\"b41a2c77-2f3e-4b8a-9c11-77de9a4b6a02\",\"framesBase64\":[\"...\",\"...\"]}'",
+        "verified_empty_burst": {
+          "error": "VALIDATION_ERROR",
+          "message": "framesBase64: frames_base64 must contain at least one frame",
+          "status": 400,
+          "timestamp": "2026-10-10T23:05:59.257305600+05:30"
+        },
+        "verified_unknown_challenge": {
+          "error": "NOT_FOUND",
+          "message": "Challenge not found for this session",
+          "status": 404,
+          "timestamp": "2026-10-10T23:05:59.405261900+05:30"
+        }
+      },
+      "use_cases": [
+        "Active liveness (blink, smile, head turn) after a passive score below the threshold",
+        "A workflow that demands more than one challenge before acceptance (raise minChallengeCount)"
+      ]
+    },
+    {
+      "id": "close-session",
+      "method": "POST",
+      "path": "/api/v1/sessions/{sessionId}/close",
+      "summary": "Close a session explicitly and return an audit-friendly summary",
+      "description": "If the session is still ACTIVE it is marked EXPIRED and closedAt is set; if it is already terminal its outcome is preserved and the same summary is returned again (the call is safe to repeat). The summary aggregates frames evaluated, challenges issued, retries and duration.",
+      "auth": "none",
+      "rate_limited": false,
+      "path_params": {
+        "sessionId": {
+          "type": "uuid",
+          "required": true
+        }
+      },
+      "responses": {
+        "200": {
+          "schema": "SessionSummary"
+        },
+        "404": {
+          "error": "NOT_FOUND",
+          "when": "no such session"
+        }
+      },
+      "examples": {
+        "curl": "curl -s -X POST $BASE/api/v1/sessions/$SESSION_ID/close",
+        "verified_response": {
+          "id": "ebe62cbb-e90b-44a0-ba55-2f16740a6472",
+          "workflowType": "RESIDENT",
+          "status": "EXPIRED",
+          "totalFramesEvaluated": 2,
+          "totalChallengesIssued": 0,
+          "retryCount": 0,
+          "durationMs": 19805407
+        },
+        "note_on_durationMs": "The value above belongs to a session that lived about 5 seconds; it is inflated by the JVM UTC offset (5 h 30 min plus the real 5.4 s). See known_issues.timestamps_and_duration_shift."
+      },
+      "use_cases": [
+        "Abandoned capture (subject walked away), so the session does not linger ACTIVE",
+        "End-of-flow summary for the operator UI"
+      ]
+    },
+    {
+      "id": "session-audit",
+      "method": "GET",
+      "path": "/api/v1/sessions/{sessionId}/audit",
+      "summary": "Audit trail for one session, oldest first",
+      "description": "Every audit row recorded for the session, in chronological order. Rows exist only for the events the request path actually logs: PAD_REJECTED, SESSION_PASSED, CHALLENGE_ISSUED, CHALLENGE_PASSED, CHALLENGE_FAILED. Frames that were unusable (no face, multiple faces) produce a FrameEvent but no audit row, so this can legitimately be empty for a session that submitted frames. Unknown session ids also return an empty array rather than 404.",
+      "auth": "none",
+      "rate_limited": false,
+      "path_params": {
+        "sessionId": {
+          "type": "uuid",
+          "required": true
+        }
+      },
+      "responses": {
+        "200": {
+          "schema": "array<AuditLogEntry>",
+          "notes": "[] when the session has no logged events — including when the session does not exist"
+        }
+      },
+      "examples": {
+        "curl": "curl -s $BASE/api/v1/sessions/$SESSION_ID/audit | python3 -m json.tool",
+        "verified_empty": []
+      },
+      "use_cases": [
+        "Explain a failure to an operator without exposing model internals to the subject",
+        "Evidence for an auditor of what was checked and what the verdict was — noting the sparse coverage listed in AuditLogEntry.sparsity"
+      ]
+    },
+    {
+      "id": "get-config",
+      "method": "GET",
+      "path": "/api/v1/config/{workflowType}",
+      "summary": "Read the stored policy row for a workflow",
+      "description": "Returns the policy as stored in config_policies. If no row exists it is created on the spot from a single hard-coded default set, so reading RESIDENT, OPERATOR and SUPERVISOR yields identical values in this build.",
+      "auth": "none",
+      "rate_limited": false,
+      "path_params": {
+        "workflowType": {
+          "type": "WorkflowType",
+          "required": true,
+          "values": [
+            "RESIDENT",
+            "OPERATOR",
+            "SUPERVISOR"
+          ]
+        }
+      },
+      "responses": {
+        "200": {
+          "schema": "ConfigPolicyResponse"
+        },
+        "500": {
+          "error": "INTERNAL_ERROR",
+          "when": "the workflow name is not one of the three — the enum conversion failure is unhandled (verified with /api/v1/config/FOO). A 400 would be correct here."
+        }
+      },
+      "examples": {
+        "curl": "curl -s $BASE/api/v1/config/RESIDENT",
+        "verified_response": {
+          "id": "b3830c60-dbba-48dc-8c13-0da0a8500954",
+          "workflowType": "RESIDENT",
+          "livenessEnabled": true,
+          "passiveThreshold": 0.75,
+          "activeLivenessEnabled": true,
+          "minChallengeCount": 1,
+          "challengeTypes": [
+            "blink",
+            "smile",
+            "turn_left",
+            "turn_right"
+          ],
+          "challengeTimeoutMs": 8000,
+          "maxRetryCount": 3,
+          "onRepeatedFailure": "LOCK",
+          "updatedAt": "2026-10-10T23:05:38.0616156+05:30"
+        }
+      },
+      "use_cases": [
+        "Operator UI showing the current thresholds before changing them",
+        "Confirming which fields are editable at runtime"
+      ]
+    },
+    {
+      "id": "get-effective-config",
+      "method": "GET",
+      "path": "/api/v1/config/{workflowType}/effective",
+      "summary": "Read the computed policy exactly as the decision path sees it",
+      "description": "The stored config merged with hard-coded engine defaults — the real operating point, including fields that are not editable through the API (face-quality value, frame counts, active-stage threshold, session duration, sampling rates, combined weights). Use this, not the session response, to know what a session is being held to.",
+      "auth": "none",
+      "rate_limited": false,
+      "path_params": {
+        "workflowType": {
+          "type": "WorkflowType",
+          "required": true
+        }
+      },
+      "responses": {
+        "200": {
+          "schema": "EffectivePolicy"
+        },
+        "500": {
+          "error": "INTERNAL_ERROR",
+          "when": "the workflow name is not one of the three"
+        }
+      },
+      "examples": {
+        "curl": "curl -s $BASE/api/v1/config/SUPERVISOR/effective"
+      },
+      "use_cases": [
+        "Diagnose why a session behaves differently from the API's editable fields",
+        "Confirm a policy edit took effect without opening a session"
+      ]
+    },
+    {
+      "id": "put-config",
+      "method": "PUT",
+      "path": "/api/v1/config/{workflowType}",
+      "summary": "Update a workflow's policy at runtime",
+      "description": "Partial update with no redeploy: omitted fields keep their stored value, and the decision path re-reads the row on the next frame, so an edit changes sessions that are already in flight. Validation is per field only. The change is written to config_policies; it is NOT recorded anywhere else — there is no change history, no diff, no actor and no risk classification.",
+      "auth": "NONE — this endpoint is open. Nothing is validated in front of the body.",
+      "rate_limited": false,
+      "path_params": {
+        "workflowType": {
+          "type": "WorkflowType",
+          "required": true
+        }
+      },
+      "request_body": {
+        "required": true,
+        "schema": "ConfigPolicyUpdate"
+      },
+      "responses": {
+        "200": {
+          "schema": "ConfigPolicyResponse",
+          "notes": "the full stored policy after the merge"
+        },
+        "400": {
+          "error": "VALIDATION_ERROR / BAD_REQUEST",
+          "examples": [
+            "minChallengeCount: must be greater than or equal to 1 (VALIDATION_ERROR)",
+            "passiveThreshold: must be less than or equal to 1 (VALIDATION_ERROR)",
+            "challengeTimeoutMs: must be greater than or equal to 1000 (VALIDATION_ERROR)",
+            "maxRetryCount: must be less than or equal to 10 (VALIDATION_ERROR)",
+            "onRepeatedFailure must be one of: LOCK, ESCALATE, ALLOW_RETRY (BAD_REQUEST)",
+            "challengeTypes must not be empty when activeLiveness is enabled (BAD_REQUEST)"
+          ]
+        },
+        "500": {
+          "error": "INTERNAL_ERROR",
+          "when": "the workflow name is not one of the three"
+        }
+      },
+      "effect_timing": "Applies to the next frame of every session of that workflow, including sessions created earlier.",
+      "examples": {
+        "curl": "curl -s -X PUT $BASE/api/v1/config/OPERATOR -H 'Content-Type: application/json' -d '{\"passiveThreshold\":0.86}'",
+        "verified_accepted": {
+          "request": {
+            "passiveThreshold": 0.8
+          },
+          "response_status": 200
+        },
+        "verified_rejected_combination": {
+          "request": {
+            "minChallengeCount": 5,
+            "challengeTypes": [
+              "blink"
+            ]
+          },
+          "response_status": 200,
+          "note": "Accepted even though five challenges cannot be drawn from a one-type pool. Revision 1 claimed this combination was refused."
+        }
+      },
+      "use_cases": [
+        "Tune a threshold after calibration, without a redeploy",
+        "Lower a threshold to demonstrate that weaker settings take effect immediately (and note that nothing records the fact)"
+      ]
+    },
+    {
+      "id": "metrics",
+      "method": "GET",
+      "path": "/api/v1/metrics",
+      "summary": "Anonymized operational metrics",
+      "description": "Session-level counts and rates computed from the database. No PII and no per-session attribution.",
+      "auth": "none",
+      "rate_limited": false,
+      "responses": {
+        "200": {
+          "schema": "OperationalMetrics"
+        }
+      },
+      "examples": {
+        "curl": "curl -s $BASE/api/v1/metrics | python3 -m json.tool"
+      },
+      "use_cases": [
+        "Measure pass, escalation, retry and PAD-rejection rates before tuning a threshold",
+        "Feed a review with aggregate numbers rather than session records"
+      ]
+    }
+  ],
+
+  "use_cases": [
+    {
+      "id": "resident-happy-path",
+      "title": "Resident enrolment — honest subject, no action required",
+      "steps": [
+        "POST /api/v1/sessions {workflowType: RESIDENT, deviceId: L1-CAM-01} -> 201, status ACTIVE, stage PASSIVE",
+        "POST .../frames repeatedly with face frames -> retry_passive while no usable single face is present",
+        "The first frame whose face passes detection and whose score reaches passiveThreshold returns action: proceed, message: 'Liveness verified.', and the session becomes PASSED",
+        "GET /api/v1/sessions/{id}/audit shows SESSION_PASSED with details.via = passive"
+      ],
+      "why_it_matters": "Passive-first means the common case needs no subject action. Note that there is no cold-start phase: with a clean, sharp, two-eye frame the very first submission can pass.",
+      "caveat": "The passive score is an OpenCV heuristic (quality, eye count, sharpness), not a trained model, so it is sensitive to lighting and framing."
+    },
+    {
+      "id": "presentation-attack",
+      "title": "Presentation attack — fail-closed rejection",
+      "steps": [
+        "Subject presents a printed photo or a screen replay",
+        "POST .../frames -> the heuristics may flag the frame (padFlag true, padAttackType PRINTED_PHOTO or VIDEO_REPLAY)",
+        "A flagged frame is terminal immediately: action reject, message 'Face verification could not be completed. Please try again.', session FAILED with failureReason presentation_attack:<TYPE>, and an audit row PAD_REJECTED with the attack type and confidence",
+        "No challenge is ever issued for an attack"
+      ],
+      "why_it_matters": "A rejected frame never earns a challenge, so an attack cannot buy extra attempts by design.",
+      "caveat": "The PAD heuristics are a placeholder: 60% of the verdict comes from comparing Laplacian texture variance against a fixed constant, so both false accepts and false rejects are expected. See known_issues.pad_heuristic_limits."
+    },
+    {
+      "id": "active-challenge",
+      "title": "Low passive score — active challenge",
+      "steps": [
+        "Passive score below passiveThreshold (and activeLivenessEnabled true) -> action escalate_to_active with challenge {challengeId, challengeType, timeoutMs, attemptNumber} and a message such as 'Please blink.'",
+        "Client prompts the subject, collects at least 2 frames, then POST .../challenges/validate with the burst",
+        "The action must be present in the burst: the same challenge id cannot be submitted again — a resolved challenge returns 409",
+        "Observed -> action proceed (when the PASSED-challenge count reaches minChallengeCount) or retry_challenge with a NEW challenge",
+        "Not observed -> the challenge FAILS, retryCount increments, and the response is retry_challenge with a new challenge, or reject when the budget is exhausted"
+      ],
+      "why_it_matters": "The retry budget is a session-level count of failed challenge attempts, and a fresh challenge is always returned with a fresh challengeId.",
+      "caveat": "There is no grace window: the first burst that misses the action costs a retry, so a client must not submit a burst until the subject has actually attempted the action. Burst length matters too — a one-frame burst can never satisfy any action type."
+    },
+    {
+      "id": "retry-exhaustion",
+      "title": "Retries exhausted",
+      "steps": [
+        "Each challenge validation that fails to detect the requested action increments retryCount",
+        "When retryCount reaches maxRetryCount (3 by default) the session becomes FAILED with failureReason 'max_retries_exceeded'",
+        "The final response is action reject with 'We could not verify face liveness. Please try again.'",
+        "The audit trail contains CHALLENGE_FAILED rows for the attempts; there is no MAX_RETRIES_EXCEEDED row"
+      ],
+      "why_it_matters": "The budget is per session, so a new session is the only way to earn more attempts.",
+      "caveat": "onRepeatedFailure (LOCK/ESCALATE/ALLOW_RETRY) is stored and returned by the config API but is not applied here — every exhausted session ends as a plain rejection with no lock, escalation or fallback action, and no mayRetrySession flag exists to distinguish them."
+    },
+    {
+      "id": "policy-tuning",
+      "title": "Tuning a policy without a redeploy",
+      "steps": [
+        "GET /api/v1/metrics -> passRate, escalation rate, retry rate, PAD-rejection rate",
+        "PUT /api/v1/config/RESIDENT {passiveThreshold: <new value>} -> 200 with the stored policy (no authentication required)",
+        "GET /api/v1/config/RESIDENT/effective -> confirm the operating point the decision path will use",
+        "Note that the change is silent: nothing in the API reports who changed what, and sessions already in flight pick up the new value on their next frame"
+      ],
+      "why_it_matters": "Runtime tunability is real and immediate.",
+      "caveat": "Because the endpoint is unauthenticated and unlogged, treat any exposed port as a policy-modification interface. See known_issues.no_protection_on_config_writes."
+    },
+    {
+      "id": "offline-enforcement",
+      "title": "Offline registration environment",
+      "steps": [
+        "Run the service as a local process beside the Registration Client (same host or embedded)",
+        "All liveness, PAD, challenge issuance and action validation runs locally — no WAN dependency",
+        "Send online: false in session creation to record the client's connectivity state; enforcement is identical",
+        "Only policy or model updates need connectivity, through a separate channel"
+      ],
+      "why_it_matters": "Network availability does not decide whether liveness security is enforced."
+    },
+    {
+      "id": "device-integration",
+      "title": "Integrating an L0/L1 device",
+      "steps": [
+        "Keep device SDK integration upstream (Common Face Capture Device Interface or device adapter pattern)",
+        "Decode device frames to JPEG/PNG bytes and base64-encode them (a data-URI prefix is tolerated)",
+        "Call POST /api/v1/sessions then POST .../frames per frame; use the device id as deviceId",
+        "Keep frames modest in size: there is no configured cap, but string values above about 20 million characters fail to parse (400). A 1280px long edge is a sensible working size.",
+        "Throttle client-side: the service does not rate limit"
+      ],
+      "why_it_matters": "The service consumes decoded frames, so it stays independent of any specific vendor."
+    }
+  ],
+
+  "known_issues": [
+    {
+      "id": "no_protection_on_config_writes",
+      "severity": "high — security",
+      "detail": "PUT /api/v1/config/{workflowType} requires no credentials and leaves no record. Anyone who can reach the port can set passiveThreshold to 0 (accepted) or disable active liveness, weakening PAD for every subsequent session.",
+      "verified": "PUT with no auth header returned 200 and persisted the change.",
+      "recommended_fix": "Add a fail-closed key or token check and record the change (actor, source, before/after) in a config-scoped audit table."
+    },
+    {
+      "id": "cors_rejects_real_origins",
+      "severity": "high — breaks browser clients",
+      "detail": "AppConfig registers allowedOrigins(\"http://localhost:*\", \"http://127.0.0.1:*\"). Spring treats these as literal origins, not patterns.",
+      "verified": "Preflight and the actual POST from Origin: http://localhost:3000 both return 403; only the literal string http://localhost:* is echoed in Access-Control-Allow-Origin.",
+      "recommended_fix": "Use allowedOriginPatterns(...) instead of allowedOrigins(...)."
+    },
+    {
+      "id": "timestamps_and_duration_shift",
+      "severity": "high — wrong data returned",
+      "detail": "On the H2 dev profile a timestamp written as local time comes back from the database as UTC, and each further read-back shifts it again. SessionSummary.durationMs is computed from a database-read createdAt and an in-memory closedAt, so it inherits the offset error and reports roughly 5 h 30 min more than the real elapsed time on a host at UTC+05:30.",
+      "verified": "A session created at local 23:06:20.834717+05:30 read back immediately as 2026-10-10T12:06:20.834717Z, and after closing as 2026-10-10T06:36:20.834717Z. Closing that ~3-second-old session reported durationMs 19803230 (5.5 hours plus 3 seconds).",
+      "recommended_fix": "Pin the JDBC timezone (for example spring.jpa.properties.hibernate.jdbc.time_zone=UTC), store instants consistently, and compute durationMs from a single consistent source. Verify against the PostgreSQL profile as well — this was observed on H2 only.",
+      "not_verified": "PostgreSQL (default profile) was not exercised."
+    },
+    {
+      "id": "misleading_500s",
+      "severity": "medium",
+      "detail": "Unhandled type-conversion failures fall through to the catch-all Exception handler and are reported as 500 INTERNAL_ERROR.",
+      "verified": [
+        "GET /api/v1/sessions/not-a-uuid -> 500 INTERNAL_ERROR",
+        "GET /api/v1/config/FOO -> 500 INTERNAL_ERROR",
+        "PUT /api/v1/config/FOO -> 500 INTERNAL_ERROR",
+        "GET /api/v1/config/audit -> 500 INTERNAL_ERROR (this path matches /config/{workflowType} and 'audit' is not a workflow)"
+      ],
+      "recommended_fix": "Add handlers for MethodArgumentTypeMismatchException (400) and resolve the /config/audit routing collision, so a client can distinguish a bad request from a server fault. Note that any client written against Revision 1 will call /api/v1/config/audit expecting 200 and receive 500."
+    },
+    {
+      "id": "pad_heuristic_limits",
+      "severity": "medium — detection quality",
+      "detail": "PadEngineService is a placeholder. The screen-replay branch compares a hard-coded freqRatio = 0.1 against a 0.35 threshold, so SCREEN_REPLAY can never be returned. The remaining signals are Laplacian texture variance (< 15 -> PRINTED_PHOTO) and brightness (< 0.15 -> VIDEO_REPLAY). The ONNX/TFLite backends in io.mosip.liveness.backend are not used by the HTTP path.",
+      "verified": "Source reading; SCREEN_REPLAY unreachable by construction.",
+      "recommended_fix": "Implement real frequency analysis or wire a trained model into the decision path before making accuracy claims."
+    },
+    {
+      "id": "liveness_disabled_not_enforced",
+      "severity": "medium",
+      "detail": "livenessEnabled is stored, returned and never read by the decision path: setting it to false does not skip scoring or challenges, and no LIVENESS_DISABLED audit event is written (the string does not exist in the codebase).",
+      "verified": "grep for livenessEnabled over services/ and api/ finds only ConfigController copying it into responses.",
+      "recommended_fix": "Either honour the flag with an audit record, or remove it from the public contract."
+    },
+    {
+      "id": "config_tunables_that_do_nothing",
+      "severity": "medium",
+      "detail": "challengeTimeoutMs, maxSessionDurationMs, frameSamplingRate, frameSamplingMinFps, passiveThresholdActive, combinedPassiveWeight, combinedActiveWeight, minFaceQuality, passiveMinFrames and passiveWindowFrames are reported by the API but not enforced or used on the request path. onRepeatedFailure is likewise stored but not applied.",
+      "verified": "Source reading of DecisionEngineService and LivenessEngineService; grep shows no consumers for the sampling, duration and weight fields.",
+      "recommended_fix": "Implement or clearly mark each field as informational in the API."
+    },
+    {
+      "id": "engine_layer_unused_by_http",
+      "severity": "medium — expectation mismatch",
+      "detail": "io.mosip.liveness.engine (FaceLivenessEngine, LivenessDecisionLogic, LivenessSession) implements median-window passive voting, cold start, challenge windows, session timeouts and repeated-failure actions, and the eval harness measures PAD accuracy against labelled scenarios. Nothing in api/ or services/ references it, so none of that behaviour is reachable over HTTP.",
+      "verified": "Reference search: the engine package is referenced only by itself, io.mosip.liveness.eval and tests.",
+      "recommended_fix": "Either route the REST decision path through the engine layer, or document the HTTP path as the reduced implementation it is."
+    },
+    {
+      "id": "identical_per_workflow_defaults",
+      "severity": "low — narrative vs behaviour",
+      "detail": "All three workflows are seeded with the same policy (0.75 / minChallengeCount 1 / 8000 ms / maxRetryCount 3 / LOCK / [blink, smile, turn_left, turn_right]), and ConfigController.getOrCreatePolicy builds the same single default for any workflow. The 'one service, three risk profiles' framing is a capability of the model rather than a configured state.",
+      "verified": "GET /api/v1/config/{RESIDENT,OPERATOR,SUPERVISOR} returned identical values.",
+      "recommended_fix": "Seed distinct rows per workflow, or demonstrate the difference by applying policy updates before a demo."
+    },
+    {
+      "id": "immutable_snapshot_not_implemented",
+      "severity": "low — expectation mismatch",
+      "detail": "There is no per-session policy snapshot. The policy is re-read from the database on every frame, so a config edit during a session changes that session's operating point mid-flight — the opposite of the isolation Revision 1 claimed.",
+      "verified": "SessionResponse has no policy field (verified in the 201 body), and DecisionEngineService calls configService.getEffectivePolicy(...) on every frame (line 55) and every challenge validation (line 217).",
+      "recommended_fix": "Persist the resolved policy on the session at creation and read it from there for the session's lifetime."
+    },
+    {
+      "id": "no_challenge_window",
+      "severity": "low",
+      "detail": "challengeTimeoutMs is copied into challenge payloads but never evaluated. ChallengeStatus.TIMEOUT is never written and there is no 'continue' action, so a client cannot distinguish 'the subject still has time' from 'that attempt failed'.",
+      "verified": "No timeout comparison exists in DecisionEngineService; grep for ChallengeStatus.TIMEOUT shows only the enum declaration and the engine layer."
+    },
+    {
+      "id": "unbounded_input",
+      "severity": "low — resource use",
+      "detail": "No request-body cap, no per-frame cap beyond the inherited Jackson string limit, and no decoded-image byte, dimension or pixel limit. ImageUtils.decodeBase64Frame passes the decoded buffer straight to OpenCV, so a hostile client can submit a very large image and force a large allocation and a full-frame cascade scan. A 26 MB body was read by the server without any size rejection and then failed only at JSON parsing, which is the opposite of the documented behaviour.",
+      "recommended_fix": "Add explicit @Size bounds on the frame fields and a decode-time dimension/pixel guard, and return 413 rather than 400 for oversized bodies."
+    }
+  ],
+
+  "changed_from_revision_1": {
+    "removed_endpoints": [
+      "GET /api/v1/config/audit (returns 500 in this build)",
+      "GET /api/v1/config/audit/verify (404)",
+      "GET /api/v1/eval/threshold-sweep (404)"
+    ],
+    "removed_datamodels": [
+      "ThresholdSweepResult — GET /api/v1/eval/threshold-sweep does not exist, and no BPCER/APCER/ACER sweep or proxy attack corpus is implemented behind it",
+      "the config-audit feed entry — there is no change-history endpoint, no field-level diff, no actor fingerprint and no risk classification"
+    ],
+    "removed_sections": [
+      "authentication.admin_api_key (X-Admin-API-Key) and audit_chain_integrity (HMAC, minimum key length)",
+      "rate_limiting (all buckets, headers, 429 bodies, trusted-proxy handling)",
+      "security_headers (nosniff, DENY, CSP, Referrer-Policy, COOP, Permissions-Policy)",
+      "limits.request_body 24 MiB / 413, limits.frame_payload 8,000,000-char @Size, limits.challenge_validation_frame_count max 60, limits.decoded_frame caps and the 1280px downscale",
+      "error codes 413 PAYLOAD_TOO_LARGE and 429 RATE_LIMITED",
+      "datamodels.ThresholdSweepResult and the config-audit feed contract",
+      "SessionResponse.policy and the frozen-snapshot guarantee",
+      "FrameProcessResult.mayRetrySession",
+      "AuditLogEntry.workflowType",
+      "OperationalMetrics.pipelineTimings and the four rateLimit* counters",
+      "The per-workflow frozen policy table (RESIDENT 0.80/1/20000/3/ESCALATE_TO_OPERATOR, OPERATOR 0.82/1/15000/2/FALLBACK, SUPERVISOR 0.85/2/15000/1/LOCK_OUT)",
+      "The 'continue' challenge action, the challenge window, and the two-frame PAD confirmation",
+      "known_gaps[0]'s claim that docs/configuration.md and docs/client-integration-guide.md describe a locked/escalate_to_operator outcome matrix (those strings appear in neither document)"
+    ],
+    "corrected_facts": {
+      "source_revision": "Revision 1 cited 05839c9, which is not a commit in this repository. development is at 1ed5eaa.",
+      "launcher_path": "Revision 1 said ./start.sh. The script is scripts/start.sh (and scripts/start.bat).",
+      "passive_threshold_floor": "Revision 1 said 0 is refused. 0 is accepted.",
+      "challenge_timeout_floor": "Revision 1 said a 15000 ms floor from mosip.liveness.min-challenge-window-ms. That property does not exist; the bound is 1000 ms.",
+      "min_challenge_count_vs_pool": "Revision 1 said minChallengeCount must not exceed the challenge pool. Not checked.",
+      "bad_path_parameter_status": "Revision 1 said 400 VALIDATION_ERROR for a bad path parameter type. Observed: 500 INTERNAL_ERROR.",
+      "pad_attack_type": "Revision 1 omitted OTHER.",
+      "live_path_decision": "Revision 1 described median-window voting, cold start and passiveMinFrames on the live path. The live path compares a single frame's score with the threshold."
+    },
+    "retained_unchanged": [
+      "The endpoint inventory's lifecycle descriptions and the error envelope",
+      "The frame action vocabulary and its meanings",
+      "The challenge action vocabulary minus 'continue'",
+      "All enum vocabularies and the ChallengeType wire mapping",
+      "The validation-message style (snake_case field tokens inside messages)",
+      "The no-leak guarantee for error messages",
+      "The offline-enforcement and device-integration guidance"
+    ]
+  },
+
+  "quickstart": {
+    "start_service": "./scripts/start.sh   # builds if needed, serves on :8000, opens the console",
+    "start_options": "--no-build (skip Maven), --rebuild (clean build + tests), --port N, --profile NAME, --no-browser; the default profile is dev (H2)",
+    "curl_walkthrough": [
+      "BASE=http://localhost:8000",
+      "SESSION_ID=$(curl -s -X POST $BASE/api/v1/sessions -H 'Content-Type: application/json' -d '{\"workflowType\":\"RESIDENT\",\"deviceId\":\"L1-CAM-01\"}' | python3 -c \"import sys,json;print(json.load(sys.stdin)['id'])\")",
+      "curl -s -X POST $BASE/api/v1/sessions/$SESSION_ID/frames -H 'Content-Type: application/json' -d \"{\\\"frameBase64\\\":\\\"$(base64 -w0 face.jpg)\\\"}\"",
+      "curl -s -X POST $BASE/api/v1/sessions/$SESSION_ID/close",
+      "curl -s $BASE/api/v1/sessions/$SESSION_ID/audit | python3 -m json.tool",
+      "curl -s $BASE/api/v1/metrics | python3 -m json.tool",
+      "curl -s $BASE/api/v1/config/RESIDENT/effective | python3 -m json.tool",
+      "curl -s -X PUT $BASE/api/v1/config/RESIDENT -H 'Content-Type: application/json' -d '{\"passiveThreshold\":0.8}'   # no credentials required in this build"
+    ],
+    "interactive_exploration": "Open $BASE/swagger-ui/index.html, or $BASE/ for the bundled test console (must be on localhost for camera access)."
+  }
+}

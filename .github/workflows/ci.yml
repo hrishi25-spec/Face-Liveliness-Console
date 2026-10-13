@@ -404,6 +404,95 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The launcher is Windows-only, and without this job nothing that ships to a
+  # Windows user is ever run: every other job here is ubuntu-latest. Two things
+  # hide behind that gap, and both have broken before.
+  #
+  #   * start.bat itself. Its JDK probe reads `java -version`, which prints on
+  #     stderr, through cmd.exe — and cmd strips the quotes around an executable
+  #     when a `for /f` command contains a pipe, so a JDK under "C:\Program
+  #     Files" was read as the path "C:\Program" and the launcher gave up before
+  #     starting anything. A runner's own JDK lives in C:\hostedtoolcache, where
+  #     no such thing can happen, so this job installs one under Program Files
+  #     on purpose and the smoke script refuses to run against a JDK whose path
+  #     has no space. A green run has to mean the quoting path was exercised.
+  #   * The full jar's Windows OpenCV natives. scripts/smoke-jar.sh boots the
+  #     jar on linux x86_64 and asserts `engine: available`; the same nested
+  #     openpnp jar carries a different native for Windows, and nothing loaded
+  #     it there.
+  #
+  # Only the full jar: the slim profile keeps linux/x86_64 natives and nothing
+  # else, so on Windows it boots and then reports the engine unavailable by
+  # design — its own boot gate is the Linux one in the package job.
+  #
+  # Not a dependency of package/docker/release, like the boundary and secret
+  # gates: a Windows-only regression is a reason to fix the push, not a reason
+  # to withhold a jar.
+  windows-launcher:
+    name: Windows launcher (full jar)
+    runs-on: windows-latest
+    # A full build on a Windows runner, plus a first boot that extracts the
+    # ~65 MB OpenCV native before the service can answer /health.
+    timeout-minutes: 45
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # For the Maven cache, not for the JDK: the JDK under test is the one the
+      # next step installs, which overwrites this JAVA_HOME. This one sits in
+      # C:\hostedtoolcache — a path with no space in it, and therefore exactly
+      # what the check below must not be run against.
+      - name: Set up JDK 17 (Maven cache only)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # Java 21 rather than the 17 the other jobs pin, for two reasons: it is
+      # the version this launcher used to reject outright on the version parse,
+      # and `winget install EclipseAdoptium.Temurin.21.JDK` — the command
+      # QUICKSTART hands a Windows reader — is how it arrives on a real machine.
+      # That MSI's default INSTALLDIR is C:\Program Files\Eclipse Adoptium, so
+      # the path has a space in it without anything faking one.
+      - name: Install a JDK under C:\Program Files
+        run: |
+          choco install temurin21 --yes --no-progress
+          $jdk = Get-ChildItem 'C:\Program Files\Eclipse Adoptium' -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'jdk-21*' } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $jdk) {
+            throw "no jdk-21* under 'C:\Program Files\Eclipse Adoptium' - this job needs a JDK whose path has a space"
+          }
+          if ($jdk.FullName -notmatch ' ') {
+            throw "$($jdk.FullName) has no space in its path"
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "JAVA_HOME=$($jdk.FullName)"
+          Add-Content -Path $env:GITHUB_PATH -Value "$($jdk.FullName)\bin"
+          # `jar --version`, not `java -version`: java prints its banner on
+          # stderr, and this shell runs with $ErrorActionPreference = 'Stop',
+          # where a redirected native stderr is a terminating error. jar's goes
+          # to stdout and reports the same JDK build.
+          & "$($jdk.FullName)\bin\jar.exe" --version
+          Write-Host "the JDK under test: $($jdk.FullName)"
+
+      # The exact command the packaging job runs, so the artifact is the same
+      # one that job would produce; only the platform and the JDK differ.
+      - name: Package the full jar
+        run: .\mvnw.cmd --batch-mode clean package -DskipTests
+
+      # Boots through the launcher rather than `java -jar`: the JDK probe, the
+      # version parse, the port check, the /health wait and the engine report
+      # are start.bat's code, and only running it exercises them. The script
+      # also asserts the resolved JDK is the one under test, so a launcher that
+      # silently fell back to the runner's other JDK would fail rather than pass
+      # vacuously. Runnable locally from a Windows checkout with a JDK under a
+      # path with a space: ./scripts/smoke-windows-launcher.ps1
+      - name: Boot the packaged jar through start.bat
+        run: pwsh -NoProfile -File ./scripts/smoke-windows-launcher.ps1
+
   # The image is a separate delivery path from the jar: the Dockerfile's COPY,
   # its Alpine base, the unprivileged user and the JVM flags exist nowhere else
   # in this repository, so no other job can see a mistake in any of them. Builds
