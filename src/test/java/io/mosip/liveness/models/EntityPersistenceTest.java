@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
+import org.springframework.data.domain.PageRequest;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -105,5 +106,99 @@ class EntityPersistenceTest {
                 .containsEntry("confidence", 0.87);
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getId()).isEqualTo(saved.getId());
+    }
+
+    // ------------------------------------------------- the operator feeds' queries
+
+    /**
+     * The session feed's ordering, filtering and limit are the query's, so they
+     * are asserted against the database rather than against a mocked repository:
+     * "newest first" is only true if SQL says so, and the limit only bounds the
+     * result if it is part of the query instead of applied to a table read.
+     */
+    @Test
+    void sessionFeed_isNewestFirst_filteredAndLimited() {
+        OffsetDateTime now = OffsetDateTime.now();
+        LivenessSession oldest = session(now.minusMinutes(3), WorkflowType.RESIDENT, SessionStatus.PASSED);
+        LivenessSession middle = session(now.minusMinutes(2), WorkflowType.RESIDENT, SessionStatus.FAILED);
+        LivenessSession newest = session(now.minusMinutes(1), WorkflowType.OPERATOR, SessionStatus.FAILED);
+        em.clear();
+
+        // Newest first, and the page size is what the limit asked for: the newest
+        // two, not the first two rows the table happened to hand back.
+        List<LivenessSession> page = sessionRepo.findRecent(null, null, PageRequest.of(0, 2));
+        assertThat(page).extracting(LivenessSession::getId)
+                .containsExactly(newest.getId(), middle.getId());
+
+        // Each filter is applied in SQL, independently of the other.
+        assertThat(sessionRepo.findRecent(WorkflowType.RESIDENT, null, PageRequest.of(0, 50)))
+                .extracting(LivenessSession::getId)
+                .containsExactly(middle.getId(), oldest.getId());
+        assertThat(sessionRepo.findRecent(null, SessionStatus.FAILED, PageRequest.of(0, 50)))
+                .extracting(LivenessSession::getId)
+                .containsExactly(newest.getId(), middle.getId());
+        assertThat(sessionRepo.findRecent(WorkflowType.OPERATOR, SessionStatus.PASSED,
+                PageRequest.of(0, 50))).isEmpty();
+        assertThat(sessionRepo.findRecent(WorkflowType.RESIDENT, SessionStatus.PASSED,
+                PageRequest.of(0, 50))).extracting(LivenessSession::getId)
+                .containsExactly(oldest.getId());
+    }
+
+    /**
+     * The rejection feed's query: only the two rejection event types, newest
+     * first, bounded, and with the rejected session readable from the row without
+     * a second query — the controller maps that id after the transaction.
+     */
+    @Test
+    void rejectionEvents_areTheTwoRejectionTypesNewestFirstAndBounded() {
+        OffsetDateTime now = OffsetDateTime.now();
+        LivenessSession firstSession = session(now.minusMinutes(9), WorkflowType.RESIDENT,
+                SessionStatus.FAILED);
+        LivenessSession secondSession = session(now.minusMinutes(8), WorkflowType.OPERATOR,
+                SessionStatus.FAILED);
+
+        event(firstSession, "PAD_REJECTED", now.minusMinutes(3));
+        event(secondSession, "CHALLENGE_FAILED", now.minusMinutes(2));
+        // Newer than both, and deliberately not a rejection: the feed must not
+        // pick it up just because it is the most recent thing in the table.
+        event(firstSession, "SESSION_PASSED", now.minusMinutes(1));
+        em.clear();
+
+        List<LivenessSession> page = sessionRepo.findRecent(null, SessionStatus.FAILED,
+                PageRequest.of(0, 50));
+        assertThat(page).extracting(LivenessSession::getId)
+                .containsExactlyInAnyOrder(firstSession.getId(), secondSession.getId());
+
+        List<AuditLog> events = auditRepo.findRecentByEventTypes(
+                List.of("PAD_REJECTED", "CHALLENGE_FAILED"), PageRequest.of(0, 50));
+        assertThat(events).extracting(AuditLog::getEventType)
+                .containsExactly("CHALLENGE_FAILED", "PAD_REJECTED");
+        assertThat(events).extracting(e -> e.getSession().getId())
+                .containsExactly(secondSession.getId(), firstSession.getId());
+
+        // The limit is the newest rows, on this query too.
+        assertThat(auditRepo.findRecentByEventTypes(
+                List.of("PAD_REJECTED", "CHALLENGE_FAILED"), PageRequest.of(0, 1)))
+                .extracting(AuditLog::getEventType)
+                .containsExactly("CHALLENGE_FAILED");
+    }
+
+    private LivenessSession session(OffsetDateTime createdAt, WorkflowType workflowType,
+                                    SessionStatus status) {
+        return sessionRepo.saveAndFlush(LivenessSession.builder()
+                .workflowType(workflowType)
+                .deviceId("L1-CAM-01")
+                .status(status)
+                .createdAt(createdAt)
+                .build());
+    }
+
+    private AuditLog event(LivenessSession session, String eventType, OffsetDateTime createdAt) {
+        return auditRepo.saveAndFlush(AuditLog.builder()
+                .session(session)
+                .eventType(eventType)
+                .createdAt(createdAt)
+                .details(Map.of("stage", "passive"))
+                .build());
     }
 }

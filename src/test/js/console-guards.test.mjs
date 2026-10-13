@@ -122,9 +122,16 @@ class Element extends EventTargetLike {
   append(...nodes) { for (const n of nodes) this.children.push(n); }
   appendChild(node) { this.children.push(node); return node; }
   focus() {}
-  // The one canvas API console.js touches (frame capture stubs out cleanly).
-  getContext() { return { drawImage() {} }; }
-  toDataURL() { return "data:image/jpeg;base64,STUB"; }
+  // The canvas API console.js touches, recording what the capture path asked
+  // for so the guards can assert the capture budget without a real encoder:
+  // `lastDraw` is the drawImage argument list, `lastEncode` the size and
+  // quality the frame was encoded at.
+  getContext() { return { drawImage: (...args) => { this.lastDraw = args; } }; }
+  toDataURL(type, quality) {
+    this.lastEncode = { type, quality, width: this.width, height: this.height };
+    this.encodes = (this.encodes || 0) + 1;
+    return "data:image/jpeg;base64,STUB";
+  }
 }
 
 // Build an element per id="…" in the real markup; selects get the value a
@@ -171,10 +178,29 @@ const $id = id => {
   return el;
 };
 
+const createdElements = [];
 const document = {
   hidden: false,
   getElementById: id => byId.get(id) || null,
-  createElement: tag => new Element(tag)
+  createElement: tag => {
+    const el = new Element(tag);
+    createdElements.push(el);
+    return el;
+  },
+  // console.js listens for visibilitychange to pause capture; a bare object
+  // here would throw while the page is loading.
+  _listeners: new Map(),
+  addEventListener(type, fn) {
+    if (!this._listeners.has(type)) this._listeners.set(type, []);
+    this._listeners.get(type).push(fn);
+  },
+  dispatch(type) { for (const fn of [...(this._listeners.get(type) || [])]) fn({ type }); }
+};
+// The one canvas console.js allocates, reused for every frame.
+const captureCanvas = () => {
+  const el = createdElements.find(e => e.tagName === "CANVAS");
+  if (!el) throw new Error("console.js no longer creates its capture canvas");
+  return el;
 };
 
 // ---------- fetch / storage stubs ----------
@@ -193,7 +219,11 @@ const POLICY = {
 
 const fetchCalls = [];
 let confirmAnswer = false;
-let hangFrames = false;   // when set, frame POSTs never answer (check in flight)
+let hangFrames = false;   // when set, frame POSTs answer only when released below
+// A frame POST left hanging stays in flight until the test lets it go, which is
+// the only way to observe "a second capture is dropped, not queued".
+const pendingFrameReleases = [];
+const releaseHang = () => { const go = pendingFrameReleases.shift(); if (go) go(); };
 let challengeAction = "proceed";   // action a challenge-validation stub answers with
 let frameAction = "proceed";       // action a frame-POST stub answers with
 let chainVerify = {
@@ -254,7 +284,7 @@ const AUDIT = [
 
 async function fetch(url, options = {}) {
   const method = (options.method || "GET").toUpperCase();
-  fetchCalls.push({ url, method, headers: options.headers || {} });
+  fetchCalls.push({ url, method, headers: options.headers || {}, body: options.body, at: Date.now() });
   const respond = body => ({
     ok: true,
     status: 200,
@@ -276,7 +306,10 @@ async function fetch(url, options = {}) {
                      status: "ACTIVE" });
   }
   if (url.includes("/frames")) {
-    if (hangFrames) return new Promise(() => {});   // never settles
+    if (hangFrames) {
+      return new Promise(resolve => pendingFrameReleases.push(
+        () => resolve(respond({ action: frameAction, message: "stub" }))));
+    }
     // `escalate_to_active` has to carry the challenge the client then validates.
     return respond({
       action: frameAction,
@@ -329,10 +362,15 @@ function makeStorage() {
 
 const windowTarget = new EventTargetLike();
 windowTarget.confirm = () => confirmAnswer;
+// Both camera buttons need getUserMedia to resolve. The stream object is opaque
+// to the code under test (it is only handed to a <video>), so a stand-in is
+// enough to drive the resident capture screen.
+const navigator = { mediaDevices: { getUserMedia: async () => ({ id: "stub-stream" }) } };
 const intervals = [];   // recorded, never scheduled: the harness must be able to exit
 
 const sandbox = {
   document,
+  navigator,
   window: windowTarget,
   sessionStorage: makeStorage(),
   fetch,
@@ -344,6 +382,14 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(consoleJs, sandbox, { filename: "console.js" });
+
+// The cameras report 720p unless a test says otherwise. That is the case the
+// capture cap exists for: getUserMedia asks for 640x480 as an *ideal* and
+// devices are free to ignore it.
+for (const [id, w, h] of [["video", 1280, 720], ["res-video", 1280, 720]]) {
+  $id(id).videoWidth = w;
+  $id(id).videoHeight = h;
+}
 
 // Let the fire-and-forget loads at the bottom of console.js settle.
 const settle = async (rounds = 25) => {
@@ -572,6 +618,83 @@ assert(fetchCalls.filter(c => c.url.includes("/challenges/validate")).length ===
 frameAction = "proceed";
 challengeAction = "proceed";
 
+section("capture budget — 640px long edge at quality 0.7 (task 1)");
+assert(windowTarget.CAPTURE_BUDGET
+    && windowTarget.CAPTURE_BUDGET.maxEdge === 640
+    && windowTarget.CAPTURE_BUDGET.quality === 0.7
+    && windowTarget.CAPTURE_BUDGET.maxFps === 8,
+    "the capture budget is the documented 640px / 0.7 / 8fps");
+frameAction = "proceed";
+let framesBeforeCapture = fetchCalls.filter(c => c.url.includes("/frames")).length;
+$id("btn-run").dispatch("click");
+await new Promise(r => setTimeout(r, 500));
+await settle();
+assert(fetchCalls.filter(c => c.url.includes("/frames")).length === framesBeforeCapture + 1,
+    "the run sends one frame and stops on its verdict");
+const enc = captureCanvas().lastEncode;
+assert(enc.width === 640 && enc.height === 360,
+    `a 1280x720 camera frame is captured at 640x360, not its native size (got ${enc.width}x${enc.height})`);
+assert(enc.type === "image/jpeg" && enc.quality === 0.7,
+    `frames are JPEG at quality 0.7, not the old 0.85/0.9 (got ${enc.quality})`);
+assert(enc.width / enc.height === 16 / 9, "the aspect ratio survives the downscale");
+assert(captureCanvas().lastDraw[3] === 1280 && captureCanvas().lastDraw[4] === 720,
+    "the whole 1280x720 source rectangle is drawn — the cap scales, it never crops");
+assert(createdElements.filter(e => e.tagName === "CANVAS").length === 1,
+    "one canvas is allocated per page and reused for every frame, not one per capture");
+assert(captureCanvas().encodes > 1, "the reused canvas really is what encodes the frames");
+
+// A small camera must not be upscaled into a larger, more expensive frame.
+$id("video").videoWidth = 320;
+$id("video").videoHeight = 240;
+$id("btn-run").dispatch("click");
+await new Promise(r => setTimeout(r, 500));
+await settle();
+assert(captureCanvas().lastEncode.width === 320 && captureCanvas().lastEncode.height === 240,
+    "a 320x240 camera keeps its own size: the cap is a ceiling, never an upscale");
+$id("video").videoWidth = 1280;
+$id("video").videoHeight = 720;
+
+section("capture pauses while the tab is hidden (task 1)");
+frameAction = "retry_passive";   // keep the passive loop iterating while hidden
+const framesBeforeHide = fetchCalls.filter(c => c.url.includes("/frames")).length;
+const sessionsBeforeHide =
+    fetchCalls.filter(c => c.method === "POST" && c.url === "/api/v1/sessions").length;
+document.hidden = true;
+document.dispatch("visibilitychange");
+$id("btn-run").dispatch("click");
+await new Promise(r => setTimeout(r, 800));
+await settle();
+assert(fetchCalls.filter(c => c.method === "POST" && c.url === "/api/v1/sessions").length
+        === sessionsBeforeHide + 1,
+    "the session is still created while hidden — only the capture pauses");
+assert(fetchCalls.filter(c => c.url.includes("/frames")).length === framesBeforeHide,
+    "no frame is captured or sent while the tab is hidden");
+assert($id("log").textContent.includes("Tab hidden — capture paused"),
+    "the decision log says why the capture stopped");
+document.hidden = false;
+frameAction = "proceed";
+document.dispatch("visibilitychange");
+await new Promise(r => setTimeout(r, 700));
+await settle();
+assert(fetchCalls.filter(c => c.url.includes("/frames")).length > framesBeforeHide,
+    "capture resumes when the tab is visible again");
+assert($id("verdict-action").textContent === "PROCEED",
+    "the paused run reaches its normal verdict once visible");
+assert($id("log").textContent.includes("capture resumed"),
+    "the log records the resume too");
+
+section("challenge burst — frames per request (task 3)");
+// The composition is deliberately unchanged (baseline + up to CHALLENGE_WINDOW
+// recent frames): the engine measures an excursion relative to the baseline, so
+// trimming the window would change what it evaluates. What the guards pin is
+// that the burst stays that size and does not grow as the loop polls.
+const bursts = fetchCalls.filter(c => c.url.includes("/challenges/validate"))
+    .map(c => JSON.parse(c.body).framesBase64.length);
+assert(bursts.length > 0, `challenge validations ran (${bursts.length} of them)`);
+assert(bursts[0] === 4, `the first burst carries baseline + 3 recent frames (got ${bursts[0]})`);
+assert(bursts.every(n => n === 4 || n === 5),
+    `no burst exceeds baseline + the 4-frame window (got ${bursts.join(", ")})`);
+
 section("beforeunload — dirty form (item 3)");
 edit($id("cfg-threshold"), "0.9");
 assert(beforeunload().defaultPrevented === true, "closing with pending edits is intercepted");
@@ -602,6 +725,51 @@ assert(history().includes("OPERATOR  UPDATED  by key:1a2b3c4d5e6f  [risk: LOW]")
     "a benign edit shows LOW");
 assert(history().includes("SUPERVISOR  CREATED  by key:abcdefabcdef  [risk: —]"),
     "an entry from before the classification shows an em dash, never a guessed level");
+
+section("never queue — a capture is dropped while one request is in flight (task 1)");
+// hangFrames is still set from the section above: the supervisor run is blocked
+// on its frame POST, so the gate is closed. The resident screen shares the same
+// camera and the same gate, so its capture must be dropped — not stored up
+// behind the blocked request.
+const framesWhileHung = fetchCalls.filter(c => c.url.includes("/frames")).length;
+const sessionsWhileHung = fetchCalls.filter(c => c.method === "POST" && c.url === "/api/v1/sessions").length;
+$id("btn-res-camera").dispatch("click");
+await settle();
+assert($id("btn-res-camera").disabled === true,
+    "the resident camera starts once its stream is open");
+$id("btn-res-run").dispatch("click");
+await new Promise(r => setTimeout(r, 700));
+await settle();
+assert(fetchCalls.filter(c => c.method === "POST" && c.url === "/api/v1/sessions").length
+        === sessionsWhileHung + 1,
+    "the resident session request still goes out — only frames are gated");
+assert(fetchCalls.filter(c => c.url.includes("/frames")).length === framesWhileHung,
+    "no frame is captured or queued behind the in-flight request");
+
+// Release the blocked request: the dropped capture is retried on the next tick.
+// A queue would have released a backlog here; a drop releases exactly one frame.
+hangFrames = false;
+releaseHang();
+await new Promise(r => setTimeout(r, 700));
+await settle();
+assert(fetchCalls.filter(c => c.url.includes("/frames")).length > framesWhileHung,
+    "the dropped capture is retried once the pipe is free — a drop, not a stall");
+assert(fetchCalls.filter(c => c.url.includes("/frames")).length <= framesWhileHung + 2,
+    "and nothing was stored up behind it: at most the one dropped frame goes out");
+
+section("frame pacing — the 8/s ceiling holds for the shared gate (task 1)");
+// Both capture screens share one gate, so the ceiling is on the combined rate:
+// this is what stops two open screens (supervisor + resident) from sending
+// 2x8 frames per second at a 2-core box.
+const gated = fetchCalls
+    .filter(c => c.url.includes("/frames") || c.url.includes("/challenges/validate"))
+    .map(c => c.at);
+const gaps = gated.slice(1).map((t, i) => t - gated[i]);
+const minGap = gaps.length ? Math.min(...gaps) : Infinity;
+const ceiling = 1000 / windowTarget.CAPTURE_BUDGET.maxFps;
+assert(gated.length > 10, `the run produced enough gated sends to measure (${gated.length})`);
+assert(minGap >= ceiling - 1,
+    `every send is at least ${ceiling}ms after the previous one (min gap ${minGap}ms over ${gated.length} sends)`);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

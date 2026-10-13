@@ -164,4 +164,20 @@ class PassiveScoringServiceTest {
                 "an unknown value must stop bean creation, not pick a scorer");
         assertTrue(e.getMessage().contains("mosip.liveness.backend"), e.getMessage());
     }
+
+    /**
+     * A negative intra-op thread count is refused at construction. It must not
+     * read as "derive from the core count": an operator who writes {@code -2}
+     * believes they set something, and a silent derive would hide the typo until
+     * someone measured the machine. (A non-integer never reaches here — Spring's
+     * binding refuses the boot first, which the packaged service was checked
+     * against end to end.)
+     */
+    @Test
+    void negativeOnnxIntraOpThreadCountIsAConfigurationError() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> new PassiveScoringService(mock(LivenessEngineService.class), "heuristic", "",
+                        4.0, -2));
+        assertTrue(e.getMessage().contains("mosip.liveness.onnx-intra-op-threads"), e.getMessage());
+    }
 }

@@ -67,6 +67,99 @@
     $("btn-active").disabled = !on;
   }
 
+  // ---------- role selection ----------
+  //
+  // The console opens on a role picker and each role owns one view container;
+  // only the chosen one is on screen. The picker routes the UI, it is not an
+  // authorization boundary: the service still enforces its own rules and every
+  // policy write keeps needing the admin key. It exists because all three roles
+  // share one interaction model (docs/ui-ux-design.md §1) — here the Supervisor
+  // view carries the whole test console, while Resident and Operator are
+  // placeholders for their capture / authentication screens.
+  const ROLES = ["resident", "operator", "supervisor"];
+
+  function showRole(role) {
+    $("role-picker").hidden = !!role;
+    ROLES.forEach(r => { $("role-" + r).hidden = r !== role; });
+    $("btn-switch-role").hidden = !role;
+    const pill = $("pill-role");
+    pill.textContent = role ? "role: " + role.toUpperCase() : "no role";
+    pill.className = "pill" + (role ? " ok" : "");
+  }
+
+  // Stop every track, not just the <video>: the track is what holds the capture
+  // device open, so stopping it is what turns the camera indicator light off.
+  // Both previews are released: the Supervisor console and the Resident capture
+  // screen each hold their own stream, and a role switch must leave neither on.
+  function releaseCamera() {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+    }
+    video.srcObject = null;
+    releaseResidentCamera();
+  }
+
+  // Close a session and keep the reason in the decision log. Failures are
+  // reported, never retried: the caller has already dropped the id, so a
+  // half-open session is a fact to surface, not state to carry forward.
+  async function closeSession(id, why) {
+    if (!id) return;
+    try {
+      const s = await api(`/sessions/${id}/close`, { method: "POST" });
+      log(`Session ${id} closed on ${why}: status=${s.status}`);
+    } catch (e) {
+      log(`close on ${why} failed: ` + e.message);
+    }
+  }
+
+  // Button availability after a run — or after a role switch interrupted one:
+  // Run needs a camera, Stop and the extra check need a live session.
+  function resetControls() {
+    $("btn-run").disabled = !stream;
+    $("btn-stop").disabled = true;
+    setActiveCheckEnabled(sessionPassed);
+  }
+
+  // Drop everything a session left in memory, so the next role starts clean.
+  function clearRunState() {
+    running = false;
+    sessionId = null;
+    lastChallenge = null;
+    sessionPassed = false;
+    resetSteps();
+    $("pill-session").textContent = "no session";
+    $("pill-session").className = "pill";
+    $("verdict").hidden = true;
+    $("verdict-action").textContent = "";
+    $("verdict-msg").textContent = "";
+    $("last").innerHTML = "<dt>—</dt><dd>—</dd>";
+    $("audit").textContent = "No session yet.";
+    $("btn-camera").disabled = false;
+    resetControls();
+  }
+
+  // Hand the workstation to the next role: camera released first (the light goes
+  // off immediately), then the open session is closed server-side so it is not
+  // left ACTIVE with a challenge open, then the picker is back on screen.
+  async function switchRole() {
+    const openSession = sessionId;
+    const openResident = resident.sessionId;
+    releaseCamera();
+    clearRunState();
+    clearResidentState();
+    // The admin key is role-scoped: leaving the role that can use it drops it
+    // from memory, so the next role starts without a key it never asked for.
+    heldKey = "";
+    showRole(null);
+    log("Role cleared — cameras stopped, run state discarded, admin key dropped.");
+    await closeSession(openSession, "role switch");
+    await closeSession(openResident, "role switch");
+  }
+
+  ROLES.forEach(r => $("btn-role-" + r).addEventListener("click", () => showRole(r)));
+  $("btn-switch-role").addEventListener("click", () => { switchRole(); });
+
   // The three ways a spent retry budget can end a session (docs/configuration.md):
   // which headline to show, and — only for `failed` — that a fresh session is
   // allowed. Keyed by the server's own action, never guessed from the message.
@@ -97,20 +190,125 @@
     return body;
   }
 
+  // ---------- capture budget: bytes and CPU per frame ----------
+  //
+  // These are ceilings, not targets: the console used to send the camera's native
+  // frame at quality 0.85 (0.9 for challenge frames), which on a 1280x720 webcam
+  // is four times the pixels of a 640x360 one — for a face the service shrinks to
+  // its own analysis cap anyway. Every stage after this one gets cheaper when
+  // these drop: the canvas draw, the JPEG encode, the base64 payload, the upload,
+  // the server's decode, its Haar scan and both model passes.
+  const CAPTURE_MAX_EDGE = 640;        // long edge of a captured frame, px
+  const CAPTURE_JPEG_QUALITY = 0.7;    // toDataURL quality, every frame
+  const CAPTURE_MAX_FPS = 8;           // hard ceiling on frame sends per second
+  const CAPTURE_MIN_INTERVAL_MS = Math.ceil(1000 / CAPTURE_MAX_FPS);
+  // Read-only, for the guards harness (src/test/js/console-guards.test.mjs):
+  // browser code without a module system has no other way to let a test pin
+  // these numbers instead of scraping them out of the source text.
+  window.CAPTURE_BUDGET = Object.freeze({
+    maxEdge: CAPTURE_MAX_EDGE, quality: CAPTURE_JPEG_QUALITY, maxFps: CAPTURE_MAX_FPS
+  });
+
   // One canvas reused for every capture: allocating a fresh canvas per frame
   // made garbage collection spike on low-end devices during long runs.
   const captureCanvas = document.createElement("canvas");
   const captureCtx = captureCanvas.getContext("2d");
-  function grabFrame(quality = 0.85) {
-    const w = video.videoWidth || 640;
-    const h = video.videoHeight || 480;
-    if (captureCanvas.width !== w) captureCanvas.width = w;
-    if (captureCanvas.height !== h) captureCanvas.height = h;
-    captureCtx.drawImage(video, 0, 0, w, h);
+
+  /**
+   * Target size for a source frame: same aspect ratio, long edge at most
+   * {@link CAPTURE_MAX_EDGE}, never upscaled (a 320x240 camera keeps 320x240).
+   */
+  function captureTarget(source) {
+    const srcW = source.videoWidth || 640;
+    const srcH = source.videoHeight || 480;
+    const longEdge = Math.max(srcW, srcH);
+    const scale = longEdge > CAPTURE_MAX_EDGE ? CAPTURE_MAX_EDGE / longEdge : 1;
+    return {
+      width: Math.max(1, Math.round(srcW * scale)),
+      height: Math.max(1, Math.round(srcH * scale))
+    };
+  }
+
+  // The source <video> is a parameter: the Supervisor console and the Resident
+  // capture screen each capture from their own preview (both share this canvas,
+  // and the page's CSS mirroring never touches the drawn pixels).
+  function grabFrame(source, quality = CAPTURE_JPEG_QUALITY) {
+    const target = captureTarget(source);
+    if (captureCanvas.width !== target.width) captureCanvas.width = target.width;
+    if (captureCanvas.height !== target.height) captureCanvas.height = target.height;
+    // The 9-argument form: the source rectangle is the camera's whole frame and
+    // the destination rectangle is the capped canvas. The 5-argument form would
+    // copy the frame's top-left corner into the canvas — a crop, not a downscale.
+    captureCtx.drawImage(source, 0, 0,
+      source.videoWidth || target.width, source.videoHeight || target.height,
+      0, 0, target.width, target.height);
     return captureCanvas.toDataURL("image/jpeg", quality);
   }
 
+  // Challenge polling cadence, shared by both capture flows so the two views
+  // cannot drift apart. Each poll re-runs face detection and PAD on every frame
+  // it carries, which is the expensive path, so the window stays small and the
+  // cadence moderate: four recent frames (2s of motion) alongside the baseline
+  // is plenty, because the engine measures the *largest* excursion relative to
+  // the baseline — the peak of a turn only has to fall inside one window.
+  const CHALLENGE_WINDOW = 4;        // frames in the rolling evaluation window
+  const CAPTURE_MS = 500;            // gap between captured frames
+  const MIN_WINDOW_MS = 15000;       // server-enforced floor on the challenge window
+
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // ---------- one frame request at a time, at most CAPTURE_MAX_FPS ----------
+  //
+  // Frames are never queued. While a request is in flight — or while the tab is
+  // hidden, where nobody can read the prompt and nothing should be captured — a
+  // capture is skipped and the caller retries on its next tick. The two capture
+  // screens share this gate because they share one camera and one canvas.
+  //
+  // Deliberately not covered: the camera stream itself stays open across tab
+  // switches. Stopping and restarting a MediaStreamTrack makes the camera
+  // re-acquire with a visible flash, and what this gate is protecting is the
+  // canvas encode plus the upload, not the already-running video element.
+  let frameInFlight = false;
+  let nextFrameAt = 0;
+
+  /** True when a capture must not be taken or sent right now. */
+  function capturePaused() {
+    return document.hidden || frameInFlight;
+  }
+
+  /** Waits out the CAPTURE_MAX_FPS ceiling; never drops a frame for pacing. */
+  async function awaitCaptureSlot() {
+    for (;;) {
+      const left = nextFrameAt - Date.now();
+      if (left <= 0) return;
+      await sleep(Math.min(CAPTURE_MIN_INTERVAL_MS, left));
+    }
+  }
+
+  /**
+   * POSTs one frame (or one challenge window) through the gate. Returns null
+   * when the send was dropped — in flight, or hidden — so callers retry instead
+   * of mistaking a dropped frame for a verdict.
+   */
+  async function sendFrame(path, body) {
+    if (capturePaused()) return null;
+    await awaitCaptureSlot();
+    if (capturePaused()) return null;
+    frameInFlight = true;
+    nextFrameAt = Date.now() + CAPTURE_MIN_INTERVAL_MS;
+    try {
+      return await api(path, { method: "POST", body: JSON.stringify(body) });
+    } finally {
+      frameInFlight = false;
+    }
+  }
+
+  // Say so in the decision log, so an operator who hides the tab mid-run knows
+  // why the capture stopped rather than assuming the console hung.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) log("Tab hidden — capture paused.");
+    else log("Tab visible again — capture resumed.");
+  });
 
   // ---------- health ----------
   async function refreshHealth() {
@@ -176,6 +374,7 @@
       });
       sessionId = session.id;
       lastChallenge = null;
+      rememberSession(session, "Supervisor");
       $("pill-session").textContent = "session " + sessionId.slice(0, 8);
       $("pill-session").className = "pill ok";
       log(`Session created: ${sessionId}\n  workflow=${session.workflowType} status=${session.status}`);
@@ -184,12 +383,14 @@
       // 2 — passive
       setStep(2, "active");
       let escalated = null, outcome = null;
+      // `i--` on a skipped tick keeps the attempt count for real frames: a
+      // hidden tab (or a request already in flight) must pause the run, not
+      // spend one of its 12 attempts.
       for (let i = 1; i <= 12 && running; i++) {
-        const frame = grabFrame();
-        const r = await api(`/sessions/${sessionId}/frames`, {
-          method: "POST",
-          body: JSON.stringify({ frameBase64: frame })
-        });
+        if (capturePaused()) { await sleep(200); i--; continue; }
+        const r = await sendFrame(`/sessions/${sessionId}/frames`,
+          { frameBase64: grabFrame(video) });
+        if (r === null) { await sleep(100); i--; continue; }
         kv($("last"), {
           sessionId: r.sessionId, stage: r.stage, faceDetected: r.faceDetected,
           multipleFaces: r.multipleFaces, faceQuality: fmt(r.faceQuality),
@@ -241,9 +442,7 @@
       verdict("reject", "ERROR", e.message);
     } finally {
       running = false;
-      $("btn-run").disabled = false;
-      $("btn-stop").disabled = true;
-      setActiveCheckEnabled(sessionPassed);
+      resetControls();
     }
   });
 
@@ -257,14 +456,6 @@
   async function runChallenges(escalation) {
     let challenge = escalation.challenge;
     let rounds = 0;
-    // Each poll re-runs face detection and PAD on every frame it carries, which is
-    // the expensive path, so keep the window small and the cadence moderate. Four
-    // recent frames (2s of motion) alongside the baseline is plenty: the engine
-    // measures the *largest* excursion relative to the baseline, so the peak of a
-    // turn only has to fall inside one window, not all of them.
-    const WINDOW = 4;        // frames in the rolling evaluation window
-    const CAPTURE_MS = 500;  // gap between captured frames
-    const MIN_WINDOW_MS = 15000;
 
     while (challenge && rounds < 6 && running) {
       rounds++;
@@ -283,7 +474,11 @@
 
       // Baseline frame taken before the action is performed, so the engine can
       // measure movement against a neutral pose; it travels with every poll.
-      const baseline = grabFrame(0.9);
+      // It must come from a visible tab, so wait for one rather than capturing
+      // a frame nobody can act in front of.
+      while (running && document.hidden) await sleep(200);
+      if (!running) return { action: null, message: "Stopped by user." };
+      const baseline = grabFrame(video);
       const recent = [];
       log(`challenge ${rounds}: ${challenge.challengeType} — open up to `
         + `${Math.round(windowMs / 1000)}s, stops as soon as it is detected`);
@@ -295,21 +490,24 @@
       // A little slack past the nominal deadline: the server owns the clock, so
       // always let it deliver the final verdict for this challenge.
       while (running && !outcome && Date.now() < deadline + 15000) {
-        recent.push(grabFrame(0.9));
-        if (recent.length > WINDOW) recent.shift();
+        // Paused (hidden or a request in flight): take no frame and send no
+        // request. The window keeps what it already has.
+        if (capturePaused()) { await sleep(200); continue; }
+        recent.push(grabFrame(video));
+        if (recent.length > CHALLENGE_WINDOW) recent.shift();
 
         const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
         verdict("escalate", "CAPTURING…", `Perform "${readable}" — ${left}s left.`);
 
         if (recent.length >= 3) {
-          const r = await api(`/sessions/${sessionId}/challenges/validate`, {
-            method: "POST",
-            body: JSON.stringify({ challengeId, framesBase64: [baseline, ...recent] })
-          });
-          log(`challenge ${rounds}: passed=${r.passed} action=${r.action} ${r.message || ""}`);
-          // "continue" = still open and nothing detected yet. Anything else
-          // (proceed / reject / retry_challenge) is final for this challenge.
-          if (r.action !== "continue") outcome = r;
+          const r = await sendFrame(`/sessions/${sessionId}/challenges/validate`,
+            { challengeId, framesBase64: [baseline, ...recent] });
+          if (r !== null) {          // null = dropped, not an answer: keep the window
+            log(`challenge ${rounds}: passed=${r.passed} action=${r.action} ${r.message || ""}`);
+            // "continue" = still open and nothing detected yet. Anything else
+            // (proceed / reject / retry_challenge) is final for this challenge.
+            if (r.action !== "continue") outcome = r;
+          }
         }
         if (!outcome) await sleep(CAPTURE_MS);
       }
@@ -377,9 +575,7 @@
       verdict("reject", "ERROR", e.message);
     } finally {
       running = false;
-      $("btn-run").disabled = false;
-      $("btn-stop").disabled = true;
-      setActiveCheckEnabled(sessionPassed);
+      resetControls();
     }
   });
 
@@ -388,6 +584,311 @@
     log("Stop requested.");
     $("btn-stop").disabled = true;
   });
+
+  // ---------- resident capture (role: Resident) ----------
+  //
+  // The capture screen of docs/ui-ux-design.md §1 in the resident role: live
+  // (selfie-mirrored) preview, status card, one extra active check and an explicit
+  // cleanup. The workflow is fixed to RESIDENT — that is what the role view is —
+  // and this panel reads only the generic fields of a response (`action`,
+  // `message`, `challenge`, `session.id`): no score, no face quality and no PAD
+  // field is ever read, so nothing technical can reach the screen. Anything worth
+  // debugging goes to the decision log under Supervisor.
+  const resVideo = $("res-video");
+  const resident = { stream: null, sessionId: null, running: false, passed: false };
+
+  // The shared message catalogue: byte-for-byte the keys and default English
+  // strings of LivenessOverlayPresenter.DEFAULT_MESSAGES (the desktop catalogue,
+  // itself byte-for-byte the Flutter LivenessView.defaultMessages). Keys are the
+  // contract and a deployment overrides them per i18n; the instructions panel is
+  // rendered from this map, so the guide and the live status cannot disagree.
+  const MESSAGES = {
+    "liveness.hint.look_camera": "Look directly at the camera.",
+    "liveness.hint.single_person": "Only one person may be in the frame.",
+    "liveness.checking": "Checking face liveness…",
+    "prompt.blink": "Please blink",
+    "prompt.smile": "Please smile",
+    "prompt.turn_left": "Please turn your head to the left",
+    "prompt.turn_right": "Please turn your head to the right",
+    "feedback.continue": "Please continue",
+    "feedback.detected": "Action detected",
+    "feedback.hold": "Hold still",
+    "liveness.success": "Good, face captured successfully",
+    "liveness.failed.try_again": "We could not verify face liveness. Please try again.",
+    "liveness.pad.generic": "Face verification could not be completed. Please try again.",
+    "liveness.max_retries.recovery": "Could not complete verification. Recovery required.",
+    "liveness.camera.unavailable": "Camera not available.",
+    "liveness.cancelled": "Verification cancelled."
+  };
+  // The order the capture screen walks through them, for the guide below.
+  const GUIDE_KEYS = [
+    "liveness.hint.look_camera", "liveness.hint.single_person", "liveness.checking",
+    "prompt.blink", "prompt.smile", "prompt.turn_left", "prompt.turn_right",
+    "feedback.continue", "feedback.detected", "feedback.hold",
+    "liveness.success", "liveness.failed.try_again", "liveness.pad.generic",
+    "liveness.max_retries.recovery", "liveness.camera.unavailable", "liveness.cancelled"
+  ];
+
+  function renderResidentGuide() {
+    const dl = $("res-guide");
+    dl.textContent = "";
+    for (const key of GUIDE_KEYS) {
+      const dt = document.createElement("dt");
+      dt.textContent = key;
+      const dd = document.createElement("dd");
+      dd.textContent = MESSAGES[key];
+      dl.append(dt, dd);
+    }
+  }
+
+  // Catalogue lookup for an issued challenge type. The LOOK_* variants have no
+  // catalogue key yet, so they fall back to the readable form of the type — the
+  // same derivation the Supervisor prompt uses, and still generic.
+  function promptFor(type) {
+    const name = String(type || "");
+    return MESSAGES["prompt." + name.toLowerCase()]
+      || "Please " + name.replace(/_/g, " ").toLowerCase();
+  }
+
+  // The verdict card. `kind` reuses the console's verdict colours; the text is
+  // always a catalogue string or the service's own generic message.
+  function resBanner(kind, action, message) {
+    $("res-banner").className = "verdict mt14" + (kind ? " " + kind : "");
+    $("res-banner-action").textContent = action || "";
+    $("res-banner-msg").textContent = message || "";
+  }
+
+  // What the four buttons allow, derived from the panel's own state: a camera to
+  // capture from, a PASSED session for the extra check, and something (a session
+  // or a camera) worth stopping. Stop stays enabled during a run on purpose.
+  function resSetControls() {
+    $("btn-res-camera").disabled = !!resident.stream || resident.running;
+    $("btn-res-run").disabled = !resident.stream || resident.running;
+    $("btn-res-active").disabled = !resident.stream || !resident.passed || resident.running;
+    $("btn-res-stop").disabled = !(resident.stream || resident.sessionId);
+  }
+
+  function releaseResidentCamera() {
+    if (resident.stream) {
+      resident.stream.getTracks().forEach(track => track.stop());
+      resident.stream = null;
+    }
+    resVideo.srcObject = null;
+  }
+
+  // The header's session pill is shared with the Supervisor console, so the
+  // resident claims it while it owns the open session and only gives it back when
+  // the supervisor has no session of its own to keep showing.
+  function residentSessionPill(id) {
+    const pill = $("pill-session");
+    if (id) {
+      pill.textContent = "session " + id.slice(0, 8);
+      pill.className = "pill ok";
+    } else if (!sessionId) {
+      pill.textContent = "no session";
+      pill.className = "pill";
+    }
+  }
+
+  // The state the role starts on: no session, no run, no camera, banner and
+  // buttons consistent.
+  function clearResidentState() {
+    resident.running = false;
+    resident.sessionId = null;
+    resident.passed = false;
+    releaseResidentCamera();
+    residentSessionPill(null);
+    resBanner("", "READY", "Start the camera to begin.");
+    resSetControls();
+  }
+
+  // A refused or failed call: the panel shows a catalogue message and the detail
+  // goes to the decision log (design §1 — no technical exposure on the screen).
+  function resFailure(e) {
+    log("resident error: " + e.message);
+    resBanner("reject", "REJECTED", MESSAGES["liveness.failed.try_again"]);
+  }
+
+  // The verdict: VERIFIED on a pass, REJECTED on every failure. The message is the
+  // service's own generic text (it renders the failure table's key server-side);
+  // the catalogue only stands in when it is absent.
+  function resSettle(outcome) {
+    if (outcome && outcome.action === "proceed") {
+      resident.passed = true;
+      resBanner("proceed", "VERIFIED", outcome.message || MESSAGES["liveness.success"]);
+      return;
+    }
+    const message = outcome
+      ? (outcome.message || MESSAGES["liveness.failed.try_again"])
+        + (outcome.mayRetrySession ? " You may start a new session." : "")
+      : MESSAGES["liveness.failed.try_again"];
+    resBanner("reject", "REJECTED", message);
+  }
+
+  // The challenge loop: the same challenge id is re-validated every CAPTURE_MS
+  // over a rolling window of frames, and polling continues for as long as the
+  // service answers "continue". The window stays open for the server's own
+  // timeout plus a little slack, because the server owns the clock and must be
+  // allowed to deliver the final verdict for the challenge it issued.
+  async function resChallenges(challenge) {
+    let rounds = 0;
+    while (challenge && rounds < 6 && resident.running) {
+      rounds++;
+      // The two challenge shapes disagree on the id field: the escalation frame
+      // result carries `challengeId`, a retry response carries `id`. Accept
+      // either, and fail loudly rather than posting a null id.
+      const challengeId = challenge.challengeId || challenge.id;
+      if (!challengeId) throw new Error("Server returned a challenge without an id");
+      const deadline = Date.now() + Math.max(challenge.timeoutMs || 0, MIN_WINDOW_MS);
+      // A baseline frame taken before the action, so the engine can measure the
+      // movement against a neutral pose; it travels with every poll.
+      while (resident.running && document.hidden) await sleep(200);
+      if (!resident.running) return null;
+      const baseline = grabFrame(resVideo);
+      const recent = [];
+      log(`resident challenge ${rounds}: ${challenge.challengeType}`);
+      let outcome = null;
+
+      while (resident.running && !outcome && Date.now() < deadline + 15000) {
+        if (capturePaused()) { await sleep(200); continue; }   // hidden / in flight
+        recent.push(grabFrame(resVideo));
+        if (recent.length > CHALLENGE_WINDOW) recent.shift();
+        const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+        resBanner("escalate", promptFor(challenge.challengeType),
+          `${MESSAGES["feedback.continue"]} — ${left}s left.`);
+        if (recent.length >= 3) {
+          const r = await sendFrame(`/sessions/${resident.sessionId}/challenges/validate`,
+            { challengeId, framesBase64: [baseline, ...recent] });
+          if (r === null) { await sleep(CAPTURE_MS); continue; }   // dropped, not an answer
+          if (!resident.running) return null;
+          // "continue" = still open, nothing detected yet. Anything else is final
+          // for this challenge (proceed / reject / retry_challenge / the manual
+          // and budget-exhausted actions).
+          if (r.action !== "continue") outcome = r;
+        }
+        if (!outcome) await sleep(CAPTURE_MS);
+      }
+
+      if (!resident.running || !outcome) return null;
+      if (outcome.action === "proceed" || outcome.action === "reject"
+          || outcome.action === "manual_check_passed"
+          || outcome.action === "manual_check_failed"
+          || TERMINAL_VERDICTS[outcome.action]) {
+        return outcome;
+      }
+      // retry_challenge — the response carries the next challenge.
+      challenge = outcome.challenge;
+    }
+    return null;
+  }
+
+  $("btn-res-camera").addEventListener("click", async () => {
+    if (resident.stream) return;
+    try {
+      resident.stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }, audio: false
+      });
+      resVideo.srcObject = resident.stream;
+      resBanner("", "READY", "Camera ready. Run the liveness check to begin.");
+    } catch (e) {
+      log("resident camera error: " + e.message
+        + "\n  Browsers expose the camera only on a secure origin — use http://localhost:8000");
+      resBanner("reject", "CAMERA UNAVAILABLE", MESSAGES["liveness.camera.unavailable"]);
+    }
+    resSetControls();
+  });
+
+  $("btn-res-run").addEventListener("click", async () => {
+    if (resident.running || !resident.stream) return;
+    resident.running = true;
+    resident.passed = false;
+    resident.sessionId = null;
+    resSetControls();
+    resBanner("", "CHECKING…", MESSAGES["liveness.checking"]);
+    try {
+      const session = await api("/sessions", {
+        method: "POST",
+        body: JSON.stringify({ workflowType: "RESIDENT", deviceId: "WEB-CAM" })
+      });
+      // Stop can land while the session is being created: the row exists on the
+      // server either way, so close it here instead of adopting it into a panel
+      // the operator has already moved on from.
+      if (!resident.running) { await closeSession(session.id, "resident stop"); return; }
+      resident.sessionId = session.id;
+      residentSessionPill(session.id);
+      rememberSession(session, "Resident");
+
+      let outcome = null;
+      for (let i = 1; i <= 12 && resident.running && !outcome; i++) {
+        if (capturePaused()) { await sleep(200); i--; continue; }
+        const r = await sendFrame(`/sessions/${session.id}/frames`,
+          { frameBase64: grabFrame(resVideo) });
+        if (r === null) { await sleep(100); i--; continue; }
+        if (!resident.running) return;
+        if (r.action === "escalate_to_active") {
+          outcome = await resChallenges(r.challenge);
+        } else if (r.action === "proceed" || r.action === "reject"
+            || TERMINAL_VERDICTS[r.action]) {
+          // Terminal vocabulary includes the budget-exhausted outcomes, so looping
+          // on one would keep re-submitting a session that is already closed.
+          outcome = r;
+        } else {
+          resBanner("", "CHECKING…", r.message || MESSAGES["liveness.checking"]);
+          await sleep(350);
+        }
+      }
+      if (!resident.running) return;
+      resSettle(outcome);
+    } catch (e) {
+      if (resident.running) resFailure(e);
+    } finally {
+      resident.running = false;
+      resSetControls();
+    }
+  });
+
+  $("btn-res-active").addEventListener("click", async () => {
+    if (resident.running || !resident.passed || !resident.sessionId) return;
+    resident.running = true;
+    resSetControls();
+    try {
+      const challenge = await api(`/sessions/${resident.sessionId}/active-liveness`, {
+        method: "POST"
+      });
+      if (!resident.running) return;
+      const outcome = await resChallenges(challenge);
+      if (!resident.running) return;
+      // An extra check never rewrites the session verdict (brain §5): the banner
+      // stays VERIFIED and carries the check's own message, which says so.
+      resBanner("proceed", "VERIFIED",
+        (outcome && outcome.message) || MESSAGES["feedback.continue"]);
+    } catch (e) {
+      if (resident.running) resFailure(e);
+    } finally {
+      resident.running = false;
+      resSetControls();
+    }
+  });
+
+  // Stop is the resident's one cleanup action: it aborts a check in flight, closes
+  // the open session server-side and releases the camera, leaving the panel ready
+  // for the next person with nothing half-open behind it.
+  $("btn-res-stop").addEventListener("click", async () => {
+    const openSession = resident.sessionId;
+    const wasRunning = resident.running;
+    resident.running = false;
+    resident.sessionId = null;
+    resident.passed = false;
+    releaseResidentCamera();
+    residentSessionPill(null);
+    resBanner("", "STOPPED", MESSAGES["liveness.cancelled"]);
+    resSetControls();
+    log(`resident: stopped${wasRunning ? " mid-check" : ""} — camera released.`);
+    await closeSession(openSession, "resident stop");
+  });
+
+  renderResidentGuide();
+  resSetControls();
 
   function fmt(v) { return v === null || v === undefined ? "—" : Number(v).toFixed(3); }
 
@@ -398,13 +899,25 @@
       kv($("metrics"), m);
     } catch (e) { log("metrics error: " + e.message); }
   }
+
+  // The Audit panel reads the session selected in the Sessions tab and falls back
+  // to the session this console is currently running, so both views agree about
+  // which session they are describing.
+  function auditTarget() { return selectedSession || sessionId; }
+
+  function renderAudit(id, entries) {
+    $("audit-subject").textContent = "session " + id.slice(0, 8)
+      + (selectedSession === id ? " (selected in Sessions)" : " (current)");
+    $("audit").textContent = entries.length
+      ? entries.map(e => `${e.createdAt}  ${e.eventType}  ${JSON.stringify(e.details)}`).join("\n")
+      : "(no audit entries — audit records are written for PAD rejections, challenge issue/pass/fail and session outcomes)";
+  }
+
   async function refreshAudit() {
-    if (!sessionId) return;
+    const id = auditTarget();
+    if (!id) { $("audit-subject").textContent = "no session selected"; return; }
     try {
-      const entries = await api(`/sessions/${sessionId}/audit`);
-      $("audit").textContent = entries.length
-        ? entries.map(e => `${e.createdAt}  ${e.eventType}  ${JSON.stringify(e.details)}`).join("\n")
-        : "(no audit entries — audit records are written for PAD rejections, challenge issue/pass/fail and session outcomes)";
+      renderAudit(id, await api(`/sessions/${id}/audit`));
     } catch (e) { log("audit error: " + e.message); }
   }
   $("btn-metrics").addEventListener("click", refreshMetrics);
@@ -417,6 +930,7 @@
   let diagTimer = null;
   function hideDiagnostics() {
     $("diag-section").hidden = true;
+    $("diag-off").hidden = false;
     if (diagTimer) { clearInterval(diagTimer); diagTimer = null; }
   }
   function diagNum(v, suffix) {
@@ -430,6 +944,7 @@
       const d = await res.json();
       if (!d.enabled) { hideDiagnostics(); return false; }
       $("diag-section").hidden = false;
+      $("diag-off").hidden = true;
       kv($("diag"), {
         scorer: d.scorer || "not resolved yet",   // delegate used (spec §10)
         fps: diagNum(d.fps),
@@ -459,15 +974,22 @@
   });
   $("btn-audit").addEventListener("click", refreshAudit);
   $("btn-close").addEventListener("click", async () => {
-    if (!sessionId) { log("No session to close."); return; }
+    // Closes the session the Audit panel is describing — the one selected in
+    // Sessions, or the one this console is running.
+    const id = auditTarget();
+    if (!id) { log("No session to close."); return; }
     try {
-      const s = await api(`/sessions/${sessionId}/close`, { method: "POST" });
+      const s = await api(`/sessions/${id}/close`, { method: "POST" });
       log(`Session closed: status=${s.status} frames=${s.totalFramesEvaluated}`
         + ` challenges=${s.totalChallengesIssued} duration=${s.durationMs}ms`);
-      $("pill-session").textContent = "session " + sessionId.slice(0, 8) + " (" + s.status + ")";
-      $("pill-session").className = "pill";
-      sessionPassed = false;
-      setActiveCheckEnabled(false);
+      // Only closing the session this console is running touches the run state;
+      // a session that was merely selected leaves it alone.
+      if (id === sessionId) {
+        $("pill-session").textContent = "session " + id.slice(0, 8) + " (" + s.status + ")";
+        $("pill-session").className = "pill";
+        sessionPassed = false;
+        setActiveCheckEnabled(false);
+      }
       await refreshAudit();
     } catch (e) { log("close error: " + e.message); }
   });
@@ -552,11 +1074,13 @@
   // ---------- config policy editor ----------
   //
   // Reads are open GETs; saving issues a PUT carrying the admin key
-  // (MOSIP_ADMIN_API_KEY — fail-closed on the server). The key is kept in this
-  // tab's sessionStorage only, is never written to the decision log, and never
-  // stays in the DOM: the field shows a partial mask instead.
+  // (MOSIP_ADMIN_API_KEY — fail-closed on the server). The key is asked for in a
+  // prompt at save time and held in this page's memory only: never in
+  // sessionStorage/localStorage, never in the DOM (there is no key field to read
+  // back, screenshot or screen-share), never in the decision log, and it is
+  // dropped on a role switch, on "Forget key", and when the service refuses it.
   const cfg = {
-    workflow: $("cfg-workflow"), key: $("cfg-key"), keyHint: $("cfg-key-hint"),
+    workflow: $("cfg-workflow"),
     threshold: $("cfg-threshold"), timeout: $("cfg-timeout"),
     minChallenges: $("cfg-min-challenges"), retries: $("cfg-retries"),
     failure: $("cfg-failure"),
@@ -567,51 +1091,30 @@
   };
   const CFG_TYPES = [[cfg.blink, "blink"], [cfg.smile, "smile"],
                      [cfg.left, "turn_left"], [cfg.right, "turn_right"]];
-  const KEY_STORE = "mosip-admin-key";
-
-  // The secret lives in this tab's sessionStorage and nowhere else. It used to
-  // be written straight into the input's value, so a password-masked field was
-  // the only thing between the key and a screenshot, a screen share or devtools.
-  // Now the field is only ever a typing buffer: it is cleared on blur and after
-  // every save, and the hint shows enough of the key to recognise which one is
-  // loaded (same idea as the key fingerprint in the audit trail) and no more.
-  let storedKey = "";
-
-  function maskKey(key) {
-    if (!key) return "";
-    const tail = 4;
-    // Short keys: mask everything rather than reveal most of a short secret.
-    return key.length <= tail ? "•".repeat(key.length) : "•".repeat(12) + key.slice(-tail);
-  }
+  let heldKey = "";
 
   function cfgStatus(msg, ok) {
     cfg.status.textContent = msg || "";
     cfg.status.className = "cfg-status " + (msg ? (ok ? "ok" : "bad") : "");
   }
-  function adminKey() { return storedKey; }
+  function adminKey() { return heldKey; }
 
-  function persistKey(key) {
-    storedKey = (key || "").trim();
+  // Ask for the key through a prompt, so the value never enters the page's markup.
+  // Cancelling, an empty answer and an unavailable prompt (some embedded webviews
+  // block dialogs) all fail closed with "" — nothing is held and nothing is sent.
+  function askAdminKey() {
+    let typed = null;
     try {
-      if (storedKey) sessionStorage.setItem(KEY_STORE, storedKey);
-      else sessionStorage.removeItem(KEY_STORE);
-    } catch { /* private mode: the key stays in memory for this page only */ }
-    if (cfg.keyHint) {
-      cfg.keyHint.textContent = storedKey
-        ? `Key loaded for this tab: ${maskKey(storedKey)}`
-        : "";
-      cfg.keyHint.hidden = !storedKey;
-    }
+      typed = window.prompt("Admin API key for the policy PUT (sent as X-Admin-API-Key):");
+    } catch { typed = null; }
+    heldKey = (typed || "").trim();
+    if (heldKey) cfgStatus("Admin key held in memory for this role.", true);
+    return heldKey;
   }
 
-  try { persistKey(sessionStorage.getItem(KEY_STORE) || ""); } catch { /* private mode */ }
-  cfg.key.addEventListener("input", () => persistKey(cfg.key.value));
-  // Leaving the field takes the secret back out of the DOM.
-  cfg.key.addEventListener("blur", () => { cfg.key.value = ""; });
   $("btn-cfg-forget-key").addEventListener("click", () => {
-    persistKey("");
-    cfg.key.value = "";
-    cfgStatus("Admin key cleared from this tab.", true);
+    heldKey = "";
+    cfgStatus("Admin key cleared from memory — the next save will ask for it again.", true);
   });
 
   // ---------- dirty-form guard ----------
@@ -774,8 +1277,13 @@
 
   async function saveConfig() {
     const wf = cfg.workflow.value;
-    if (!adminKey()) {
-      cfgStatus("Enter the admin API key before saving (MOSIP_ADMIN_API_KEY).", false);
+    // Ask for the key only when there is none to reuse — the prompt is the one
+    // place a key ever enters the page, and cancelling it aborts the save instead
+    // of sending a PUT the service would fail closed.
+    const key = adminKey() || askAdminKey();
+    if (!key) {
+      cfgStatus("Not saved: the policy PUT needs the admin key (X-Admin-API-Key) and "
+        + "none is held. Save again and enter it in the prompt.", false);
       return;
     }
     const challengeTypes = CFG_TYPES.filter(([box]) => box.checked).map(([, name]) => name);
@@ -797,16 +1305,26 @@
       cfgStatus("All numeric fields need a value.", false);
       return;
     }
-    await api(`/config/${wf}`, {
-      method: "PUT",
-      headers: { "X-Admin-API-Key": adminKey() },
-      body: JSON.stringify(body)
-    });
+    try {
+      await api(`/config/${wf}`, {
+        method: "PUT",
+        headers: { "X-Admin-API-Key": key },
+        body: JSON.stringify(body)
+      });
+    } catch (e) {
+      // A refused key is dropped so the next save asks again instead of replaying
+      // a secret the service has already rejected.
+      if (/HTTP 401|HTTP 403/.test(e.message)) {
+        heldKey = "";
+        cfgStatus(`The service refused the admin key (${e.message}) — it has been cleared; "
+          + "save again to enter it.`, false);
+        return;
+      }
+      throw e;
+    }
     // markClean first: it clears the dirty marker, which writes to the status line.
     markClean(wf);
     cfgStatus(`Saved ${wf} policy.`, true);
-    // Take the secret back out of the DOM now that it has been used.
-    cfg.key.value = "";
     // The audit view is the record of this edit — refresh it so the operator
     // sees the diff they just caused without another click.
     loadConfigAudit().catch(() => { /* history is a convenience, never block the save */ });
@@ -848,7 +1366,7 @@
   // verdict never arrives. The browser only offers its generic prompt here, but
   // that is enough to stop a stray refresh during capture.
   window.addEventListener("beforeunload", e => {
-    if (!isDirty() && !running) return;
+    if (!isDirty() && !running && !resident.running) return;
     e.preventDefault();
     e.returnValue = "";
   });
@@ -964,6 +1482,200 @@
   }
 
   $("btn-chain-refresh").addEventListener("click", () => refreshAuditVerify());
+
+  // ---------- supervisor tabs ----------
+  //
+  // The Supervisor container is the Operator surface (Verify, Sessions, Audit,
+  // Rejection reasons) plus the admin views (Policy, Chain, Metrics, Sweep,
+  // Diagnostics). One panel is on screen at a time and Verify is the entry tab,
+  // so entering the role lands on the capture screen.
+  const TABS = ["verify", "sessions", "audit", "rejections", "policy", "chain",
+                "metrics", "sweep", "diagnostics"];
+
+  function showTab(name) {
+    TABS.forEach(t => {
+      $("panel-" + t).hidden = t !== name;
+      $("tab-" + t).className = "tab" + (t === name ? " active" : "");
+    });
+  }
+  TABS.forEach(t => $("tab-" + t).addEventListener("click", () => showTab(t)));
+
+  // ---------- sessions this browser tab created ----------
+  //
+  // There is no session-list endpoint: the service exposes POST /sessions,
+  // GET /sessions/{id} and POST /sessions/{id}/close, and nothing that enumerates
+  // sessions. So this is a local registry of ids this tab created, not a server
+  // listing — it dies with the tab, and a session created elsewhere is invisible
+  // here. Opening a row re-reads that session and its trail with the two GETs
+  // that do exist; no endpoint is invented to fill the gap.
+  const tabSessions = [];        // { id, workflow, device, view, at }
+  let selectedSession = null;    // what the Audit and Rejection panels describe
+
+  function rememberSession(session, view) {
+    if (!session || !session.id) return;
+    if (!tabSessions.some(s => s.id === session.id)) {
+      tabSessions.push({
+        id: session.id,
+        workflow: session.workflowType || "—",
+        device: session.deviceId || "—",
+        view,
+        at: new Date().toLocaleTimeString()
+      });
+    }
+    renderSessionList();
+  }
+
+  function renderSessionList() {
+    const list = $("sessions-list");
+    list.textContent = "";
+    $("sessions-count").textContent = tabSessions.length
+      ? `${tabSessions.length} session${tabSessions.length > 1 ? "s" : ""} created in this tab`
+      : "no sessions yet";
+    if (!tabSessions.length) {
+      list.textContent = "No session has been created in this browser tab yet — run a "
+        + "check in Verify, or a resident check in the Resident role.";
+      return;
+    }
+    for (const s of tabSessions) {
+      const row = document.createElement("div");
+      row.className = "session-row" + (s.id === selectedSession ? " selected" : "");
+      const label = document.createElement("span");
+      label.className = "session-label";
+      label.textContent = `${s.id}  ${s.workflow}  ${s.view}  ${s.at}`;
+      const open = document.createElement("button");
+      open.textContent = "Open";
+      open.addEventListener("click", () => { openSession(s.id).catch(e => log("open error: " + e.message)); });
+      row.append(label, open);
+      list.append(row);
+    }
+  }
+
+  function renderSessionDetail(d) {
+    kv($("session-detail"), {
+      id: d.id,
+      workflowType: d.workflowType,
+      deviceId: d.deviceId,
+      status: d.status,
+      currentStage: d.currentStage,
+      retryCount: d.retryCount,
+      finalResult: d.finalResult === null || d.finalResult === undefined ? "—" : d.finalResult,
+      failureReason: d.failureReason || "(none recorded)",
+      online: d.online === undefined ? "—" : d.online,
+      createdAt: d.createdAt,
+      updatedAt: d.updatedAt
+    });
+  }
+
+  // One click, the reads that exist: GET /sessions/{id} and GET /sessions/{id}/audit.
+  // The audit trail then feeds the rejection panel too, so the three panels are
+  // describing the same rows rather than three separate fetches that could drift.
+  async function openSession(id) {
+    selectedSession = id;
+    renderSessionList();
+    const [detail, entries] = await Promise.all([
+      api(`/sessions/${id}`),
+      api(`/sessions/${id}/audit`)
+    ]);
+    renderSessionDetail(detail);
+    renderAudit(id, entries);
+    renderRejections(detail, entries);
+    log(`session opened: ${id} status=${detail.status}`);
+  }
+
+  $("btn-sessions").addEventListener("click", () => {
+    renderSessionList();
+    if (selectedSession) openSession(selectedSession).catch(e => log("open error: " + e.message));
+  });
+
+  // ---------- rejection reasons ----------
+  //
+  // Two read-only sources, named by the design's failure table: the session's own
+  // failureReason (GET /sessions/{id}) and the rejection events in its audit trail
+  // (GET /sessions/{id}/audit) — PAD_REJECTED carries the attack type, confidence
+  // and stage, CHALLENGE_FAILED the challenge that was missed. Nothing is inferred:
+  // a session with neither shows nothing rather than a guess.
+  function renderRejections(detail, entries) {
+    const rejections = (entries || []).filter(e =>
+      e.eventType === "PAD_REJECTED" || e.eventType === "CHALLENGE_FAILED");
+    const pad = rejections.filter(e => e.eventType === "PAD_REJECTED");
+    const id = (detail && detail.id) || auditTarget();
+    $("rejections-subject").textContent = id
+      ? "session " + id.slice(0, 8) + (selectedSession === id ? " (selected in Sessions)" : " (current)")
+      : "no session selected";
+    kv($("rejections-summary"), {
+      status: (detail && detail.status) || "—",
+      failureReason: (detail && detail.failureReason) || "(none recorded)",
+      padRejections: pad.length,
+      challengeFailures: rejections.length - pad.length
+    });
+    $("rejections-events").textContent = rejections.length
+      ? rejections.map(e => `${e.createdAt}  ${e.eventType}  ${JSON.stringify(e.details)}`).join("\n")
+      : "No PAD_REJECTED or CHALLENGE_FAILED event in this session's audit trail.";
+  }
+
+  async function refreshRejections() {
+    const id = auditTarget();
+    if (!id) {
+      $("rejections-subject").textContent = "no session selected";
+      kv($("rejections-summary"), { session: "none selected" });
+      $("rejections-events").textContent = "No session selected — open one in the Sessions tab.";
+      return;
+    }
+    try {
+      const [detail, entries] = await Promise.all([
+        api(`/sessions/${id}`),
+        api(`/sessions/${id}/audit`)
+      ]);
+      renderRejections(detail, entries);
+    } catch (e) {
+      log("rejection reasons error: " + e.message);
+      $("rejections-events").textContent = "Could not read the session: " + e.message;
+    }
+  }
+  $("btn-rejections").addEventListener("click", () => { refreshRejections(); });
+
+  // ---------- threshold sweep ----------
+  //
+  // GET /api/v1/eval/threshold-sweep is an open read (no admin key): it sweeps the
+  // passive threshold over the same median-window decision the live path uses and
+  // recommends an operating point for the target BPCER. Applying a value is a
+  // policy write and stays in the Policy tab.
+  async function refreshSweep() {
+    const target = Number($("sweep-target").value);
+    try {
+      const r = await api(`/eval/threshold-sweep?targetBpcer=${encodeURIComponent(target)}`);
+      kv($("sweep-summary"), {
+        targetBpcer: r.targetBpcer,
+        scorer: r.scorer || "—",
+        window: `${r.minFrames} min / ${r.windowFrames} window frames`,
+        recommendedThreshold: r.recommendedThreshold === null || r.recommendedThreshold === undefined
+          ? "none recommended" : fmt(r.recommendedThreshold),
+        basis: r.recommendationBasis || "—",
+        attackDataIsProxy: r.attackDataIsProxy,
+        excludedWindows: r.excludedWindows,
+        note: r.note || "—"
+      });
+      const rows = r.rows || [];
+      $("sweep-rows").textContent = rows.length
+        ? rows.map(x => `${fmt(x.threshold)}  bona-fide ${x.bonaFidePassed}/${x.bonaFideWindows}`
+            + `  bpcer=${fmt(x.bpcer)}  attacks=${x.attackWindows}`
+            + `  apcer=${fmt(x.apcer)}  acer=${fmt(x.acer)}`).join("\n")
+        : "The sweep returned no rows — no scored frames have been recorded yet.";
+      log(`sweep: targetBpcer=${r.targetBpcer} recommended=`
+        + `${r.recommendedThreshold === null || r.recommendedThreshold === undefined ? "none" : r.recommendedThreshold}`);
+    } catch (e) {
+      log("sweep error: " + e.message);
+      $("sweep-rows").textContent = "Sweep failed: " + e.message;
+    }
+  }
+  $("btn-sweep").addEventListener("click", () => { refreshSweep(); });
+
+  // The picker is the entry state: shown on every load, with the console's own
+  // view hidden until a role is chosen, and the Supervisor opening on Verify.
+  showRole(null);
+  showTab("verify");
+  renderSessionList();
+  refreshRejections();
 
   refreshHealth();
   refreshMetrics();

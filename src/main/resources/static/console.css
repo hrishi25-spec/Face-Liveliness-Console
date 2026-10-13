@@ -1,103 +1,366 @@
-/* MOSIP Face Liveness test console — styles (external so the CSP can be
-   strict: style-src 'self', no inline styles or 'unsafe-inline'). */
+/* MOSIP Face Liveness test console — styles.
+   External by design: the service serves CSP style-src 'self', so the console
+   carries no inline styles at all (no style="" attributes, no el.style writes).
+   Every colour, space, radius, shadow and font size below comes from the design
+   tokens in the :root block — there is no raw hex anywhere outside it. */
+
+/* ============================== design tokens ==============================
+   Light is the default palette; the dark palette below re-defines the same
+   variable names, so one set of rules serves both (prefers-color-scheme).
+   Each semantic colour ships with the surface and border it belongs on, so a
+   status never has to guess a background and text keeps >=4.5:1 contrast. */
 :root{
-  --bg:#0f1216; --panel:#171b21; --panel2:#1d2229; --line:#2a3038;
-  --fg:#e6eaf0; --muted:#8b96a5; --accent:#4f8cff; --ok:#3ecf8e;
-  --warn:#e0b13a; --bad:#f2555a; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  /* Surfaces and text */
+  --color-bg:#f2f4f7;
+  --color-surface:#ffffff;
+  --color-surface-2:#f6f8fa;
+  --color-surface-3:#e9edf2;
+  --color-border:#d7dce2;
+  --color-border-control:#78828f;
+  --color-border-strong:#5f6a77;
+  --color-text:#16202b;
+  --color-text-muted:#55606e;
+  --color-video-bg:#000000;
+
+  /* Primary — deep government blue, used for the one dominant action */
+  --color-primary:#123f73;
+  --color-primary-hover:#0d3160;
+  --color-primary-on:#ffffff;
+  --color-focus:#1b5fae;
+
+  /* Status: green = verified, red = rejected, amber = warning / in progress */
+  --color-success:#14663c;
+  --color-success-surface:#e6f4ec;
+  --color-success-border:#9ccfb2;
+
+  --color-danger:#b3261e;
+  --color-danger-surface:#fdecea;
+  --color-danger-border:#eeaaa4;
+
+  --color-warning:#8a5a00;
+  --color-warning-surface:#fdf4dc;
+  --color-warning-border:#e8c98a;
+
+  /* Spacing — one scale, 4/8/12/16/24/32. Nothing outside it. */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:24px; --space-6:32px;
+
+  /* Corner radius */
+  --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:999px;
+
+  /* Elevation — one card shadow, one raised (hover) shadow */
+  --shadow-card:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.10);
+  --shadow-raised:0 2px 6px rgba(16,24,40,.10),0 8px 20px rgba(16,24,40,.10);
+
+  /* Type — system stack only, five steps: page title / title / body / small / caption */
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --font-size-page-title:20px;
+  --font-size-title:16px;
+  --font-size-body:14px;
+  --font-size-small:13px;
+  --font-size-caption:12px;
+  --line-height-tight:1.3; --line-height-normal:1.5; --line-height-relaxed:1.6;
+
+  /* Motion — 150ms for feedback, 200ms for a moving measure. Nothing slower. */
+  --motion-fast:150ms; --motion-base:200ms; --motion-ease:ease;
+
+  /* Layout and control sizing */
+  --layout-max-width:1100px;
+  --control-height:38px;
 }
+
+@media (prefers-color-scheme: dark){
+  :root{
+    --color-bg:#0d1014;
+    --color-surface:#151a20;
+    --color-surface-2:#1b2129;
+    --color-surface-3:#232a33;
+    --color-border:#2b333d;
+    --color-border-control:#66717f;
+    --color-border-strong:#6d7a8a;
+    --color-text:#e9edf2;
+    --color-text-muted:#a6b0bd;
+    --color-video-bg:#000000;
+
+    --color-primary:#2f6fd0;
+    --color-primary-hover:#2760b8;
+    --color-primary-on:#ffffff;
+    --color-focus:#7fb0f0;
+
+    --color-success:#4ec98a;
+    --color-success-surface:#13291f;
+    --color-success-border:#2c6349;
+
+    --color-danger:#f28d86;
+    --color-danger-surface:#2c1615;
+    --color-danger-border:#6d322d;
+
+    --color-warning:#e3b955;
+    --color-warning-surface:#2a2310;
+    --color-warning-border:#63521f;
+
+    --shadow-card:0 1px 2px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.35);
+    --shadow-raised:0 2px 8px rgba(0,0,0,.55),0 8px 20px rgba(0,0,0,.35);
+  }
+}
+
+/* Reduced motion is honoured once, at the token level, so every rule below that
+   animates respects the preference without repeating the media query. */
+@media (prefers-reduced-motion: reduce){
+  :root{ --motion-fast:0ms; --motion-base:0ms }
+}
+
+/* ================================== base ================================== */
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);
-  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;
-  align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel)}
-header h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.2px}
-.pill{padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;
-  border:1px solid var(--line);background:var(--panel2);color:var(--muted)}
-.pill.ok{color:var(--ok);border-color:#1d5b42}
-.pill.bad{color:var(--bad);border-color:#5b1d20}
-.pill.warn{color:var(--warn);border-color:#5b4a1d}
+body{
+  margin:0;
+  background:var(--color-bg);
+  color:var(--color-text);
+  font-family:var(--font-sans);
+  font-size:var(--font-size-body);
+  line-height:var(--line-height-normal);
+  -webkit-font-smoothing:antialiased;
+}
+
+/* One visible focus ring across the console. Keyboard focus only: :focus-visible
+   keeps a mouse click from leaving a ring behind, while every tab stop still
+   shows where it is. */
+:where(button,input,select,textarea,a,summary,[tabindex]):focus-visible{
+  outline:2px solid var(--color-focus);outline-offset:2px}
+:where(button,input,select,textarea,a,summary,[tabindex]):focus:not(:focus-visible){outline:none}
+
+/* ================================= top bar ================================
+   Product identity on the left, live service state next to it, and the role
+   this workstation is currently acting as on the right. */
+.topbar{background:var(--color-surface);border-bottom:1px solid var(--color-border)}
+.topbar-inner{
+  max-width:var(--layout-max-width);margin-inline:auto;
+  padding:var(--space-3) var(--space-4);
+  display:flex;align-items:center;gap:var(--space-3) var(--space-4);flex-wrap:wrap}
+.brand{margin:0;display:flex;align-items:center;gap:var(--space-2) var(--space-3);
+  flex-wrap:wrap;min-width:0}
+.brand-mark{display:block;flex:none;color:var(--color-primary)}
+.brand-name{font-size:var(--font-size-page-title);font-weight:600;
+  line-height:var(--line-height-tight);letter-spacing:-.01em}
+.brand-sub{
+  font-size:var(--font-size-caption);font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--color-text-muted)}
+.topbar-status{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.topbar-role{margin-left:auto;display:flex;align-items:center;gap:var(--space-2)}
+/* Narrow screens: the role cluster gets its own full-width row instead of
+   wrapping to a line where `margin-left:auto` leaves it floating awkwardly. */
+@media (max-width:600px){
+  .topbar-role{margin-left:0;width:100%;justify-content:space-between}
+}
+
+/* Status badges. console.js rewrites className on these, so they carry no
+   modifier class of their own in the markup — only .pill and .ok/.warn/.bad. */
+.pill{
+  padding:var(--space-1) var(--space-3);border-radius:var(--radius-pill);
+  font-size:var(--font-size-caption);font-weight:600;white-space:nowrap;
+  border:1px solid var(--color-border);background:var(--color-surface-2);color:var(--color-text-muted)}
+.pill.ok{color:var(--color-success);border-color:var(--color-success-border);background:var(--color-success-surface)}
+.pill.bad{color:var(--color-danger);border-color:var(--color-danger-border);background:var(--color-danger-surface)}
+.pill.warn{color:var(--color-warning);border-color:var(--color-warning-border);background:var(--color-warning-surface)}
+
+/* ================================= layout ================================ */
+/* One centred container for the whole page: the top bar's inner row and both
+   content shells share --layout-max-width, so nothing hangs off a different
+   edge than the bar above it. */
 main{display:grid;grid-template-columns:minmax(340px,1fr) minmax(380px,1.15fr);
-  gap:16px;padding:16px;align-items:start}
+  gap:var(--space-4);padding:var(--space-5) var(--space-4);align-items:start;
+  max-width:var(--layout-max-width);margin-inline:auto}
+/* An author `display` beats the UA sheet's [hidden]{display:none}, so <main>'s
+   grid would keep the Supervisor view on screen while a role is pending. */
+main[hidden]{display:none}
+/* Role selection. The picker and the two placeholder views are plain full-width
+   blocks; the Supervisor view is <main> itself, so the two-column console layout
+   above stays untouched. */
+.view{padding:var(--space-5) var(--space-4);max-width:var(--layout-max-width);margin-inline:auto}
+.role-btn{min-width:150px}
+/* The resident capture screen is one narrow card, not the console's two-column
+   layout: a full-width selfie preview would be unusable (and the shared video
+   rule below keeps it mirrored). */
+#role-resident section{max-width:720px}
 @media(max-width:940px){main{grid-template-columns:1fr}}
-section{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-section h2{margin:0;padding:11px 14px;font-size:12px;font-weight:600;letter-spacing:.6px;
-  text-transform:uppercase;color:var(--muted);background:var(--panel2);border-bottom:1px solid var(--line)}
-.body{padding:14px}
+
+/* ================================= cards ================================= */
+section{
+  background:var(--color-surface);border:1px solid var(--color-border);
+  border-radius:var(--radius-lg);box-shadow:var(--shadow-card);overflow:hidden}
+section h2{
+  margin:0;padding:var(--space-3) var(--space-4);
+  font-size:var(--font-size-title);font-weight:600;line-height:var(--line-height-tight);
+  color:var(--color-text);background:var(--color-surface-2);border-bottom:1px solid var(--color-border)}
+.body{padding:var(--space-4)}
+
+/* ================================ controls =============================== */
+button{
+  font-family:inherit;font-size:var(--font-size-body);font-weight:600;
+  min-height:var(--control-height);padding:var(--space-2) var(--space-3);
+  border-radius:var(--radius-md);border:1px solid var(--color-border-control);
+  background:var(--color-surface-2);color:var(--color-text);cursor:pointer;
+  transition:background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease)}
+button:hover:not(:disabled){background:var(--color-surface-3);border-color:var(--color-border-strong)}
+button.primary{
+  background:var(--color-primary);border-color:var(--color-primary);color:var(--color-primary-on)}
+button.primary:hover:not(:disabled){
+  background:var(--color-primary-hover);border-color:var(--color-primary-hover)}
+button.danger{
+  background:var(--color-danger-surface);border-color:var(--color-danger-border);color:var(--color-danger)}
+button.danger:hover:not(:disabled){border-color:var(--color-danger)}
+/* Disabled reads as unavailable in every variant — including the primary one,
+   which must never look clickable while it is disabled. */
+button:disabled,button.primary:disabled,button.danger:disabled{
+  background:var(--color-surface-2);border-color:var(--color-border);
+  color:var(--color-text-muted);cursor:not-allowed}
+
+.row{display:flex;gap:var(--space-2);flex-wrap:wrap;align-items:center}
+/* Inline label inside a .row — label.field is the stacked variant. */
+.row-label{font-size:var(--font-size-caption);color:var(--color-text-muted)}
+.row+.row{margin-top:var(--space-2)}
+label.field{
+  display:flex;flex-direction:column;gap:var(--space-1);
+  font-size:var(--font-size-caption);font-weight:500;color:var(--color-text-muted);
+  flex:1;min-width:110px}
+input,select{
+  font-family:inherit;font-size:var(--font-size-body);
+  min-height:var(--control-height);padding:var(--space-2);
+  border-radius:var(--radius-md);border:1px solid var(--color-border-control);
+  background:var(--color-surface);color:var(--color-text);width:100%;
+  transition:border-color var(--motion-fast) var(--motion-ease)}
+input:hover:not(:disabled),select:hover:not(:disabled){border-color:var(--color-border-strong)}
+input:focus,select:focus{border-color:var(--color-focus)}
+input:disabled,select:disabled{
+  background:var(--color-surface-2);color:var(--color-text-muted);cursor:not-allowed}
+
 /* Mirrored like a selfie, so the preview matches how you see yourself and
    therefore matches the instruction ("turn left" moves you left on screen).
    Display-only: CSS never changes captured pixel data, so the frames POSTed to
    the API remain raw and un-mirrored - which is what the engine expects. */
-video{width:100%;border-radius:8px;background:#000;display:block;aspect-ratio:4/3;
-  object-fit:cover;transform:scaleX(-1)}
-button{font:inherit;font-weight:600;padding:9px 14px;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);cursor:pointer}
-button:hover:not(:disabled){border-color:#3d4753}
-button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-button.danger{background:#3a1c1e;border-color:#6d2a2e;color:#ffc9cb}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-/* Inline label inside a .row — label.field is the stacked variant. */
-.row-label{font-size:11px;color:var(--muted)}
-.row+.row{margin-top:9px}
-label.field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted);flex:1;min-width:110px}
-input,select{font:inherit;padding:7px 9px;border-radius:7px;border:1px solid var(--line);
-  background:#12161b;color:var(--fg);width:100%}
-.verdict{padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--panel2)}
-.verdict .action{font:600 16px/1.3 var(--mono)}
-.verdict .msg{color:var(--muted);margin-top:4px}
-.verdict.proceed{border-color:#1d5b42;background:#12241c}
-.verdict.reject{border-color:#5b1d20;background:#241214}
-.verdict.escalate{border-color:#5b4a1d;background:#241f12}
-pre{margin:0;font:12px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word;
-  max-height:260px;overflow:auto;color:#b9c4d2}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:12.5px}
-.kv dt{color:var(--muted)}
+video{width:100%;border-radius:var(--radius-md);background:var(--color-video-bg);
+  display:block;aspect-ratio:4/3;object-fit:cover;transform:scaleX(-1)}
+
+/* ============================== status panels ============================= */
+.verdict{
+  padding:var(--space-3);border-radius:var(--radius-md);
+  border:1px solid var(--color-border);background:var(--color-surface-2)}
+.verdict .action{
+  font-family:var(--font-mono);font-size:var(--font-size-title);font-weight:600;
+  line-height:var(--line-height-tight);color:var(--color-text)}
+.verdict .msg{color:var(--color-text-muted);margin-top:var(--space-1)}
+.verdict.proceed{border-color:var(--color-success-border);background:var(--color-success-surface)}
+.verdict.proceed .action{color:var(--color-success)}
+.verdict.reject{border-color:var(--color-danger-border);background:var(--color-danger-surface)}
+.verdict.reject .action{color:var(--color-danger)}
+.verdict.escalate{border-color:var(--color-warning-border);background:var(--color-warning-surface)}
+.verdict.escalate .action{color:var(--color-warning)}
+
+pre{margin:0;font-family:var(--font-mono);font-size:var(--font-size-small);
+  line-height:var(--line-height-normal);white-space:pre-wrap;word-break:break-word;
+  max-height:260px;overflow:auto;color:var(--color-text)}
+
+.kv{display:grid;grid-template-columns:auto 1fr;gap:var(--space-1) var(--space-3);
+  font-size:var(--font-size-small)}
+.kv dt{color:var(--color-text-muted)}
 /* pre-wrap so a multi-line value (the per-frame timing breakdown) keeps its
    newlines; it is set as textContent, never as HTML. */
-.kv dd{margin:0;font-family:var(--mono);white-space:pre-wrap}
-.hint{font-size:12px;color:var(--muted);margin-top:10px}
-.warnbox{padding:11px 13px;border-radius:8px;border:1px solid #5b4a1d;background:#241f12;
-  color:#f0dca6;font-size:12.5px;margin-bottom:14px}
-.steps{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
-.step{font-size:11px;padding:4px 9px;border-radius:999px;border:1px solid var(--line);
-  color:var(--muted);background:var(--panel2)}
-.step.active{color:#fff;background:var(--accent);border-color:var(--accent)}
-.step.done{color:var(--ok);border-color:#1d5b42}
-.spacer{flex:1}
-/* Spacing utilities — replace the former inline style="margin-top:…" attributes
-   so style-src 'self' can stay strict (no unsafe-inline). */
-.mt12{margin-top:12px}
-.mt14{margin-top:14px}
-.mt16{margin-top:16px}
-/* Config-policy editor */
-.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
-.chk input{width:auto}
-.cfg-status{font-size:12px;margin-top:9px;min-height:16px}
+.kv dd{margin:0;font-family:var(--font-mono);white-space:pre-wrap}
+
+.hint{
+  font-size:var(--font-size-small);line-height:var(--line-height-relaxed);
+  color:var(--color-text-muted);margin-top:var(--space-3)}
+/* The hints and the audit copy quote endpoints and config keys; without this
+   they read as ordinary prose and the eye loses the one part worth checking. */
+code{
+  font-family:var(--font-mono);font-size:.94em;padding:1px var(--space-1);
+  border-radius:var(--radius-sm);border:1px solid var(--color-border);
+  background:var(--color-surface-3);color:var(--color-text)}
+
+.warnbox{
+  padding:var(--space-3);border-radius:var(--radius-md);
+  border:1px solid var(--color-warning-border);background:var(--color-warning-surface);
+  color:var(--color-warning);font-size:var(--font-size-small);margin-bottom:var(--space-4)}
+
+/* ================================= steps ================================= */
+.steps{display:flex;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-3)}
+.step{
+  font-size:var(--font-size-caption);padding:var(--space-1) var(--space-3);
+  border-radius:var(--radius-pill);border:1px solid var(--color-border);
+  color:var(--color-text-muted);background:var(--color-surface-2);
+  transition:background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease)}
+.step.active{color:var(--color-primary-on);background:var(--color-primary);border-color:var(--color-primary)}
+.step.done{color:var(--color-success);background:var(--color-success-surface);border-color:var(--color-success-border)}
+
+/* ============================== spacing utils ==============================
+   These replace the former inline style="margin-top:…" attributes so
+   style-src 'self' can stay strict. Each maps onto one step of the spacing
+   scale; .mt14 is the class console.js assigns to #res-banner, kept as a name
+   and mapped to the 16px step (renaming it would mean editing console.js). */
+.mt12{margin-top:var(--space-3)}
+.mt14{margin-top:var(--space-4)}
+.mt16{margin-top:var(--space-4)}
+
+/* ============================ config-policy editor ======================= */
+.chk{display:flex;align-items:center;gap:var(--space-2);font-size:var(--font-size-small);
+  color:var(--color-text-muted);cursor:pointer}
+.chk input{width:auto;min-height:0}
+.cfg-status{font-size:var(--font-size-small);margin-top:var(--space-2);min-height:16px}
+.cfg-status.ok{color:var(--color-success)}
+.cfg-status.bad{color:var(--color-danger)}
+.cfg-status.dirty{color:var(--color-warning)}
 /* Per-field preview of what saving would change: the loaded value struck
    through, the pending value highlighted. Hidden entirely when the form
    matches the loaded policy. */
-.cfg-diff{margin-top:12px;border:1px solid #5b4a1d;background:#241f12;
-  border-radius:8px;padding:10px 12px}
-.cfg-diff .cfg-diff-title{font-size:11px;font-weight:600;letter-spacing:.4px;
-  text-transform:uppercase;color:var(--warn);margin-bottom:7px}
-.cfg-diff .cfg-diff-row{display:flex;gap:8px;flex-wrap:wrap;font:12px/1.6 var(--mono)}
-.cfg-diff-label{color:var(--warn);min-width:170px}
-.cfg-diff-from{color:var(--muted);text-decoration:line-through}
-.cfg-diff-arrow{color:var(--muted)}
-.cfg-diff-to{color:#f0dca6;font-weight:600}
-.key-hint{font-size:11px;color:var(--ok);letter-spacing:.5px}
+.cfg-diff{margin-top:var(--space-3);border:1px solid var(--color-warning-border);
+  background:var(--color-warning-surface);border-radius:var(--radius-md);padding:var(--space-2) var(--space-3)}
+.cfg-diff .cfg-diff-title{font-size:var(--font-size-caption);font-weight:600;letter-spacing:.4px;
+  text-transform:uppercase;color:var(--color-warning);margin-bottom:var(--space-2)}
+.cfg-diff .cfg-diff-row{
+  display:flex;gap:var(--space-2);flex-wrap:wrap;
+  font-family:var(--font-mono);font-size:var(--font-size-caption);line-height:var(--line-height-relaxed)}
+.cfg-diff-label{color:var(--color-warning);min-width:170px}
+.cfg-diff-from{color:var(--color-text-muted);text-decoration:line-through}
+.cfg-diff-arrow{color:var(--color-text-muted)}
+.cfg-diff-to{color:var(--color-warning);font-weight:600}
 
-/* Request budget meters (rate limiter) */
-.rl-buckets{display:flex;flex-direction:column;gap:11px}
+/* ============================= supervisor tabs ============================
+   No display rule on .tabpanel on purpose: an author display would beat the UA
+   sheet's [hidden]{display:none} and every panel would show at once (the same
+   trap main[hidden] above exists for). */
+.tabs{display:flex;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-3)}
+.tabs .tab{
+  font-size:var(--font-size-caption);font-weight:600;padding:var(--space-2) var(--space-3);
+  border-radius:var(--radius-md);border:1px solid var(--color-border);
+  background:var(--color-surface-2);color:var(--color-text-muted);cursor:pointer;
+  transition:background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease)}
+.tabs .tab:hover:not(:disabled){border-color:var(--color-border-strong);color:var(--color-text)}
+.tabs .tab.active{background:var(--color-primary);border-color:var(--color-primary);color:var(--color-primary-on)}
+
+/* Sessions list: one row per id this tab created, with its Open button. */
+.sessions{display:flex;flex-direction:column;gap:var(--space-2);
+  font-size:var(--font-size-small);color:var(--color-text-muted)}
+.session-row{display:flex;gap:var(--space-3);align-items:center;justify-content:space-between;
+  padding:var(--space-2) var(--space-3);border:1px solid var(--color-border);
+  border-radius:var(--radius-md);background:var(--color-surface-2)}
+.session-row.selected{border-color:var(--color-primary)}
+.session-label{font-family:var(--font-mono);word-break:break-all}
+
+/* ============================ request budget meters ====================== */
+.rl-buckets{display:flex;flex-direction:column;gap:var(--space-3)}
 .rl-buckets:empty{display:none}
-.rl-head{display:flex;justify-content:space-between;gap:10px;font-size:12px}
-.rl-head .rl-num{font-family:var(--mono);color:var(--muted)}
-.rl-track{height:6px;border-radius:999px;background:var(--panel2);overflow:hidden;margin-top:5px}
-.rl-fill{height:100%;width:0;background:var(--ok);transition:width .25s ease}
-.rl-row.warn .rl-fill{background:var(--warn)}
-.rl-row.limited .rl-fill{background:var(--bad)}
-.rl-sub{font-size:11px;color:var(--muted);margin-top:4px;font-family:var(--mono)}
-.rl-row.limited .rl-sub{color:var(--bad)}
-.cfg-status.ok{color:var(--ok)}
-.cfg-status.bad{color:var(--bad)}
-.cfg-status.dirty{color:var(--warn)}
+.rl-head{display:flex;justify-content:space-between;gap:var(--space-3);font-size:var(--font-size-small)}
+.rl-head .rl-num{font-family:var(--font-mono);color:var(--color-text-muted)}
+.rl-track{height:6px;border-radius:var(--radius-pill);background:var(--color-surface-3);overflow:hidden;margin-top:var(--space-1)}
+.rl-fill{height:100%;width:0;background:var(--color-success);transition:width var(--motion-base) var(--motion-ease)}
+.rl-row.warn .rl-fill{background:var(--color-warning)}
+.rl-row.limited .rl-fill{background:var(--color-danger)}
+.rl-sub{font-size:var(--font-size-caption);color:var(--color-text-muted);margin-top:var(--space-1);font-family:var(--font-mono)}
+.rl-row.limited .rl-sub{color:var(--color-danger)}

@@ -26,6 +26,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.util.Map;
+import java.util.Set;
+import java.util.zip.CRC32;
+import java.util.zip.CRC32C;
 
 /**
  * Real passive-liveness + PAD backend backed by <b>MiniFASNet-V2</b>
@@ -71,6 +74,10 @@ import java.util.Map;
  *       default) leaves the raw model confidence untouched. See
  *       {@link ProbabilityCalibration} for why the raw value is unusable as a
  *       score (it pins at 1.000 on a genuine face).</li>
+ *   <li>{@code intraOpThreads} – positive integer; threads one inference may
+ *       use. Absent, it derives from the core count as {@code max(1, cores/2)},
+ *       which is exactly 1 on the 2-core target hardware (see
+ *       {@link #intraOpThreads(Map)}).</li>
  * </ul>
  */
 public final class OnnxMiniFasNetBackend implements LivenessBackend {
@@ -87,6 +94,12 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
      * exactly as the model produced it.
      */
     public static final String OPTION_TEMPERATURE = "temperature";
+
+    /**
+     * Optional intra-op thread count for the ONNX session. Absent, it derives
+     * from the core count; a configured value must be a positive integer.
+     */
+    public static final String OPTION_INTRA_OP_THREADS = "intraOpThreads";
 
     /** Bundled model location on the classpath. */
     public static final String DEFAULT_MODEL_RESOURCE = "models/minifasnet_v2.onnx";
@@ -116,6 +129,49 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
     /** Applied to the live-class probability in {@link #scorePassiveLiveness}; identity by default. */
     private ProbabilityCalibration calibration = ProbabilityCalibration.identity();
     private volatile boolean ready;
+
+    /** The graph's single input name, resolved from the session once. */
+    private String inputName;
+
+    /**
+     * Bumped by every (re)initialisation and by {@link #shutdown()}. A memo
+     * entry stores the generation it was computed under, so a frame analysed
+     * before a reload can never satisfy a lookup after one: the cached numbers
+     * belong to the previous model and calibration.
+     */
+    private long generation;
+
+    /**
+     * The last frame this thread looked at, keyed by its <b>pixel content</b>
+     * rather than by object identity: the HTTP path rebuilds a fresh
+     * {@link Frame} from the same pixels for each of its calls into this
+     * backend, so only a content key lets those calls share one detection and
+     * one inference.
+     *
+     * <p>Holds derived values only — a {@link Rect}, two doubles and the
+     * 3-class probability vector — and never the pixel buffer itself: one slot
+     * per thread must not pin megabytes of frame data on a 2 GB device.</p>
+     */
+    private final ThreadLocal<FrameMemo> lastFrame = ThreadLocal.withInitial(FrameMemo::new);
+
+    /** Face detections performed by this instance (diagnostic; see {@link #detections()}). */
+    private int detections;
+    /** Model inferences performed by this instance (diagnostic; see {@link #inferences()}). */
+    private int inferences;
+
+    /**
+     * Face detections performed by this instance since construction — the
+     * diagnostic the reuse proof reads to show one detection per frame is
+     * enough. Not synchronized and deliberately not part of the SPI.
+     */
+    int detections() {
+        return detections;
+    }
+
+    /** Model inferences performed by this instance. Same caveats as {@link #detections()}. */
+    int inferences() {
+        return inferences;
+    }
 
     /** @return true when the ONNX Runtime classes are present on the classpath. */
     public static boolean isRuntimeAvailable() {
@@ -149,6 +205,7 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
                     "ONNX Runtime is not on the classpath");
         }
         try {
+            generation++;                        // any cached frame analysis is now stale
             boolean customPath = options != null && options.containsKey(OPTION_MODEL_PATH);
             calibration = parseCalibration(options);
             byte[] model = readModel(options);
@@ -164,7 +221,7 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
 
             env = OrtEnvironment.getEnvironment();
             try (OrtSession.SessionOptions opts = new OrtSession.SessionOptions()) {
-                opts.setIntraOpNumThreads(Math.max(1, Runtime.getRuntime().availableProcessors() / 2));
+                opts.setIntraOpNumThreads(intraOpThreads(options));
                 session = env.createSession(model, opts);
             }
 
@@ -181,6 +238,42 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
             throw new LivenessException(LivenessErrorCode.ENGINE_INTERNAL_ERROR,
                     "Failed to load the liveness model: " + t.getMessage());
         }
+    }
+
+    /**
+     * How many threads one inference may use.
+     *
+     * <p>Unset, this keeps the historical derivation {@code max(1, cores / 2)}:
+     * <b>exactly one thread on the 2-core target hardware</b>. One inference at a
+     * time is what a 2-core device can afford — the other core is busy decoding,
+     * quality-checking and detecting the next frame, and a second inference
+     * thread inside this one starves that work rather than helping it. On wider
+     * machines the derived value scales with the core count, and an operator who
+     * knows their load can override it.</p>
+     *
+     * <p>A configured value must be a positive integer. It is validated rather
+     * than clamped: {@code 0} would hand the decision back to ORT's own default
+     * (all cores) while looking like a deliberate setting, and a typo would do
+     * the same silently. A configuration error here is a startup failure with a
+     * coded message, consistent with the other options.</p>
+     */
+    static int intraOpThreads(Map<String, String> options) {
+        String raw = options != null ? options.get(OPTION_INTRA_OP_THREADS) : null;
+        if (raw == null || raw.isBlank()) {
+            return Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
+        }
+        int threads;
+        try {
+            threads = Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new LivenessException(LivenessErrorCode.ENGINE_INTERNAL_ERROR,
+                    "Invalid " + OPTION_INTRA_OP_THREADS + " value '" + raw + "'");
+        }
+        if (threads < 1) {
+            throw new LivenessException(LivenessErrorCode.ENGINE_INTERNAL_ERROR,
+                    OPTION_INTRA_OP_THREADS + " must be a positive integer, was " + threads);
+        }
+        return threads;
     }
 
     /**
@@ -310,21 +403,19 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
      *  minNeighbors 5, min 60&times;60) so the HTTP face gate and the model's
      *  own detection agree frame-for-frame. */
     private Rect[] detectFaces(Mat bgr) {
+        detections++;
         Mat gray = new Mat();
+        MatOfRect faces = new MatOfRect();
         try {
             Imgproc.cvtColor(bgr, gray, Imgproc.COLOR_BGR2GRAY);
-            MatOfRect faces = new MatOfRect();
             faceCascade.detectMultiScale(gray, faces, 1.1, 5, 0, new org.opencv.core.Size(60, 60));
             return faces.toArray();
         } finally {
+            // MatOfRect *is* a Mat: without this every detection leaked a native
+            // rect buffer to the finalizer, once per frame call.
+            faces.release();
             gray.release();
         }
-    }
-
-    /** Face box in the given frame, or null when no single face is found. */
-    private Rect detectFace(Mat bgr) {
-        Rect[] faces = detectFaces(bgr);
-        return faces.length == 1 ? faces[0] : null;
     }
 
     // =====================================================================
@@ -349,12 +440,12 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
             resized.get(0, 0, pixels);           // HWC, BGR, uint8
             float[] nchw = packNchw(pixels, INPUT_SIZE);
 
+            inferences++;
             try (OnnxTensor tensor = OnnxTensor.createTensor(env,
                     toFloatBuffer(nchw),
                     new long[]{1, 3, INPUT_SIZE, INPUT_SIZE},
                     ai.onnxruntime.OnnxJavaType.FLOAT)) {
-                String inputName = session.getInputNames().iterator().next();
-                try (OrtSession.Result result = session.run(Map.of(inputName, tensor))) {
+                try (OrtSession.Result result = session.run(Map.of(inputName(), tensor))) {
                     // The exported graph returns shape [1, 3], so ORT hands back a
                     // float[][]; flatten whatever nesting the model uses rather
                     // than assuming a flat float[].
@@ -365,6 +456,23 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
         } finally {
             resized.release();
         }
+    }
+
+    /**
+     * The graph's single input name, resolved from the session once. Asking the
+     * session per inference re-allocated a set every call — small next to the
+     * model run itself, but pure waste on a per-frame path.
+     */
+    private String inputName() {
+        String name = inputName;
+        if (name == null) {
+            Set<String> names = session.getInputNames();
+            if (names.isEmpty()) {
+                throw new IllegalStateException("The liveness model exposes no inputs");
+            }
+            inputName = name = names.iterator().next();
+        }
+        return name;
     }
 
     /**
@@ -465,21 +573,195 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
         return out;
     }
 
-    /** One detection + inference pass; null probabilities mean "no single face". */
+    /**
+     * Raw 3-class probabilities for one frame; null means "no single face".
+     *
+     * <p>One detection + one inference per <em>frame</em>, not per call. The
+     * engine's per-frame conversation ({@code analyzeFrame} &rarr;
+     * {@code scorePassiveLiveness} &rarr; {@code assessPad}) used to detect the
+     * same face three times and infer twice, and the HTTP path rebuilt the same
+     * frame for two of those calls; all of them now share one memo entry. The
+     * values are the ones an uncached pass produces — Haar detection is
+     * deterministic for a given pixel buffer — so this is reuse, not
+     * approximation.</p>
+     */
     private double[] probabilitiesFor(Frame frame) {
         requireReady();
-        Mat bgr = toBgrMat(frame);
+        FrameMemo memo = memoFor(frame);
+        if (!memo.hasProbabilities) inferInto(frame, memo);
+        return memo.probabilities;
+    }
+
+    /** Runs the model on the memo's face box, detecting first when needed. */
+    private void inferInto(Frame frame, FrameMemo memo) {
+        if (!memo.detected) detectInto(frame, memo, "Liveness inference failed");
+        if (memo.face == null) {
+            memo.probabilities = null;     // no single face: the same neutral answer as before
+            memo.hasProbabilities = true;
+            return;
+        }
         try {
-            Rect face = detectFace(bgr);
-            if (face == null) return null;
-            return inferProbabilities(bgr, face);
+            Mat bgr = toBgrMat(frame);
+            try {
+                memo.probabilities = inferProbabilities(bgr, memo.face);
+            } finally {
+                bgr.release();
+            }
+            memo.hasProbabilities = true;
         } catch (LivenessException e) {
             throw e;
         } catch (Throwable t) {
             throw new LivenessException(LivenessErrorCode.ENGINE_INTERNAL_ERROR,
                     "Liveness inference failed: " + t.getMessage());
+        }
+    }
+
+    /**
+     * Face count — and, for exactly one face, its box and quality — into the
+     * memo. {@code failureContext} keeps each caller's error wording unchanged.
+     */
+    private void detectInto(Frame frame, FrameMemo memo, String failureContext) {
+        try {
+            Mat bgr = toBgrMat(frame);
+            try {
+                Rect[] faces = detectFaces(bgr);
+                memo.faceCount = faces.length;
+                memo.face = faces.length == 1 ? faces[0] : null;
+                if (memo.face != null) memo.quality = faceQuality(bgr, memo.face);
+            } finally {
+                bgr.release();
+            }
+            memo.detected = true;          // only on success, so a failure is retried as before
+        } catch (LivenessException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new LivenessException(LivenessErrorCode.ENGINE_INTERNAL_ERROR,
+                    failureContext + ": " + t.getMessage());
+        }
+    }
+
+    /**
+     * The sharpness/brightness blend on the face region — the same formula the
+     * heuristic scorer uses, so {@code minFaceQuality} gates behave identically
+     * whichever backend produced the signals. No landmarks are available from a
+     * classifier, so EAR/smile/pose stay null. Every native buffer is released.
+     */
+    private static double faceQuality(Mat bgr, Rect face) {
+        Mat gray = new Mat();
+        Mat lap = new Mat();
+        MatOfDouble lapMean = new MatOfDouble();
+        MatOfDouble lapStd = new MatOfDouble();
+        MatOfDouble grayMean = new MatOfDouble();
+        MatOfDouble grayStd = new MatOfDouble();
+        Mat roi = null;
+        try {
+            Imgproc.cvtColor(bgr, gray, Imgproc.COLOR_BGR2GRAY);
+            roi = new Mat(gray, face);
+            Imgproc.Laplacian(roi, lap, CvType.CV_64F);
+            Core.meanStdDev(lap, lapMean, lapStd);
+            double sd = lapStd.get(0, 0)[0];
+            double sharpness = Math.min(1.0, (sd * sd) / 500.0);
+            Core.meanStdDev(roi, grayMean, grayStd);
+            double meanGray = grayMean.get(0, 0)[0];
+            double brightness = 1.0 - Math.abs(meanGray - 128.0) / 128.0;
+            return Math.max(0.0, Math.min(1.0, 0.5 * sharpness + 0.5 * brightness));
         } finally {
-            bgr.release();
+            if (roi != null) roi.release();
+            gray.release();
+            lap.release();
+            lapMean.release();
+            lapStd.release();
+            grayMean.release();
+            grayStd.release();
+        }
+    }
+
+    /** {@link FaceSignals} carrying the memo's detection result, exactly as before. */
+    private static FaceSignals signalsFrom(FrameMemo memo) {
+        if (memo.faceCount == 0) return FaceSignals.noFace(0.0);
+        if (memo.faceCount != 1) {
+            return new FaceSignals(memo.faceCount, 0.0, null, null, null, null, null, null, null);
+        }
+        return new FaceSignals(1, memo.quality, null, null, null, null, null, null, null);
+    }
+
+    /**
+     * The memo slot for {@code frame}, invalidated when its content is not what
+     * the slot already holds. Per thread and single-entry: a thread alternating
+     * between two cameras simply misses, it never grows.
+     */
+    private FrameMemo memoFor(Frame frame) {
+        FrameMemo memo = lastFrame.get();
+        long crc = crc32(frame.data());
+        if (memo.matches(generation, crc, frame)) return memo;
+        memo.reset(generation, crc, crc32c(frame.data()), frame);
+        return memo;
+    }
+
+    /** 32-bit content checksum; hardware-accelerated (~1 ms for a 3.5 MiB frame). */
+    private static long crc32(byte[] data) {
+        CRC32 crc = new CRC32();
+        crc.update(data, 0, data.length);
+        return crc.getValue();
+    }
+
+    /** Second, independent checksum (Castagnoli), consulted only on a candidate hit. */
+    private static long crc32c(byte[] data) {
+        CRC32C crc = new CRC32C();
+        crc.update(data, 0, data.length);
+        return crc.getValue();
+    }
+
+    /**
+     * One frame's reusable analysis, keyed by content: two independent 32-bit
+     * checksums plus the geometry, stamped with the {@link #generation} it was
+     * computed under. A different frame cannot present the same 64-bit
+     * fingerprint, an in-place edit of a caller's buffer cannot produce a false
+     * hit, and a reloaded model cannot inherit stale numbers.
+     */
+    private static final class FrameMemo {
+        private boolean valid;
+        private long generation = -1;
+        private long crc;
+        private long crcC;
+        private int width;
+        private int height;
+        private Frame.Format format;
+
+        /** Stage 1: detection (and quality) for the frame's pixels. */
+        private boolean detected;
+        private int faceCount;
+        private Rect face;              // non-null iff faceCount == 1
+        private double quality;
+
+        /** Stage 2: raw [print, live, replay] probabilities for the same pixels. */
+        private boolean hasProbabilities;
+        private double[] probabilities; // null -> no single face
+
+        private boolean matches(long currentGeneration, long candidateCrc, Frame frame) {
+            return valid
+                    && generation == currentGeneration
+                    && crc == candidateCrc
+                    && width == frame.width()
+                    && height == frame.height()
+                    && format == frame.format()
+                    && crcC == crc32c(frame.data());   // second checksum, only on a candidate
+        }
+
+        private void reset(long currentGeneration, long crc, long crcC, Frame frame) {
+            this.valid = true;
+            this.generation = currentGeneration;
+            this.crc = crc;
+            this.crcC = crcC;
+            this.width = frame.width();
+            this.height = frame.height();
+            this.format = frame.format();
+            this.detected = false;
+            this.faceCount = 0;
+            this.face = null;
+            this.quality = 0.0;
+            this.hasProbabilities = false;
+            this.probabilities = null;
         }
     }
 
@@ -494,51 +776,18 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
     // LivenessBackend contract
     // =====================================================================
 
+    /**
+     * Detection plus face quality for the frame, computed once per frame
+     * content: the engine asks for the analysis before scoring and PAD, and the
+     * HTTP path rebuilds the frame for each call, so the second look is
+     * answered from the memo rather than by scanning the face again.
+     */
     @Override
     public FaceSignals analyzeFrame(Frame frame) {
         requireReady();
-        Mat bgr = toBgrMat(frame);
-        try {
-            Rect[] faces = detectFaces(bgr);
-            if (faces.length == 0) return FaceSignals.noFace(0.0);
-            if (faces.length > 1) {
-                return new FaceSignals(faces.length, 0.0, null, null, null, null, null, null, null);
-            }
-            // Quality = the same sharpness/brightness blend the heuristic scorer
-            // uses, so minFaceQuality gates behave identically whichever
-            // backend produced the signals. No landmarks are available here
-            // (MiniFASNet is a classifier, not a mesh), so EAR/smile/pose stay
-            // null and active-challenge evaluation falls back to the OpenCV
-            // heuristics, as it does today.
-            Rect f = faces[0];
-            Mat gray = new Mat();
-            Imgproc.cvtColor(bgr, gray, Imgproc.COLOR_BGR2GRAY);
-            Mat roi = new Mat(gray, f);
-            Mat lap = new Mat();
-            MatOfDouble lapStd = new MatOfDouble();
-            Imgproc.Laplacian(roi, lap, CvType.CV_64F);
-            Core.meanStdDev(lap, new MatOfDouble(), lapStd);
-            double sd = lapStd.get(0, 0)[0];
-            double sharpness = Math.min(1.0, (sd * sd) / 500.0);
-            MatOfDouble grayMean = new MatOfDouble();
-            MatOfDouble grayStd = new MatOfDouble();
-            Core.meanStdDev(roi, grayMean, grayStd);
-            double meanGray = grayMean.get(0, 0)[0];
-            double brightness = 1.0 - Math.abs(meanGray - 128.0) / 128.0;
-            double quality = Math.max(0.0, Math.min(1.0, 0.5 * sharpness + 0.5 * brightness));
-            lap.release();
-            lapStd.release();
-            grayMean.release();
-            grayStd.release();
-            roi.release();
-            gray.release();
-            return new FaceSignals(1, quality, null, null, null, null, null, null, null);
-        } catch (Throwable t) {
-            throw new LivenessException(LivenessErrorCode.ENGINE_INTERNAL_ERROR,
-                    "Frame analysis failed: " + t.getMessage());
-        } finally {
-            bgr.release();
-        }
+        FrameMemo memo = memoFor(frame);
+        if (!memo.detected) detectInto(frame, memo, "Frame analysis failed");
+        return signalsFrom(memo);
     }
 
     /**
@@ -579,6 +828,9 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
     @Override
     public void shutdown() {
         ready = false;
+        generation++;                      // every thread's memo entry is now stale
+        lastFrame.remove();                // and this thread's slot goes with the session
+        inputName = null;
         try {
             if (session != null) session.close();
         } catch (Exception ignored) {

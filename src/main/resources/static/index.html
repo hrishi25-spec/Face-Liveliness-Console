@@ -10,17 +10,132 @@
 </head>
 <body>
 
-<header>
-  <h1>MOSIP Face Liveness &amp; PAD — Test Console</h1>
-  <span class="pill" id="pill-health">checking…</span>
-  <span class="pill" id="pill-engine">engine…</span>
-  <span class="pill" id="pill-chain">chain…</span>
-  <span class="spacer"></span>
-  <span class="pill" id="pill-session">no session</span>
+<!-- Top bar: product identity, the live service state next to it, and the role
+     this workstation is acting as on the right. The role badge and Switch role
+     are the two things console.js toggles here (see showRole). -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <h1 class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="1.75" y="1.75" width="20.5" height="20.5" rx="5"/>
+          <path d="M6.25 8.5V7.4c0-.64.51-1.15 1.15-1.15H8.5M15.5 6.25h1.1c.64 0 1.15.51 1.15 1.15V8.5M17.75 15.5v1.1c0 .64-.51 1.15-1.15 1.15H15.5M8.5 17.75H7.4c-.64 0-1.15-.51-1.15-1.15V15.5"/>
+          <ellipse cx="12" cy="12" rx="3.1" ry="4"/>
+        </svg>
+      </span>
+      <span class="brand-name">MOSIP Face Liveness &amp; PAD</span>
+      <span class="brand-sub">Test console</span>
+    </h1>
+    <div class="topbar-status">
+      <span class="pill" id="pill-health">checking…</span>
+      <span class="pill" id="pill-engine">engine…</span>
+      <span class="pill" id="pill-chain">chain…</span>
+      <span class="pill" id="pill-session">no session</span>
+    </div>
+    <div class="topbar-role">
+      <span class="pill" id="pill-role">no role</span>
+      <button id="btn-switch-role" hidden>Switch role</button>
+    </div>
+  </div>
 </header>
 
-<main>
+<!-- Role select: the console opens here and each role owns one view container.
+     Supervisor carries the whole test console; Resident and Operator are
+     placeholders until their capture/auth screens land (one interaction model,
+     three roles — docs/ui-ux-design.md §1). The picker routes the UI only: it is
+     not an authorization boundary, and the service still enforces its own rules. -->
+<div id="role-picker" class="view">
+  <section>
+    <h2>Select role</h2>
+    <div class="body">
+      <div class="row">
+        <button id="btn-role-resident" class="primary role-btn">Resident</button>
+        <button id="btn-role-operator" class="primary role-btn">Operator</button>
+        <button id="btn-role-supervisor" class="primary role-btn">Supervisor</button>
+      </div>
+      <p class="hint">
+        <b>Switch role</b> (in the header) comes back here: it stops the camera, closes any
+        open session and clears the run state before you pick again.
+      </p>
+    </div>
+  </section>
+</div>
+
+<div id="role-resident" class="view" hidden>
+  <section>
+    <h2>Resident — face capture</h2>
+    <div class="body">
+      <!-- Selfie-mirrored by the shared video rule in console.css: display only,
+           the frames POSTed to the engine stay raw and un-mirrored. -->
+      <video id="res-video" autoplay playsinline muted></video>
+
+      <div class="row mt12">
+        <button id="btn-res-camera">Start camera</button>
+        <button id="btn-res-run" class="primary" disabled>Run liveness check</button>
+        <button id="btn-res-active" disabled>Run active liveness</button>
+        <button id="btn-res-stop" class="danger" disabled>Stop</button>
+      </div>
+
+      <!-- The verdict card: VERIFIED on a pass, REJECTED on any failure, and the
+           live state (checking / challenge prompt) in between. It only ever
+           renders generic catalogue messages — no scores, no PAD detail. -->
+      <div id="res-banner" class="verdict mt14">
+        <div class="action" id="res-banner-action">READY</div>
+        <div class="msg" id="res-banner-msg">Start the camera to begin.</div>
+      </div>
+
+      <p class="hint">
+        The preview is <b>mirrored</b> (like a selfie) so it matches the instruction — turn
+        your head to <em>your own</em> left when asked to turn left. The frames sent to the
+        engine stay raw and un-mirrored.
+      </p>
+      <p class="hint">
+        A <b>PASSED</b> session can still be asked for one extra challenge with
+        <b>Run active liveness</b>; that check is recorded on its own challenge row and never
+        changes the session verdict. <b>Stop</b> closes the session and releases the camera.
+      </p>
+
+      <p class="hint mt12">
+        <b>Instructions</b> — the messages this screen renders come from the shared message
+        keys (the desktop catalogue, byte-for-byte the Flutter
+        <code>LivenessView.defaultMessages</code>). Only generic text ever reaches this panel:
+        scores, PAD detail and model internals stay in the audit trail and diagnostics.
+      </p>
+      <dl class="kv" id="res-guide"><dt>—</dt><dd>—</dd></dl>
+    </div>
+  </section>
+</div>
+
+<div id="role-operator" class="view" hidden>
+  <section>
+    <h2>Operator</h2>
+    <div class="body">
+      <p class="hint"><b>Placeholder.</b> The operator liveness-authentication screen is not
+        wired into this console yet — the Supervisor role carries the full test console for now.</p>
+    </div>
+  </section>
+</div>
+
+<main id="role-supervisor" hidden>
   <div>
+    <!-- One panel per tab, showing one at a time. The first four are the Operator
+         views (Verify, Sessions, Audit, Rejection reasons — the Supervisor is a
+         superset of that surface); the rest are the admin views. Verify is the
+         entry tab, so entering the role lands on the capture screen. -->
+    <nav class="tabs" id="sup-tabs">
+      <button class="tab active" id="tab-verify">Verify</button>
+      <button class="tab" id="tab-sessions">Sessions</button>
+      <button class="tab" id="tab-audit">Audit</button>
+      <button class="tab" id="tab-rejections">Rejection reasons</button>
+      <button class="tab" id="tab-policy">Policy</button>
+      <button class="tab" id="tab-chain">Chain</button>
+      <button class="tab" id="tab-metrics">Metrics</button>
+      <button class="tab" id="tab-sweep">Sweep</button>
+      <button class="tab" id="tab-diagnostics">Diagnostics</button>
+    </nav>
+
+    <div class="tabpanel" id="panel-verify">
     <section>
       <h2>Capture</h2>
       <div class="body">
@@ -79,7 +194,78 @@
         </p>
       </div>
     </section>
+    </div>
 
+    <div class="tabpanel" id="panel-sessions" hidden>
+    <section>
+      <h2>Sessions — created in this tab</h2>
+      <div class="body">
+        <div class="row">
+          <button id="btn-sessions">Refresh list</button>
+          <span class="row-label" id="sessions-count">no sessions yet</span>
+        </div>
+        <div id="sessions-list" class="sessions">
+          No session has been created in this browser tab yet.
+        </div>
+        <dl class="kv mt12" id="session-detail"><dt>—</dt><dd>—</dd></dl>
+        <p class="hint">
+          <b>Limitation — the service has no session-list endpoint.</b> It exposes
+          <code>POST /sessions</code>, <code>GET /sessions/{id}</code> and
+          <code>POST /sessions/{id}/close</code> and nothing that enumerates sessions, so
+          this list is exactly what <b>this browser tab</b> created: the ids are held in
+          memory and are gone on reload, and a session created in another tab, on another
+          device or by another person cannot be seen or opened here. A session the tab has
+          forgotten stays open server-side until something closes it or it expires, and a
+          session created with a <code>subjectRef</code> additionally needs that same
+          <code>X-Subject-Ref</code> header on every read. Opening a row reads that session
+          and its audit trail with the two GETs that do exist.
+        </p>
+      </div>
+    </section>
+    </div>
+
+    <div class="tabpanel" id="panel-audit" hidden>
+    <section>
+      <h2>Audit trail</h2>
+      <div class="body">
+        <div class="row">
+          <span class="row-label" id="audit-subject">no session selected</span>
+        </div>
+        <pre id="audit">No session yet.</pre>
+        <div class="row mt12">
+          <button id="btn-audit">Refresh audit</button>
+          <button id="btn-close">Close session</button>
+        </div>
+        <p class="hint">Shows the trail of the session selected in the <b>Sessions</b> tab,
+          or of the session this console is currently running when nothing is selected.</p>
+      </div>
+    </section>
+    </div>
+
+    <div class="tabpanel" id="panel-rejections" hidden>
+    <section>
+      <h2>Rejection reasons</h2>
+      <div class="body">
+        <div class="row">
+          <button id="btn-rejections">Refresh reasons</button>
+          <span class="row-label" id="rejections-subject">no session selected</span>
+        </div>
+        <dl class="kv mt12" id="rejections-summary"><dt>—</dt><dd>—</dd></dl>
+        <pre id="rejections-events">No session selected.</pre>
+        <p class="hint">
+          Read from two places and nothing else: the session's own
+          <code>failureReason</code> (<code>GET /api/v1/sessions/{id}</code>) and its audit
+          trail's rejection events (<code>GET /api/v1/sessions/{id}/audit</code>) —
+          <code>PAD_REJECTED</code> carries the attack type, confidence and stage, and
+          <code>CHALLENGE_FAILED</code> the challenge that was missed. A session with
+          neither shows nothing rather than a guess. Open a session in the <b>Sessions</b>
+          tab to point this panel at it.
+        </p>
+      </div>
+    </section>
+    </div>
+
+    <div class="tabpanel" id="panel-metrics" hidden>
     <section class="mt16">
       <h2>Operational metrics</h2>
       <div class="body"><dl class="kv" id="metrics"><dt>—</dt><dd>—</dd></dl>
@@ -87,7 +273,20 @@
       </div>
     </section>
 
-    <section class="mt16" id="diag-section" hidden>
+    <section class="mt16">
+      <h2>Request budget</h2>
+      <div class="body">
+        <div id="rl-buckets" class="rl-buckets">No limited requests yet.</div>
+        <p class="hint">The service publishes <code>X-RateLimit-Limit</code>,
+          <code>-Remaining</code> and <code>-Reset</code> on session creation and on frame /
+          challenge / extra-check submissions. Capture faster than the window and the frame
+          budget empties — the console shows the limiter running down before the 429 arrives.</p>
+      </div>
+    </section>
+    </div>
+
+    <div class="tabpanel" id="panel-diagnostics" hidden>
+    <section id="diag-section" hidden>
       <h2>Diagnostics — raw scores</h2>
       <div class="body">
         <dl class="kv" id="diag"><dt>—</dt><dd>—</dd></dl>
@@ -103,19 +302,16 @@
         </p>
       </div>
     </section>
+    <p class="hint" id="diag-off">
+      Diagnostics are unavailable here: either diagnostic mode is off or this page is not
+      a loopback caller. Enable <code>mosip.liveness.diagnostics-enabled</code> and open the
+      console on <code>localhost</code> — the two cases answer the identical 404, so this
+      panel cannot (and does not try to) tell them apart.
+    </p>
+    </div>
 
-    <section class="mt16">
-      <h2>Request budget</h2>
-      <div class="body">
-        <div id="rl-buckets" class="rl-buckets">No limited requests yet.</div>
-        <p class="hint">The service publishes <code>X-RateLimit-Limit</code>,
-          <code>-Remaining</code> and <code>-Reset</code> on session creation and on frame /
-          challenge / extra-check submissions. Capture faster than the window and the frame
-          budget empties — the console shows the limiter running down before the 429 arrives.</p>
-      </div>
-    </section>
-
-    <section class="mt16">
+    <div class="tabpanel" id="panel-policy" hidden>
+    <section>
       <h2>Config policy</h2>
       <div class="body">
         <div class="row">
@@ -125,10 +321,6 @@
               <option value="OPERATOR">OPERATOR</option>
               <option value="SUPERVISOR">SUPERVISOR</option>
             </select>
-          </label>
-          <label class="field">Admin API key (MOSIP_ADMIN_API_KEY)
-            <input id="cfg-key" type="password" autocomplete="off" placeholder="required to save">
-            <span id="cfg-key-hint" class="key-hint" hidden></span>
           </label>
         </div>
         <div class="row mt12">
@@ -172,10 +364,12 @@
           <button id="btn-cfg-forget-key">Forget key</button>
         </div>
         <div id="cfg-status" class="cfg-status"></div>
-        <p class="hint">Saving issues a <code>PUT</code> with the admin key; loading is an
-          open <code>GET</code>. The key stays in this tab's sessionStorage — it is never
-          written to the decision log, and the field shows only a masked tail so a screen
-          share or screenshot can't leak it.</p>
+        <p class="hint">Saving issues a <code>PUT</code> with the admin key
+          (<code>X-Admin-API-Key</code>); loading is an open <code>GET</code>. The console
+          asks for the key in a <b>prompt</b> when a save needs one, holds it in this page's
+          memory only — never in storage and never in the DOM, so there is no field to
+          screenshot or screen-share — and drops it on <b>Switch role</b>, on <b>Forget
+          key</b>, and when the service refuses it.</p>
       </div>
     </section>
 
@@ -203,8 +397,10 @@
           clicking refresh.</p>
       </div>
     </section>
+    </div>
 
-    <section class="mt16">
+    <div class="tabpanel" id="panel-chain" hidden>
+    <section>
       <h2>Chain integrity</h2>
       <div class="body">
         <pre id="chain-details">Checking chain…</pre>
@@ -218,6 +414,31 @@
           The details show whether any historical entries still need the previous key.</p>
       </div>
     </section>
+    </div>
+
+    <div class="tabpanel" id="panel-sweep" hidden>
+    <section>
+      <h2>Threshold sweep</h2>
+      <div class="body">
+        <div class="row">
+          <label class="field">Target BPCER
+            <input id="sweep-target" type="number" min="0" max="1" step="0.01" value="0.02">
+          </label>
+          <button id="btn-sweep">Run sweep</button>
+        </div>
+        <dl class="kv mt12" id="sweep-summary"><dt>—</dt><dd>—</dd></dl>
+        <pre id="sweep-rows">No sweep run yet.</pre>
+        <p class="hint">
+          <code>GET /api/v1/eval/threshold-sweep?targetBpcer=…</code> sweeps the passive
+          threshold over the <b>same median-window decision the live path uses</b>, on
+          bona-fide windows from <code>frame_events</code> plus recorded attack windows (or
+          the labelled proxy corpus when none exist). APCER reads <code>null</code> — never
+          a fabricated zero — when there is no attack data. Apply a value in the
+          <b>Policy</b> tab; <code>docs/configuration.md</code> explains how to read the table.
+        </p>
+      </div>
+    </section>
+    </div>
   </div>
 
   <div>
@@ -231,16 +452,6 @@
       <div class="body"><dl class="kv" id="last"><dt>—</dt><dd>—</dd></dl></div>
     </section>
 
-    <section class="mt16">
-      <h2>Audit trail</h2>
-      <div class="body">
-        <pre id="audit">No session yet.</pre>
-        <div class="row mt12">
-          <button id="btn-audit">Refresh audit</button>
-          <button id="btn-close">Close session</button>
-        </div>
-      </div>
-    </section>
   </div>
 </main>
 

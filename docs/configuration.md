@@ -237,6 +237,10 @@ an active challenge.
 
 ## Service knobs (`application.yml`, `mosip.liveness.*`)
 
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `mosip.liveness.analysis-max-dimension` (`MOSIP_LIVENESS_ANALYSIS_MAX_DIMENSION`) | int | `1280` | Long-edge cap applied to every decoded frame **before** face detection, quality scoring and PAD (`ImageUtils.decodeBase64Frame` → `downscaleForAnalysis`), so a 1080p camera costs the analysis stages about what a 640×480 one does. A **cost bound, not a safety bound**: the 6 MB payload, 8192 px dimension and 40 M-pixel caps are applied first and are not configurable, and frames at or below the cap are never upscaled. Lowering it trades CPU for the detail detection and PAD see. Values below `64` stop the boot (the cascade's smallest model input is 60 px) instead of being clamped. It is **not score-neutral**: measured on one 720p frame (`docs/performance-baseline.md` §10), cap `1280` scores `0.9495` at `428.7 ms` per frame, cap `640` scores `0.6444` (below the `0.80` threshold, so the frame escalates instead of passing) at `151.4 ms`, and cap `480` finds no face at all. Nothing in the decision path reads this value — the frame's pixels simply change — which is why `1280` stays the default: it only means a 1080p camera costs the analysis stages what a 640×480 one does, and the browser console now captures at 640 px (`CAPTURE_MAX_EDGE` in `static/console.js`) regardless. |
+
 ## Required environment variables
 
 The application reads several environment variables for configuration. Secret values must be provided via secure mechanisms (e.g., Docker secrets, Kubernetes secrets, CI/CD masked variables) and **never** hard-coded in image or version control.
@@ -248,7 +252,8 @@ The application reads several environment variables for configuration. Secret va
 | `POSTGRES_DB` | no (defaults to `pad_liveness`) | no | PostgreSQL database name |
 | `POSTGRES_HOST` | no (defaults to `localhost`) | no | PostgreSQL host |
 | `POSTGRES_PORT` | no (defaults to `5432`) | no | PostgreSQL port |
-| `MOSIP_ADMIN_API_KEY` | **yes** (for config updates via `PUT /api/v1/config/*`) | **yes** | Admin API key; generate with `openssl rand -hex 32` |
+| `MOSIP_ADMIN_API_KEY` | **yes** (for config updates via `PUT /api/v1/config/*`) | **yes** | Admin API key; generate with `openssl rand -hex 32`. Also the `SUPERVISOR` role on operator routes. |
+| `MOSIP_OPERATOR_API_KEY` | no (operator routes refuse everyone while it is blank) | **yes** | Operator API key (`X-Operator-API-Key`) for operator routes such as `GET /api/v1/auth/role`; minimum 16 characters when set and it must differ from the admin key, or startup fails |
 | `MOSIP_AUDIT_HMAC_SECRET` | **yes** (recommended for tamper‑evident audit chain) | **yes** | Secret for HMAC‑SHA‑256 audit chain; minimum 16 characters |
 | `MOSIP_AUDIT_HMAC_PREVIOUS_SECRET` | no | **yes** | Previous audit HMAC secret for key rotation; must differ from current |
 | `SERVER_PORT` | no (defaults to `8000`) | no | HTTP server port |
@@ -256,13 +261,38 @@ The application reads several environment variables for configuration. Secret va
 | `DB_POOL_SIZE` | no (defaults to `5`) | no | HikariCP maximum pool size |
 | `MAX_REQUEST_BODY_BYTES` | no (defaults to `25165824` = 24 MB) | no | Maximum HTTP request body size |
 | `RATE_LIMIT_ENABLED` | no (defaults to `true`) | no | Enable rate‑limiting filter |
-| `SESSION_CREATE_LIMIT` | no (defaults to `30`) | no | Session creations per IP per minute |
+| `SESSION_CREATE_LIMIT` | no (defaults to `30`) | no | Session creations **and operator‑route key attempts** per IP per minute (both use the per‑IP budget) |
 | `FRAME_LIMIT` | no (defaults to `60`) | no | Frames + challenge validations per session per 10 s |
 | `TRUSTED_PROXIES` | no (defaults to empty) | no | Comma‑separated list of trusted proxies for rate‑limiting |
 | `MIN_CHALLENGE_WINDOW_MS` | no (defaults to `15000`) | no | Floor for per‑workflow challenge timeout (hard minimum 1000 ms) |
 | `LIVENESS_DIAGNOSTICS_ENABLED` | no (defaults to `false`) | no | Enable diagnostic mode (loopback only) |
 
 See `.env.example` in the repository root for a template.
+
+### The two API keys and the roles they prove
+
+`GET /api/v1/auth/role` is how a client asks which role its key proves, so a
+console can pick the supervisor or the operator surface from the service's answer
+rather than from which box someone typed into:
+
+```bash
+curl -s localhost:8000/api/v1/auth/role -H "X-Operator-API-Key: $MOSIP_OPERATOR_API_KEY"
+# → {"role":"OPERATOR"}
+
+curl -s localhost:8000/api/v1/auth/role -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY"
+# → {"role":"SUPERVISOR"}
+```
+
+Both keys are compared in constant time and **fail closed**: with
+`MOSIP_OPERATOR_API_KEY` blank no caller is ever answered `OPERATOR` (an empty
+header does not match a blank key), and with both keys blank the probe refuses
+everyone (401). The admin key is deliberately still accepted when the operator key
+is blank, so a deployment that sets only `MOSIP_ADMIN_API_KEY` keeps working.
+The response carries the role and nothing else — no key, and not even a
+fingerprint of one — and a wrong key is indistinguishable from a missing one.
+Key attempts on operator routes are metered per client IP by the existing
+`RateLimitFilter` budget (`SESSION_CREATE_LIMIT`), so guessing is throttled by the
+flood protection that was already there.
 
 ## Audit logging security
 
@@ -349,6 +379,7 @@ env:
 | `backend` | `auto` | Single selection for **both** wirings — the HTTP scorer (`PassiveScoringService`) and the `LivenessBackend` SPI bean (interop report F5): `auto` = bundled MiniFASNet ONNX when it loads, heuristic fallback otherwise (SPI bean: the scripted mock); `heuristic` = force the OpenCV quality heuristic (SPI bean: the mock); `mock` / `onnx-minifasnet-v2` / `mediapipe-facemesh` / `tflite-minifasnet` = that backend by its audit id on **both** paths. Explicit ids never fall back to another scorer — unavailable means a coded, fail-closed error (the engine maps it to its device error). Unknown values fail at startup. |
 | `model-path` | *(blank)* | Filesystem override for the model; blank uses the bundled `classpath:models/minifasnet_v2.onnx` (SHA-256 `d7b3cd9b…` verified on load). |
 | `score-temperature` | `4.0` | Log-odds temperature that de-saturates the model's live-class probability **above** `0.80` (`ProbabilityCalibration`). The raw MiniFASNet score sits at 0.99–0.9999 on an ordinary genuine face, so the console showed a flat `1.000` with no information. The map is anchored at the default threshold (0.80 → 0.80), so the pass/fail verdict at `t ≤ 0.80` is unchanged; `1` reports the raw model confidence and `>1` spreads more. Per-workflow thresholds above 0.80 are applied to the calibrated scale and therefore demand a slightly higher raw confidence. |
+| `onnx-intra-op-threads` | `0` | Threads one ONNX inference may use (`intraOpThreads` backend option). `0`/blank derives it from the core count as `max(1, cores/2)` — **one thread on the 2-core target hardware**, where the second core must stay free for the next frame's decode, quality check and Haar detection. Measured on a 4-core host: 1 thread 49.5 ms per distinct frame, 2 threads 54.1 ms, 4 threads 123.3 ms (`docs/performance-baseline.md` §9), and the value changes no score (`OnnxMiniFasNetBackendTest.intraOpThreadCountDoesNotMoveAnyValue`). `0` derives; a negative value stops startup with a message naming the key, and a non-integer stops the boot at Spring's binding — neither silently defers to ORT's all-cores default. The backend option itself accepts only a positive integer, so a direct SPI user gets the same refusal. |
 | `passive-threshold` | `0.80` | Mirrors `LivenessConfig.DEFAULT_PASSIVE_THRESHOLD`; the `config_policies` DB row wins at runtime. Also the anchor of `score-temperature`'s compression, so that default is preserved exactly. |
 | `min-face-quality`, `passive-min-frames`, `passive-window-frames`, `min-challenge-count`, `challenge-timeout-ms`, `max-retries` | see yml | Engine defaults for the embedded (library) path. |
 | `diagnostics-enabled` (`LIVENESS_DIAGNOSTICS_ENABLED`) | `false` | **Diagnostic mode (opt-in, local)** — orchestration spec §10. When true, the service retains raw per-frame scores, timings, FPS and the scorer delegate in a bounded ring (**no pixels**) and `GET /api/v1/diagnostics` serves the snapshot to **loopback callers only**; disabled or remote callers get the identical empty 404, so the mode never leaks its own existence. The console's debug panel appears only when both gates pass. |

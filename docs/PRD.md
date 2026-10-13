@@ -391,10 +391,12 @@ are under `/api/v1`.
 | `GET` | `/health` | Liveness of the service; reports whether the engine is `available`. |
 | `POST` | `/api/v1/sessions` | Create a session (`workflowType`, `deviceId`, optional `subjectRef`, `online`). |
 | `GET` | `/api/v1/sessions/{id}` | Current session state + the snapshotted effective policy. |
+| `GET` | `/api/v1/sessions` | Recent sessions, newest first (`workflowType`/`status` filters, `limit` 1..200, default 50). **Requires the operator or admin API key.** |
 | `POST` | `/api/v1/sessions/{id}/close` | Close an active session; returns a summary (counters, duration). |
 | `POST` | `/api/v1/sessions/{id}/frames` | Submit one base64 frame; returns the verdict. |
 | `POST` | `/api/v1/sessions/{id}/challenges/validate` | Validate a frame burst against the issued challenge. |
 | `GET` | `/api/v1/sessions/{id}/audit` | The session's audit trail. |
+| `GET` | `/api/v1/rejections` | Recent failed sessions plus their `PAD_REJECTED`/`CHALLENGE_FAILED` events, newest first. **Requires the operator or admin API key.** |
 | `GET` | `/api/v1/metrics` | Anonymised operational metrics. |
 | `GET` | `/api/v1/config/{workflowType}` | Policy for one workflow. |
 | `GET` | `/api/v1/config/{workflowType}/effective` | The policy after defaults ⊕ overrides are resolved. |
@@ -403,6 +405,7 @@ are under `/api/v1`.
 | `GET` | `/api/v1/config/audit/verify` | Verify the audit chain; reports whether keyed HMAC mode is active. |
 | `GET` | `/api/v1/eval/threshold-sweep` | Sweep thresholds over a label set to pick an operating point. |
 | `GET` | `/api/v1/diagnostics` | Local-only debug snapshot; loopback callers only, and only when enabled. |
+| `GET` | `/api/v1/auth/role` | Which role the caller's key proves (`SUPERVISOR`/`OPERATOR`); the console's role probe. **Requires the operator or admin API key.** |
 
 **Key response shapes** (DTOs in `io.mosip.liveness.dto`):
 
@@ -418,6 +421,13 @@ are under `/api/v1`.
   `locked` / `escalate_to_operator` / `failed`), `message`, and — only on a
   terminal budget-exhausted verdict — `mayRetrySession`.
 - `SessionSummary` — counters and `durationMs` for a closed session.
+- `SessionListItem` — one row of the operator feeds: `id`, `workflowType`, `deviceId`,
+  `status`, `currentStage`, `retryCount`, `finalResult`, `failureReason`, `createdAt`,
+  `closedAt` — never `subjectRef`, the frozen policy or frame data.
+- `RejectionFeed` — the rejections answer: `limit`, `sessions` (failed
+  `SessionListItem`s, newest first) and `events` (`{id, eventType, sessionId, details,
+  createdAt}` for `PAD_REJECTED` and `CHALLENGE_FAILED`, newest first), each list capped
+  at `limit`. The `details` payload is the one the session's own trail already returns.
 - `OperationalMetrics` — totals, pass rate, escalation rate, frames/challenges per session,
   retry rate, failure rate, PAD rejection rate.
 
@@ -448,13 +458,18 @@ curl -s -X POST localhost:8000/api/v1/sessions/$SESSION_ID/close
 curl -s localhost:8000/api/v1/sessions/$SESSION_ID/audit
 ```
 
-Policy writes are the only call that needs a credential — the admin key, and the service
-refuses them entirely when that key is unset (fail-closed, §12.4):
+Policy writes are the only call that needs the admin key, and the service refuses them
+entirely when that key is unset (fail-closed, §12.4). The role probe and the two operator
+feeds are the only *reads* behind a key — the operator key, or the admin key, which
+outranks it:
 
 ```bash
 curl -X PUT localhost:8000/api/v1/config/RESIDENT \
   -H "Content-Type: application/json" -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY" \
   -d '{"passiveThreshold": 0.85}'
+
+curl -s "localhost:8000/api/v1/sessions?status=FAILED&limit=25" \
+  -H "X-Operator-API-Key: $MOSIP_OPERATOR_API_KEY"
 ```
 
 ---

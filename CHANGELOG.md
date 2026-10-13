@@ -4,6 +4,89 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 2026-10-11
 
+### Changed — A capture budget on the browser console, and a configurable analysis cap
+
+- The console sent the camera's **native** frame: 1280x720 on a webcam that
+  ignores the `640x480` `ideal`, encoded at quality 0.85 (0.9 for challenge
+  frames) — 921 600 pixels drawn, encoded, base64'd and uploaded per frame, for a
+  face the service shrinks to its own analysis cap anyway. `static/console.js`
+  now draws the whole source frame into a canvas whose long edge is at most
+  **640 px** and encodes at **quality 0.7**, with the ceilings, the pause and the
+  drop as named constants (`CAPTURE_MAX_EDGE`, `CAPTURE_JPEG_QUALITY`,
+  `CAPTURE_MAX_FPS`) plus a read-only `window.CAPTURE_BUDGET` for the guards.
+  Measured in Blink on the same 720p frame: payload **42 853 -> 12 033 B**
+  (-71.9 %, -76.2 % on the challenge encode) and draw+encode **79.6 -> 19.4 ms**
+  (-75.6 %); per-frame server cost for the genuine-face fixture **428.7 -> 162.3
+  ms** total (-62.1 %, decode -77 %, face detection -60 %, PAD model -70 %).
+- **Never more than eight frames per second, never two requests at once.** One
+  gate (`capturePaused()` + `awaitCaptureSlot()`) now wraps every frame and
+  challenge POST, so the two capture screens (Supervisor and Resident) that share
+  one camera and one canvas cannot combine into 16 sends/s on a 2-core box, and a
+  capture taken while a request is in flight is **dropped** — the caller retries
+  on its next tick — instead of queued behind it. A skipped tick no longer spends
+  one of a run's twelve attempts, so a pause costs throughput, never attempts.
+- **Capture pauses while the tab is hidden** (`document.hidden`), with a line in
+  the decision log, because nobody can read the prompt or perform a challenge in a
+  tab they cannot see; the camera stream itself stays open, since stopping a
+  `MediaStreamTrack` makes the camera re-acquire with a visible flash.
+- The challenge burst is deliberately **unchanged** (baseline + up to the 4-frame
+  window, 4 on the first poll): the engine measures an excursion relative to the
+  baseline, so trimming the window would change what it evaluates. What changed is
+  the price of each frame in it and the shared 8/s ceiling.
+- New `mosip.liveness.analysis-max-dimension` (default **1280**, the previous
+  hard-coded value) makes `ImageUtils`'s long-edge cap configurable. It is applied
+  after the fixed payload/dimension/pixel caps and **before** face detection,
+  quality scoring and PAD, and values below 64 stop the boot instead of being
+  clamped. It is a cost bound, not a free knob: on the same 720p frame, cap 640
+  costs 151.4 ms instead of 428.7 ms but moves the genuine-face score from 0.9495
+  to 0.6444 (below the 0.80 threshold), and cap 480 loses the face entirely
+  (`faceDetected=false`). 1280 only means a 1080p camera costs what a 640x480 one
+  does, and the console now captures below it anyway.
+- **Decisions did not move, scores did.** On both fixtures the decision fields are
+  identical before/after (face detected, `padFlag`, `action=retry_passive`), but
+  the numbers behind them are not: the genuine fixture's passive score reads
+  0.9495 -> 0.8555 (still above the 0.80 threshold) and the print fixture's PAD
+  label reads `PRINTED_PHOTO` (heuristic) -> `SCREEN_REPLAY` (model), because at
+  640 px the heuristic no longer short-circuits the model pass. Fewer pixels and
+  fewer JPEG bits reach the model; that is the trade-off the capture budget buys,
+  and it is documented in `docs/performance-baseline.md` §10 with the full
+  before/after table.
+
+### Changed — One detection and one inference per frame, and a configurable ONNX thread count
+
+- One passive frame used to pay **three** Haar cascades and **two** MiniFASNet
+  inferences inside `OnnxMiniFasNetBackend`: `analyzeFrame` detected the face, and
+  each of `scorePassiveLiveness` and `assessPad` re-detected and re-inferred on
+  its own. The backend now memoizes one frame's analysis — face count and box,
+  quality, raw class probabilities — keyed by the frame's **pixel content**
+  (CRC32 + CRC32C + geometry, stamped with a model generation bumped on load and
+  unload), one slot per thread and derived values only. The engine's per-frame
+  conversation and the HTTP path's rebuilt frames therefore share one detection
+  and one inference. Measured on the same host and harness: **160.9 → 61.8 ms**
+  per distinct frame at the SPI seam (16.2 fps) and **304.7 → 167.8 ms** per
+  passive HTTP frame; a repeated identical frame drops to 0.24 ms and 79.4 ms.
+  Detection and inference counts, not just wall clock, are pinned by
+  `OnnxMiniFasNetBackendTest`.
+- **No returned value moved**: `Double.toHexString` equality against values
+  captured from the pre-change code for the genuine-face and print-attack
+  fixtures, plus the end-to-end HTTP score that matches the pre-change baseline
+  exactly. Thresholds, median window, PAD confirm frames, challenge logic, policy
+  handling, rate limiting, audit chain, headers and key checks are untouched.
+- Native buffers on the per-frame paths are now released in `finally`
+  (`ImageUtils` results and placeholder `MatOfDouble`s, `LivenessEngineService`
+  ROI/Laplacian buffers, `PadEngineService`'s six buffers). The Haar cascades
+  needed no change — the only construction sites are lazy/initialization paths.
+- New `mosip.liveness.onnx-intra-op-threads` (backend option `intraOpThreads`)
+  controls how many threads one inference may use. Unset keeps `max(1, cores/2)`,
+  which is **one thread on the 2-core target**. On this 4-core host one thread also
+  measured fastest — 49.5 ms per distinct frame, against 54.1 ms at two threads and
+  123.3 ms at four — and the count changes no score on either fixture. A
+  negative or malformed value stops the boot instead of silently deriving a
+  default, and the backend option itself accepts only a positive integer.
+- `BackendPerFrameLatencyTest` now measures two workloads (`repeated-frame`,
+  `distinct-frames`) and labels them in the results line, because a memoized
+  backend makes a repeated input measure nothing.
+
 ### Changed — Session ownership moved into a filter, and a new session route cannot skip it
 
 - Ownership used to be a `UserSessionGuard.require` call inside each of the six

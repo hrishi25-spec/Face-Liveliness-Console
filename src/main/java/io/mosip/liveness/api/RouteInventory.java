@@ -9,9 +9,11 @@ import java.util.regex.Pattern;
 /**
  * The service's route surface, written down once and read by everything that
  * must treat a route differently: {@link AdminKeyFilter} refuses an
- * admin-keyed route when the caller has no key, {@link RateLimitFilter} meters
- * the expensive writes, and {@link SessionOwnershipFilter} refuses a
- * session-scoped route to anyone but the session's owner.
+ * admin-keyed route when the caller has no key, {@link OperatorKeyFilter} refuses
+ * an operator-keyed route to a caller whose headers prove no role,
+ * {@link RateLimitFilter} meters the expensive writes and the key attempts, and
+ * {@link SessionOwnershipFilter} refuses a session-scoped route to anyone but the
+ * session's owner.
  *
  * <p>It lives in main rather than only in {@code ApiRouteInventoryTest}
  * because a filter has no compile-time view of a list that exists solely in
@@ -21,12 +23,13 @@ import java.util.regex.Pattern;
  * report the drift but not prevent it.</p>
  *
  * <p>The test still enforces both halves: every mapping declared on every
- * controller must appear in exactly one of the two classification sets
- * ({@link #CLIENT_FACING} or {@link #ADMIN_KEYED}), and every route that
- * carries a session id must additionally be in {@link #SESSION_SCOPED}. A new
- * session-scoped endpoint that is not listed there is not guarded by
- * {@link SessionOwnershipFilter} — so the test fails rather than letting an
- * owned session answer a stranger.</p>
+ * controller must appear in exactly one of the classification sets
+ * ({@link #CLIENT_FACING}, {@link #ADMIN_KEYED} or {@link #OPERATOR_KEYED}), and
+ * every route that carries a session id must additionally be in
+ * {@link #SESSION_SCOPED}. A new session-scoped endpoint that is not listed there
+ * is not guarded by {@link SessionOwnershipFilter} — so the test fails rather than
+ * letting an owned session answer a stranger — and a route listed in two keyed
+ * sets would be claimed by two filters, which the test rejects as well.</p>
  */
 final class RouteInventory {
 
@@ -66,6 +69,35 @@ final class RouteInventory {
             "GET /api/v1/eval/threshold-sweep");
 
     /**
+     * Reached only by a caller whose headers prove a role: the operator key
+     * ({@link OperatorKeyGuard#HEADER}) or the admin key, which a supervisor
+     * carries everywhere. Refused by {@link OperatorKeyFilter} with 401, and
+     * metered per client IP by {@link RateLimitFilter} so guessing a key spends
+     * the same budget as flooding the service.
+     *
+     * <p>The three members are the console's operator surface: the role probe
+     * ({@code GET /api/v1/auth/role}) that answers {@code SUPERVISOR} or
+     * {@code OPERATOR}, and the two read-only feeds that surface is for — the
+     * session list ({@code GET /api/v1/sessions}, with optional
+     * {@code workflowType}/{@code status} filters and a capped {@code limit}) and
+     * the rejection feed ({@code GET /api/v1/rejections}, failed sessions plus
+     * their {@code PAD_REJECTED}/{@code CHALLENGE_FAILED} events). Reads, so they
+     * carry no session id of their own and are <em>not</em> in
+     * {@link #SESSION_SCOPED}: a list of other people's sessions is guarded by
+     * the key, not by an ownership claim the caller could not present.</p>
+     *
+     * <p>Every request to one of them is metered per client IP by
+     * {@link RateLimitFilter} on the session-creation budget — the same budget a
+     * key guesser spends, which is what bounds brute force. A console polling a
+     * feed is pacing itself against that budget too, the same way the verify
+     * surface is.</p>
+     */
+    static final Set<String> OPERATOR_KEYED = Set.of(
+            "GET /api/v1/auth/role",
+            "GET /api/v1/sessions",
+            "GET /api/v1/rejections");
+
+    /**
      * Every route whose path names a session: acted on only by that session's
      * owner. A session created with a {@code subjectRef} answers only a caller
      * presenting it in {@link UserSessionGuard#HEADER};
@@ -101,6 +133,14 @@ final class RouteInventory {
     private static final List<Route> ADMIN_ROUTES = compile(ADMIN_KEYED);
 
     /**
+     * The operator-keyed templates, compiled like the admin ones. Declared after
+     * {@link #VARIABLE} for the same textual-order reason; the two keyed sets are
+     * disjoint ({@code ApiRouteInventoryTest} fails a route in both), so no request
+     * is claimed by two keyed filters.
+     */
+    private static final List<Route> OPERATOR_ROUTES = compile(OPERATOR_KEYED);
+
+    /**
      * The session-scoped templates, compiled with their id captured.
      *
      * <p>Checked at load, not matched loosely: {@link #sessionIdIn} hands the
@@ -133,6 +173,30 @@ final class RouteInventory {
         }
         String resolved = normalise(path);
         for (Route route : ADMIN_ROUTES) {
+            if (route.method().equals(method) && route.path().matcher(resolved).matches()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a request must prove a role with {@link OperatorKeyGuard#HEADER} or
+     * the admin key.
+     *
+     * <p>Path normalisation and the one-segment placeholder rule are shared with
+     * {@link #isAdminRoute}: the guard has to agree with the dispatcher about which
+     * path a request reaches, or a resolved {@code /..} would skip the filter.</p>
+     *
+     * @param method the request method, e.g. {@code GET}
+     * @param path   the request path, e.g. {@code /api/v1/auth/role}
+     */
+    static boolean isOperatorRoute(String method, String path) {
+        if (method == null || path == null) {
+            return false;
+        }
+        String resolved = normalise(path);
+        for (Route route : OPERATOR_ROUTES) {
             if (route.method().equals(method) && route.path().matcher(resolved).matches()) {
                 return true;
             }

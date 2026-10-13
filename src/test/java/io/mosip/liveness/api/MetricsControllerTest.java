@@ -43,7 +43,7 @@ class MetricsControllerTest {
         when(sessionRepo.sumRetryCount()).thenReturn(0L);
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -66,7 +66,7 @@ class MetricsControllerTest {
         when(sessionRepo.sumRetryCount()).thenReturn(25L);
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -92,7 +92,7 @@ class MetricsControllerTest {
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
         // 3 allowed, 2 refused on session creation; 1 allowed, 4 refused on frames.
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(3, 2, 1, 4));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(3, 2, 1, 4, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -102,6 +102,7 @@ class MetricsControllerTest {
                     .andExpect(jsonPath("$.rateLimitedRequests").value(6))
                     .andExpect(jsonPath("$.rateLimitedSessionCreate").value(2))
                     .andExpect(jsonPath("$.rateLimitedFrames").value(4))
+                    .andExpect(jsonPath("$.rateLimitedOperatorKey").value(0))
                     .andExpect(jsonPath("$.rateLimitRejectionRate").value(0.6));
         }
     }
@@ -118,7 +119,7 @@ class MetricsControllerTest {
         when(sessionRepo.sumRetryCount()).thenReturn(0L);
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -156,7 +157,7 @@ class MetricsControllerTest {
         when(frameEventRepo.count()).thenReturn(0L);
         when(challengeRepo.count()).thenReturn(0L);
         when(sessionRepo.sumRetryCount()).thenReturn(0L);
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -166,6 +167,38 @@ class MetricsControllerTest {
                     .andExpect(jsonPath("$.screenReplayApcer").value(0.4))
                     .andExpect(jsonPath("$.videoReplayApcer").value(0.5))
                     .andExpect(jsonPath("$.otherApcer").value(0.6));
+        }
+    }
+
+    /**
+     * The operator-key rule is a third per-IP budget, so it needs its own tally:
+     * reporting a refused key guess as a refused session creation would send an
+     * operator looking at the wrong traffic.
+     */
+    @Test
+    void getMetrics_reportsTheOperatorKeyRuleSeparately() throws Exception {
+        when(sessionRepo.count()).thenReturn(0L);
+        when(sessionRepo.countByStatus(SessionStatus.PASSED)).thenReturn(0L);
+        when(sessionRepo.countByStatus(SessionStatus.FAILED)).thenReturn(0L);
+        when(sessionRepo.countByStatus(SessionStatus.ACTIVE)).thenReturn(0L);
+        when(frameEventRepo.countDistinctSessionsByStage(LivenessStage.ACTIVE)).thenReturn(0L);
+        when(frameEventRepo.count()).thenReturn(0L);
+        when(challengeRepo.count()).thenReturn(0L);
+        when(sessionRepo.sumRetryCount()).thenReturn(0L);
+        when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
+                0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
+        // Nothing on the other two rules; five refused key attempts.
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 5));
+        try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
+            mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
+
+            mockMvc.perform(get("/api/v1/metrics"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.rateLimitedOperatorKey").value(5))
+                    .andExpect(jsonPath("$.rateLimitedRequests").value(5))
+                    .andExpect(jsonPath("$.rateLimitedSessionCreate").value(0))
+                    .andExpect(jsonPath("$.rateLimitedFrames").value(0))
+                    .andExpect(jsonPath("$.rateLimitRejectionRate").value(1.0));
         }
     }
 }

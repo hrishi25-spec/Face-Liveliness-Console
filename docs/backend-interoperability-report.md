@@ -241,6 +241,17 @@ OpenCV natives loaded locally. One run, one host; raw output is
 | `mock` | analyze 0.012 · pad 0.001 · score 0.005 | **0.017 ms** | 0.013 | 0.037 | 0.105 | **≈59,515 fps** |
 | `onnx-minifasnet-v2` | analyze 46.680 · pad 54.386 · score 55.702 | **156.768 ms** | 148.039 | 206.396 | 309.050 | **6.4 fps** |
 
+> **Follow-up (2026-10-13):** the triple-detection finding below is fixed.
+> `OnnxMiniFasNetBackend` now keys one frame's analysis (detection, quality and
+> raw probabilities) to the frame's pixel content, so the conversation above
+> costs **one** detection and **one** inference — the SPI contract is unchanged
+> and the values are bit-identical (`docs/performance-baseline.md` §9 has the
+> proof and the full before/after). `BackendPerFrameLatencyTest` therefore
+> reports two workloads now: `repeated-frame` (memo hits — no longer a per-frame
+> cost) and `distinct-frames` (**61.8 ms** mean, 16.2 fps at the seam). Quote
+> per-frame cost from the distinct line. The table below is the 2026-10-07
+> repeated-frame record, left as measured.
+
 Percentiles are nearest-rank over the 100 frames; throughput is the
 sequential single-threaded rate implied by the mean frame time. Score ranges
 across the measured frames: mock `[0.9203, 0.9397]` (seeded noise around the

@@ -42,16 +42,23 @@ public class LivenessEngineService {
         int[] bbox = observation.bbox();
         Rect roi = new Rect(bbox[0], bbox[1], bbox[2], bbox[3]);
         Mat gray = new Mat();
-        Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
-        Mat faceRoi = gray.submat(roi);
-        int eyeCount = imageUtils.detectEyes(faceRoi).length;
-        double eyeSymmetryScore = eyeCount >= 2 ? 1.0 : 0.4;
-        double score = 0.4 * (observation.faceQuality() != null ? observation.faceQuality() : 0.0)
-                + 0.4 * eyeSymmetryScore
-                + 0.2 * imageUtils.sharpnessScore(frame);
-        gray.release();
-        faceRoi.release();
-        return Math.max(0.0, Math.min(1.0, score));
+        Mat faceRoi = null;
+        try {
+            Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
+            faceRoi = gray.submat(roi);
+            int eyeCount = imageUtils.detectEyes(faceRoi).length;
+            double eyeSymmetryScore = eyeCount >= 2 ? 1.0 : 0.4;
+            double score = 0.4 * (observation.faceQuality() != null ? observation.faceQuality() : 0.0)
+                    + 0.4 * eyeSymmetryScore
+                    + 0.2 * imageUtils.sharpnessScore(frame);
+            return Math.max(0.0, Math.min(1.0, score));
+        } finally {
+            // finally, not straight-line code: the eye cascade is the call most
+            // likely to throw (native failure), and the buffers must not depend
+            // on it returning normally.
+            if (faceRoi != null) faceRoi.release();
+            gray.release();
+        }
     }
 
     /**
@@ -161,11 +168,16 @@ public class LivenessEngineService {
             int[] b = boxes.get(i);
             Rect roi = new Rect(b[0], b[1], b[2], b[3]);
             Mat gray = new Mat();
-            Imgproc.cvtColor(frames.get(i), gray, Imgproc.COLOR_BGR2GRAY);
-            Mat faceRoi = gray.submat(roi);
-            int eyeCount = imageUtils.detectEyes(faceRoi).length;
-            gray.release();
-            faceRoi.release();
+            Mat faceRoi = null;
+            int eyeCount;
+            try {
+                Imgproc.cvtColor(frames.get(i), gray, Imgproc.COLOR_BGR2GRAY);
+                faceRoi = gray.submat(roi);
+                eyeCount = imageUtils.detectEyes(faceRoi).length;
+            } finally {
+                if (faceRoi != null) faceRoi.release();
+                gray.release();
+            }
             if (eyeCount == 0) {
                 hadClosed = true;
             } else if (hadClosed) {
@@ -185,19 +197,25 @@ public class LivenessEngineService {
             if (mouthY + mouthH > frames.get(i).rows()) continue;
 
             Mat gray = new Mat();
-            Imgproc.cvtColor(frames.get(i), gray, Imgproc.COLOR_BGR2GRAY);
-            Mat mouthRoi = gray.submat(new Rect(b[0], mouthY, b[2], mouthH));
             Mat laplacian = new Mat();
-            Imgproc.Laplacian(mouthRoi, laplacian, CvType.CV_64F);
+            MatOfDouble mean = new MatOfDouble();
             MatOfDouble stddev = new MatOfDouble();
-            Core.meanStdDev(laplacian, new MatOfDouble(), stddev);
-            double variance = stddev.get(0, 0)[0] * stddev.get(0, 0)[0];
-            minVar = Math.min(minVar, variance);
-            maxVar = Math.max(maxVar, variance);
-            gray.release();
-            mouthRoi.release();
-            laplacian.release();
-            stddev.release();
+            Mat mouthRoi = null;
+            try {
+                Imgproc.cvtColor(frames.get(i), gray, Imgproc.COLOR_BGR2GRAY);
+                mouthRoi = gray.submat(new Rect(b[0], mouthY, b[2], mouthH));
+                Imgproc.Laplacian(mouthRoi, laplacian, CvType.CV_64F);
+                Core.meanStdDev(laplacian, mean, stddev);   // mean is required by the API, unused
+                double variance = stddev.get(0, 0)[0] * stddev.get(0, 0)[0];
+                minVar = Math.min(minVar, variance);
+                maxVar = Math.max(maxVar, variance);
+            } finally {
+                if (mouthRoi != null) mouthRoi.release();
+                gray.release();
+                laplacian.release();
+                mean.release();
+                stddev.release();
+            }
         }
         return (maxVar - minVar) > 50;
     }

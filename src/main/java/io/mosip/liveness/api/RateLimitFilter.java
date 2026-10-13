@@ -19,7 +19,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Flood protection for the two expensive write paths:
+ * Flood protection for the three things a caller can spend:
  *
  * <ul>
  *   <li>{@code POST /api/v1/sessions} — keyed by <b>client IP</b>: session
@@ -30,13 +30,28 @@ import java.util.regex.Pattern;
  *       <b>session id</b>, sharing one budget: both run face detection + PAD +
  *       model scoring, and one session represents one capture stream. A single
  *       rogue session can no longer burn the CPU budget of the whole service.</li>
+ *   <li>The operator-key routes ({@link RouteInventory#OPERATOR_KEYED}) — keyed by
+ *       <b>client IP</b>, on the same limit and window as session creation: every
+ *       request there is a key attempt, and an unauthenticated caller guessing the
+ *       key should spend the flood budget that already exists rather than get
+ *       unlimited constant-time comparisons. No second limiter is involved — the
+ *       same fixed-window machinery with one more rule.</li>
  * </ul>
  *
- * <p>Runs after {@link SecurityHeadersFilter} (lowest precedence), so the 429
- * response carries the security headers, and before the dispatcher, so rejected
- * requests never reach Jackson or the database. Fixed window counters are
- * in-memory — the service is a single local process, so there is nothing
- * shared to coordinate.</p>
+ * <p>Runs after {@link SecurityHeadersFilter}, so the 429 response carries the
+ * security headers, and before the dispatcher, so rejected requests never reach
+ * Jackson or the database. Fixed window counters are in-memory — the service is
+ * a single local process, so there is nothing shared to coordinate.</p>
+ *
+ * <p><b>Order.</b> Late, but twenty below {@code LOWEST_PRECEDENCE} rather than
+ * at it, so the filters that must not run ahead of it have room to be later than
+ * it: {@link AdminKeyFilter} and {@link OperatorKeyFilter} answer a keyed
+ * request, and an over-budget request must be refused as a flood *before* one of
+ * them spends a comparison on it — and, for the operator gate, before it refuses
+ * the request at all, since a filter that stops the chain is a request the budget
+ * never sees. Writing the offsets as {@code + n} instead would be the bug: the
+ * arithmetic is on {@code Integer.MAX_VALUE}, so {@code LOWEST_PRECEDENCE + 5}
+ * wraps around and sorts *ahead* of every filter in the service.</p>
  *
  * <p>The client IP behind {@code POST /sessions} is whatever
  * {@link ClientIpResolver} says it is — the same resolution the config audit
@@ -47,7 +62,7 @@ import java.util.regex.Pattern;
  * path: Redis / caffeine-limiter); fixed windows are per-process.</p>
  */
 @Component
-@Order(Ordered.LOWEST_PRECEDENCE)
+@Order(Ordered.LOWEST_PRECEDENCE - 20)
 public class RateLimitFilter extends OncePerRequestFilter {
 
     /**
@@ -66,6 +81,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
      */
     static final String BUCKET_SESSION_CREATE = "session-create";
     static final String BUCKET_FRAMES = "frames";
+    static final String BUCKET_OPERATOR_KEY = "operator-key";
     static final String H_BUCKET = "X-RateLimit-Bucket";
     static final String H_LIMIT = "X-RateLimit-Limit";
     static final String H_REMAINING = "X-RateLimit-Remaining";
@@ -143,7 +159,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String method = request.getMethod();
-        if (!enabled || !"POST".equals(method)) {
+        if (!enabled) {
             filterChain.doFilter(request, response);
             return;
         }
@@ -153,18 +169,34 @@ public class RateLimitFilter extends OncePerRequestFilter {
         int limit;
         long windowMs;
         String bucket;
-        String resource;
         String message;
-        boolean framesBudget;
+        Rule rule;
 
-        if (SESSION_CREATE.equals(path)) {
+        if (RouteInventory.isOperatorRoute(method, path)) {
+            // Keyed by IP, and on the per-IP budget that session creation already
+            // uses: the same limit and window, so there is nothing new to tune and
+            // no second limiter to reason about. Every request here is a key
+            // attempt — a success is an authenticated caller pacing itself, a
+            // failure is a guess — so counting the attempts bounds guessing without
+            // a special case for the outcome.
+            key = "operator-key:" + clientIpResolver.resolve(request);
+            limit = sessionCreateLimit;
+            windowMs = sessionCreateWindowMs;
+            bucket = BUCKET_OPERATOR_KEY;
+            message = "Too many API key attempts from this address. Try again later.";
+            rule = Rule.OPERATOR_KEY;
+        } else if (!"POST".equals(method)) {
+            // Everything else that is not POST is out of scope: only the operator
+            // routes above are metered on a GET.
+            filterChain.doFilter(request, response);
+            return;
+        } else if (SESSION_CREATE.equals(path)) {
             key = "create:" + clientIpResolver.resolve(request);
             limit = sessionCreateLimit;
             windowMs = sessionCreateWindowMs;
             bucket = BUCKET_SESSION_CREATE;
-            resource = "session creation";
             message = "Too many sessions created from this address. Try again later.";
-            framesBudget = false;
+            rule = Rule.SESSION_CREATE;
         } else {
             Matcher m = SESSION_SCOPED.matcher(path);
             if (!m.matches()) {
@@ -175,9 +207,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
             limit = frameLimit;
             windowMs = frameWindowMs;
             bucket = BUCKET_FRAMES;
-            resource = "frame submission";
             message = "Too many requests for this session. Slow down and retry.";
-            framesBudget = true;
+            rule = Rule.FRAMES;
         }
 
         long now = clock.millis();
@@ -203,20 +234,35 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         if (slot[1] > limit) {
             long retryAfterSec = Math.max(1, (resetMs + 999) / 1000);
-            record(framesBudget, false);
+            record(rule, false);
             response.setHeader("Retry-After", String.valueOf(retryAfterSec));
             FilterRefusal.write(request, response, 429, "RATE_LIMITED", message);
             return;
         }
-        record(framesBudget, true);
+        record(rule, true);
         filterChain.doFilter(request, response);
     }
 
-    private void record(boolean framesBudget, boolean allowed) {
-        if (framesBudget) {
-            counters.recordFrames(allowed);
-        } else {
-            counters.recordSessionCreate(allowed);
+    /**
+     * Which budget a request spends. Named rather than a boolean because there
+     * are three rules now; the old flag meant "is this the session-id budget?",
+     * which stops being readable the moment a rule is keyed by something other
+     * than the session.
+     */
+    private enum Rule {
+        /** {@code POST /api/v1/sessions}, keyed by client IP. */
+        SESSION_CREATE,
+        /** Frame and challenge writes, keyed by session id. */
+        FRAMES,
+        /** Operator routes, keyed by client IP. */
+        OPERATOR_KEY
+    }
+
+    private void record(Rule rule, boolean allowed) {
+        switch (rule) {
+            case SESSION_CREATE -> counters.recordSessionCreate(allowed);
+            case FRAMES -> counters.recordFrames(allowed);
+            case OPERATOR_KEY -> counters.recordOperatorKey(allowed);
         }
     }
 

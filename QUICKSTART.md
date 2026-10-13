@@ -68,11 +68,13 @@ Image size: ~90 MB layers (vs ~294 MB full). Runs as non-root user.
 | `POSTGRES_PASSWORD` | PostgreSQL only | — |
 | `POSTGRES_APP_PASSWORD` | PostgreSQL only | — |
 | `MOSIP_ADMIN_API_KEY` | For config writes | — |
+| `MOSIP_OPERATOR_API_KEY` | For the operator role (min 16 chars, must differ from the admin key) | blank = operator routes refuse everyone |
 | `MOSIP_AUDIT_HMAC_SECRET` | Recommended | — |
 | `MIN_CHALLENGE_WINDOW_MS` | No | 15000 |
 
 Generate keys:
 ```bash
 export MOSIP_ADMIN_API_KEY=$(openssl rand -hex 32)
+export MOSIP_OPERATOR_API_KEY=$(openssl rand -hex 32)
 export MOSIP_AUDIT_HMAC_SECRET=$(openssl rand -hex 32)
 ```

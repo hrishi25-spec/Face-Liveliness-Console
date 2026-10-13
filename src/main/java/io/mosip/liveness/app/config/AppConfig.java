@@ -352,8 +352,11 @@ public class AppConfig {
                         // X-Subject-Ref is the ownership claim for a session-scoped
                         // call (UserSessionGuard); a browser client that creates a
                         // session with a subjectRef must be able to send it.
+                        // X-Operator-API-Key is the smaller role's key, checked by
+                        // OperatorKeyFilter on the operator routes; without it here a
+                        // browser console could not present it at all.
                         .allowedHeaders("Content-Type", "Authorization", "X-Admin-API-Key",
-                                "X-Subject-Ref")
+                                "X-Subject-Ref", "X-Operator-API-Key")
                         // So a console on another dev port can read the limiter's
                         // budget headers (a browser hides unlisted headers).
                         .exposedHeaders("Retry-After", "X-RateLimit-Bucket", "X-RateLimit-Limit",

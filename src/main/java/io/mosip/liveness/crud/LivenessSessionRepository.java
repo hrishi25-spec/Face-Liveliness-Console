@@ -4,12 +4,14 @@ import io.mosip.liveness.models.entity.LivenessSession;
 import io.mosip.liveness.models.enums.SessionStatus;
 import io.mosip.liveness.models.enums.WorkflowType;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,6 +27,36 @@ public interface LivenessSessionRepository extends JpaRepository<LivenessSession
 
     @Query("SELECT COUNT(s) FROM LivenessSession s WHERE s.failureReason LIKE :pattern")
     long countByFailureReasonLike(@Param("pattern") String pattern);
+
+    /**
+     * One page of the session feed the operator reads — newest first, with each
+     * filter applied only when it is present (the caller passes {@code null} to
+     * leave one out, which is what an absent query parameter means).
+     *
+     * <p>The ordering is SQL's, and the page size is {@link Pageable}'s, so the
+     * limit selects the newest rows rather than loading the table and cutting a
+     * window out of it. {@code liveness_sessions} grows one row per verification
+     * and keeps every frame event beside it, so a feed that pulled every row to
+     * return fifty would get slower with every session the deployment has ever
+     * run.</p>
+     *
+     * <p>{@code LIMIT}/{@code OFFSET} from a single-page {@code PageRequest} is
+     * what bounds the result; the method returns a {@link List} rather than a
+     * {@code Page} so no second counting query runs for a feed nobody paginates
+     * beyond the first page.</p>
+     *
+     * @param workflowType optional workflow filter
+     * @param status       optional status filter
+     * @param pageable     the page to return; the caller always asks for the
+     *                     first page, with the request's limit as its size
+     */
+    @Query("SELECT s FROM LivenessSession s "
+            + "WHERE (:workflowType IS NULL OR s.workflowType = :workflowType) "
+            + "AND (:status IS NULL OR s.status = :status) "
+            + "ORDER BY s.createdAt DESC")
+    List<LivenessSession> findRecent(@Param("workflowType") WorkflowType workflowType,
+                                     @Param("status") SessionStatus status,
+                                     Pageable pageable);
 
     /**
      * Row lock held for the duration of one frame/challenge decision

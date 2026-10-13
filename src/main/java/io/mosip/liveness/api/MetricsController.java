@@ -75,6 +75,7 @@ public class MetricsController {
                 .rateLimitedRequests((int) limiter.rejected())
                 .rateLimitedSessionCreate((int) limiter.sessionCreateRejected())
                 .rateLimitedFrames((int) limiter.framesRejected())
+                .rateLimitedOperatorKey((int) limiter.operatorKeyRejected())
                 .rateLimitRejectionRate(round4(limiter.rejectionRate()))
                 .build();
     }

@@ -71,11 +71,16 @@ class EnvironmentVariableInventoryTest {
      * secret in its own right. It is a separate entry rather than a rename
      * because {@code POSTGRES_PASSWORD} is still read — as the fallback for a
      * deployment given a single credential pair.</p>
+     *
+     * <p>{@code MOSIP_OPERATOR_API_KEY} is a key like the admin one, just for the
+     * smaller role: whoever holds it can drive the operator surface. It is marked
+     * here for the same reason — a copied template must not carry a value.</p>
      */
     private static final Set<String> SECRETS = Set.of(
             "POSTGRES_PASSWORD",
             "POSTGRES_APP_PASSWORD",
             "MOSIP_ADMIN_API_KEY",
+            "MOSIP_OPERATOR_API_KEY",
             "MOSIP_AUDIT_HMAC_SECRET",
             "MOSIP_AUDIT_HMAC_PREVIOUS_SECRET");
 

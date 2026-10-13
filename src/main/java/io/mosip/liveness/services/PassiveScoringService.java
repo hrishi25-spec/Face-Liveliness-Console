@@ -81,6 +81,8 @@ public class PassiveScoringService {
     private final String modelPath;
     /** Applied to the model's live-class probability; 1 means raw confidence. */
     private final double scoreTemperature;
+    /** Threads one ONNX inference may use; 0 derives it from the core count. */
+    private final int onnxIntraOpThreads;
 
     /** The resolved backend scorer; null when the heuristic is selected. */
     private volatile LivenessBackend model;
@@ -95,13 +97,26 @@ public class PassiveScoringService {
                                  @Value("${mosip.liveness.backend:auto}") String mode,
                                  @Value("${mosip.liveness.model-path:}") String modelPath,
                                  @Value("${mosip.liveness.score-temperature:" + DEFAULT_SCORE_TEMPERATURE + "}")
-                                 double scoreTemperature) {
+                                 double scoreTemperature,
+                                 @Value("${mosip.liveness.onnx-intra-op-threads:0}")
+                                 int onnxIntraOpThreads) {
         this.heuristicScorer = heuristicScorer;
         this.requestedMode = mode;
         this.selection = LivenessBackendSelection.parse(mode);  // unknown value fails at bean creation
         this.modelPath = modelPath;
         this.scoreTemperature = Double.isFinite(scoreTemperature) && scoreTemperature >= 1.0
                 ? scoreTemperature : DEFAULT_SCORE_TEMPERATURE;
+        // 0 means "derive it": the backend then uses max(1, cores/2), which is
+        // one thread on the 2-core target. A positive value is passed through
+        // and re-validated by the backend. A negative value is refused here:
+        // treating it as "derive" would look like a deliberate setting while
+        // doing something else, and a non-integer never gets this far (Spring's
+        // binding stops the boot first).
+        if (onnxIntraOpThreads < 0) {
+            throw new IllegalArgumentException("mosip.liveness.onnx-intra-op-threads must be 0 "
+                    + "(derive from the core count) or a positive integer, was " + onnxIntraOpThreads);
+        }
+        this.onnxIntraOpThreads = onnxIntraOpThreads;
         // Deliberately loads nothing here: bean creation must stay cheap,
         // and bean order is not guaranteed, so a constructor load would
         // also race the AppConfig warm-up. First use pays instead.
@@ -114,7 +129,7 @@ public class PassiveScoringService {
      */
     public PassiveScoringService(LivenessEngineService heuristicScorer,
                                  String mode, String modelPath) {
-        this(heuristicScorer, mode, modelPath, DEFAULT_SCORE_TEMPERATURE);
+        this(heuristicScorer, mode, modelPath, DEFAULT_SCORE_TEMPERATURE, 0);
     }
 
     /**
@@ -235,6 +250,10 @@ public class PassiveScoringService {
             // built from `selection` below are unaffected by this option.
             options.put(OnnxMiniFasNetBackend.OPTION_TEMPERATURE,
                     String.valueOf(scoreTemperature));
+            if (onnxIntraOpThreads > 0) {
+                options.put(OnnxMiniFasNetBackend.OPTION_INTRA_OP_THREADS,
+                        String.valueOf(onnxIntraOpThreads));
+            }
             backend.initialize(options);
             return backend;
         } catch (LivenessException e) {

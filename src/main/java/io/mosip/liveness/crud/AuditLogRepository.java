@@ -4,8 +4,11 @@ import io.mosip.liveness.models.entity.AuditLog;
 import io.mosip.liveness.models.enums.WorkflowType;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,6 +40,32 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
      */
     List<AuditLog> findByEventTypeAndWorkflowTypeAndSessionIsNullOrderByCreatedAtDesc(
             String eventType, WorkflowType workflowType, Pageable pageable);
+
+    /**
+     * The rejection events for the operator feed: the named event types only,
+     * newest first, bounded by the page size.
+     *
+     * <p>Narrowed in SQL rather than in the caller, for the same reason as the
+     * config feed above — this table grows one row per frame decision, so
+     * filtering after the fact would read the whole pipeline history to answer a
+     * question about the last fifty rejections. The {@code IN} covers both
+     * rejections under one ordering, so {@code PAD_REJECTED} and
+     * {@code CHALLENGE_FAILED} interleave by time instead of arriving as two
+     * lists a reader has to merge.</p>
+     *
+     * <p>Unlike the config feed this is not {@code session IS NULL}: rejection
+     * events always belong to the session that was rejected, and the feed has to
+     * name it so a reader can drill into that session's own trail. The session is
+     * a lazy association, so it is fetched with the row ({@code LEFT JOIN FETCH},
+     * not a second query per event) — one page of the feed stays one query, and a
+     * caller can read the id from a detached entity. {@code LEFT} rather than an
+     * inner join so a row whose session is gone is still reported rather than
+     * silently dropped from the feed.</p>
+     */
+    @Query("SELECT a FROM AuditLog a LEFT JOIN FETCH a.session "
+            + "WHERE a.eventType IN :eventTypes ORDER BY a.createdAt DESC")
+    List<AuditLog> findRecentByEventTypes(@Param("eventTypes") Collection<String> eventTypes,
+                                          Pageable pageable);
 
     /**
      * The newest entry that is part of a hash chain, for linking the next one

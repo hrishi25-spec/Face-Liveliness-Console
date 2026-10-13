@@ -76,6 +76,13 @@ mosip:
     # Admin key required by PUT /api/v1/config/* — fail-closed: when blank,
     # config updates are refused (see README, Security section).
     admin-api-key: ${MOSIP_ADMIN_API_KEY:}
+    # Operator key, presented as X-Operator-API-Key on operator routes
+    # (GET /api/v1/auth/role today). The admin key is accepted there too — a
+    # supervisor can do everything an operator can — so this key grants the
+    # smaller role. Blank closes the operator surface: nobody is answered
+    # OPERATOR, rather than everyone. Minimum 16 characters when set, and it
+    # must differ from the admin key; startup fails on either.
+    operator-api-key: ${MOSIP_OPERATOR_API_KEY:}
     # Secret that keys the audit chain's hashes (HMAC-SHA-256) so an attacker
     # with database write access cannot recompute the chain — the secret lives
     # on the app server, not in the database. Minimum 16 characters; startup
@@ -133,11 +140,27 @@ mosip:
     # the temperature spreads that tail without moving the operating point.
     # 1 = report the raw model confidence, larger = more spread.
     score-temperature: 4.0
+    # Threads one ONNX inference may use. 0/blank derives it from the core
+    # count as max(1, cores/2) — one thread on the 2-core target hardware,
+    # where the other core belongs to the next frame's decode and detection.
+    # Set a positive value only on a wider machine running one capture at a
+    # time. A negative value stops startup with a message naming this key, and
+    # a non-integer stops the boot at Spring's binding — neither silently
+    # derives a default behind the operator's back.
+    onnx-intra-op-threads: 0
     # Single source of truth shared with LivenessConfig and config_policies
     # (V2 migration). Calibrate via GET /api/v1/eval/threshold-sweep — see
     # docs/configuration.md.
     passive-threshold: 0.80
     min-face-quality: 0.50
+    # Long-edge cap applied to every decoded frame before face detection,
+    # quality scoring and PAD (ImageUtils). A cost bound, not a safety bound:
+    # the 6 MB payload, 8192px dimension and 40M-pixel caps are fixed and are
+    # still applied first. 1280 lets a 1080p camera cost what a 640x480 one
+    # does; the console already captures at 640px (CAPTURE_MAX_EDGE in
+    # static/console.js), so this cap only bites for other clients. Values
+    # below 64 are refused at startup rather than clamped.
+    analysis-max-dimension: 1280
     passive-min-frames: 5
     passive-window-frames: 7
     min-challenge-count: 2

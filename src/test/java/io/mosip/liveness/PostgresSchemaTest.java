@@ -23,6 +23,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import jakarta.persistence.EntityManager;
 
@@ -224,6 +225,79 @@ class PostgresSchemaTest {
         AuditChain.Verification verification = AuditChain.verifyChain(chain, rotating);
         assertTrue(verification.intact(), "old and current key hashes must keep the chain intact");
         assertTrue(verification.retiredKeyHashes(), "the old row must be reported as still needed");
+    }
+
+    /**
+     * The operator feeds' queries, on the production database.
+     *
+     * <p>The optional filters ({@code :param IS NULL}), the ordering and the
+     * page limit are the parts of these queries a dialect can disagree about —
+     * an H2 {@code create-drop} run accepts shapes PostgreSQL rejects — so the
+     * two feeds are exercised where the service actually runs, against the
+     * Flyway-built schema rather than one Hibernate invented.</p>
+     */
+    @Test
+    @DisplayName("runs the operator feed queries against PostgreSQL")
+    void operatorFeedQueriesRunOnPostgres() {
+        OffsetDateTime now = OffsetDateTime.now().withNano(0);
+        LivenessSession older = sessions.saveAndFlush(LivenessSession.builder()
+                .workflowType(WorkflowType.RESIDENT)
+                .deviceId("feed-gate")
+                .status(SessionStatus.FAILED)
+                .createdAt(now.minusMinutes(2))
+                .build());
+        LivenessSession newer = sessions.saveAndFlush(LivenessSession.builder()
+                .workflowType(WorkflowType.OPERATOR)
+                .deviceId("feed-gate")
+                .status(SessionStatus.FAILED)
+                .createdAt(now.minusMinutes(1))
+                .build());
+        entityManager.clear();
+
+        // Newest first and bounded, with the status filter present and the
+        // workflow filter absent: the limit has to be the query's, or the page
+        // would be whatever order the table happened to return.
+        List<LivenessSession> newestOnly = sessions.findRecent(null, SessionStatus.FAILED,
+                PageRequest.of(0, 1));
+        assertEquals(1, newestOnly.size(), "the page limit must reach PostgreSQL as a LIMIT");
+        assertEquals(newer.getId(), newestOnly.get(0).getId(), "newest first, in SQL");
+
+        List<LivenessSession> residentFeed = sessions.findRecent(WorkflowType.RESIDENT, null,
+                PageRequest.of(0, 50));
+        assertTrue(residentFeed.stream().map(LivenessSession::getId).toList()
+                        .contains(older.getId()),
+                "the workflow filter is the query's too, and RESIDENT rows must survive it");
+
+        AuditLog pad = auditLogs.saveAndFlush(AuditLog.builder()
+                .session(older)
+                .eventType("PAD_REJECTED")
+                .details(Map.of("attackType", "PRINTED_PHOTO", "stage", "passive"))
+                .createdAt(now.minusMinutes(1))
+                .build());
+        AuditLog failed = auditLogs.saveAndFlush(AuditLog.builder()
+                .session(newer)
+                .eventType("CHALLENGE_FAILED")
+                .details(Map.of("challengeType", "blink", "manual", false))
+                .createdAt(now)
+                .build());
+        entityManager.clear();
+
+        List<AuditLog> events = auditLogs.findRecentByEventTypes(
+                List.of("PAD_REJECTED", "CHALLENGE_FAILED"), PageRequest.of(0, 50));
+        assertEquals(List.of(failed.getId(), pad.getId()),
+                events.stream().map(AuditLog::getId).toList(),
+                "both rejection types, newest first, in one query");
+        assertEquals(newer.getId(), events.get(0).getSession().getId(),
+                "the rejected session comes with the row — the join fetch must not need a second query");
+        assertEquals(1, auditLogs.findRecentByEventTypes(
+                List.of("PAD_REJECTED", "CHALLENGE_FAILED"), PageRequest.of(0, 1)).size(),
+                "the rejection feed's page limit is PostgreSQL's LIMIT as well");
+
+        // Nothing is removed afterwards, on purpose: audit_logs is append-only in
+        // the migrated schema (the trigger refuses DELETE), and the rows written
+        // here are the only ones carrying these two event types, so they cannot
+        // disturb the other tests in this class — which is why they leave theirs
+        // behind too.
     }
 
     private AuditLog appendAudit(AuditChainKey key, String previousHash,

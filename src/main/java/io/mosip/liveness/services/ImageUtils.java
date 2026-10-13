@@ -8,6 +8,8 @@ import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.CascadeClassifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -40,8 +42,49 @@ public class ImageUtils {
     /** Hard cap on total pixels (cols*rows) for the same reason. */
     static final long MAX_FRAME_PIXELS = 40_000_000L;
     /** Frames larger than this are downscaled before analysis so a 1080p/4K
-     *  camera costs the same CPU as a 640x480 one (low-end devices). */
+     *  camera costs the same CPU as a 640x480 one (low-end devices).
+     *
+     *  <p>This is the <b>default</b> of {@code mosip.liveness.analysis-max-dimension};
+     *  the cap in force is the instance field {@link #analysisMaxDimension}. The
+     *  value is a cost bound, not a safety bound — the payload, dimension and
+     *  pixel caps above stay fixed and are applied before it.</p> */
     static final int ANALYSIS_MAX_DIMENSION = 1280;
+
+    /** Lowest accepted configured cap: below this the cascade's own 60x60
+     *  minimum face size can no longer be met reliably, so a smaller value
+     *  would quietly disable detection instead of saving CPU. */
+    static final int MIN_ANALYSIS_MAX_DIMENSION = 64;
+
+    /**
+     * Long-edge cap in force for this instance. Applied to every decoded frame
+     * inside {@link #decodeBase64Frame(String)} — after the payload, dimension
+     * and pixel caps have accepted the frame, and before the caller runs face
+     * detection, quality scoring or PAD, so no analysis ever sees more pixels
+     * than this.
+     */
+    private final int analysisMaxDimension;
+
+    /**
+     * Spring wiring: the analysis cap is configurable because it is a CPU/bytes
+     * trade, not a policy decision. A value below
+     * {@link #MIN_ANALYSIS_MAX_DIMENSION} is a configuration error rather than a
+     * silent clamp — clamping would look like the setting took effect while
+     * analysis quietly stopped finding faces.
+     */
+    @Autowired
+    public ImageUtils(@Value("${mosip.liveness.analysis-max-dimension:" + ANALYSIS_MAX_DIMENSION + "}")
+                      int analysisMaxDimension) {
+        if (analysisMaxDimension < MIN_ANALYSIS_MAX_DIMENSION) {
+            throw new IllegalArgumentException("mosip.liveness.analysis-max-dimension must be at least "
+                    + MIN_ANALYSIS_MAX_DIMENSION + ", was " + analysisMaxDimension);
+        }
+        this.analysisMaxDimension = analysisMaxDimension;
+    }
+
+    /** Direct construction (tests, eval tools): the default cap. */
+    public ImageUtils() {
+        this(ANALYSIS_MAX_DIMENSION);
+    }
 
     // Lazy-load cascades so Mockito can proxy this class without triggering native lib loading
     private volatile CascadeClassifier faceCascade;
@@ -159,8 +202,12 @@ public class ImageUtils {
                 throw new InvalidFrameError("Frame payload exceeds " + MAX_FRAME_BYTES + " bytes");
             }
             MatOfByte matOfByte = new MatOfByte(raw);
-            Mat image = Imgcodecs.imdecode(matOfByte, Imgcodecs.IMREAD_COLOR);
-            matOfByte.release();
+            Mat image;
+            try {
+                image = Imgcodecs.imdecode(matOfByte, Imgcodecs.IMREAD_COLOR);
+            } finally {
+                matOfByte.release();       // even an undecodable payload holds a native buffer
+            }
             if (image.empty()) {
                 image.release();
                 throw new InvalidFrameError("Frame could not be decoded as an image");
@@ -181,17 +228,22 @@ public class ImageUtils {
     /**
      * Bound the CPU cost of face detection / quality scoring: Haar cascade and
      * Laplacian work scale with pixel count, so a 4K frame would cost ~9x a
-     * 720p one. Frames above {@link #ANALYSIS_MAX_DIMENSION} are scaled down
+     * 720p one. Frames above {@link #analysisMaxDimension} are scaled down
      * (INTER_AREA, quality-preserving) so every input resolution analyses at
-     * the same cost. Small frames (the console's 640x480) pass through
-     * untouched.
+     * the same cost. Small frames (the console's 640x480, and anything the
+     * client-side capture cap has already shrunk) pass through untouched.
+     *
+     * <p>The original JPEG decode cannot be avoided by this cap — pixels are
+     * needed before any resize — so a client that sends smaller frames saves
+     * the decode as well; this cap only bounds what every <em>later</em> stage
+     * pays.</p>
      */
     private Mat downscaleForAnalysis(Mat image) {
         int maxSide = Math.max(image.cols(), image.rows());
-        if (maxSide <= ANALYSIS_MAX_DIMENSION) {
+        if (maxSide <= analysisMaxDimension) {
             return image;
         }
-        double scale = (double) ANALYSIS_MAX_DIMENSION / maxSide;
+        double scale = (double) analysisMaxDimension / maxSide;
         Size target = new Size(
                 Math.max(1, Math.round(image.cols() * scale)),
                 Math.max(1, Math.round(image.rows() * scale)));
@@ -210,13 +262,21 @@ public class ImageUtils {
         if (cascade == null || cascade.empty()) {
             return new Rect[0];
         }
+        // The cascade itself is loaded once per ImageUtils instance (see
+        // getFaceCascade): constructing one reads and parses the whole XML, which
+        // is far too expensive for a per-frame path. The buffers created here are
+        // per call and released in the finally blocks — MatOfRect *is* a Mat, so
+        // leaving one behind leaks native memory on every frame.
         Mat gray = new Mat();
-        Imgproc.cvtColor(image, gray, Imgproc.COLOR_BGR2GRAY);
         MatOfRect faces = new MatOfRect();
-        cascade.detectMultiScale(gray, faces, 1.1, 5, 0, new Size(60, 60));
-        Rect[] result = faces.toArray();
-        gray.release();
-        return result;
+        try {
+            Imgproc.cvtColor(image, gray, Imgproc.COLOR_BGR2GRAY);
+            cascade.detectMultiScale(gray, faces, 1.1, 5, 0, new Size(60, 60));
+            return faces.toArray();
+        } finally {
+            faces.release();
+            gray.release();
+        }
     }
 
     public Rect[] detectEyes(Mat faceGrayRoi) {
@@ -225,30 +285,41 @@ public class ImageUtils {
             return new Rect[0];
         }
         MatOfRect eyes = new MatOfRect();
-        cascade.detectMultiScale(faceGrayRoi, eyes, 1.1, 8);
-        return eyes.toArray();
+        try {
+            cascade.detectMultiScale(faceGrayRoi, eyes, 1.1, 8);
+            return eyes.toArray();
+        } finally {
+            eyes.release();
+        }
     }
 
     public double sharpnessScore(Mat image) {
         Mat gray = new Mat();
-        Imgproc.cvtColor(image, gray, Imgproc.COLOR_BGR2GRAY);
         Mat laplacian = new Mat();
-        Imgproc.Laplacian(gray, laplacian, CvType.CV_64F);
+        MatOfDouble mean = new MatOfDouble();
         MatOfDouble stddev = new MatOfDouble();
-        Core.meanStdDev(laplacian, new MatOfDouble(), stddev);
-        double variance = stddev.get(0, 0)[0] * stddev.get(0, 0)[0];
-        gray.release();
-        laplacian.release();
-        stddev.release();
-        return Math.max(0.0, Math.min(1.0, variance / 500.0));
+        try {
+            Imgproc.cvtColor(image, gray, Imgproc.COLOR_BGR2GRAY);
+            Imgproc.Laplacian(gray, laplacian, CvType.CV_64F);
+            Core.meanStdDev(laplacian, mean, stddev);   // mean is required by the API, unused here
+            double variance = stddev.get(0, 0)[0] * stddev.get(0, 0)[0];
+            return Math.max(0.0, Math.min(1.0, variance / 500.0));
+        } finally {
+            gray.release();
+            laplacian.release();
+            mean.release();
+            stddev.release();
+        }
     }
 
     public double brightnessScore(Mat image) {
         Mat gray = new Mat();
-        Imgproc.cvtColor(image, gray, Imgproc.COLOR_BGR2GRAY);
-        Scalar mean = Core.mean(gray);
-        double meanVal = mean.val[0];
-        gray.release();
-        return Math.max(0.0, Math.min(1.0, 1.0 - Math.abs(meanVal - 128.0) / 128.0));
+        try {
+            Imgproc.cvtColor(image, gray, Imgproc.COLOR_BGR2GRAY);
+            double meanVal = Core.mean(gray).val[0];
+            return Math.max(0.0, Math.min(1.0, 1.0 - Math.abs(meanVal - 128.0) / 128.0));
+        } finally {
+            gray.release();
+        }
     }
 }

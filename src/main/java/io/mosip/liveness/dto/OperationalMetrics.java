@@ -64,5 +64,6 @@ public class OperationalMetrics {
     private Integer rateLimitedRequests;
     private Integer rateLimitedSessionCreate;
     private Integer rateLimitedFrames;
+    private Integer rateLimitedOperatorKey;
     private Double rateLimitRejectionRate;
 }

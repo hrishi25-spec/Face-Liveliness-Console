@@ -4,11 +4,13 @@ import io.mosip.liveness.core.FaceSignals;
 import io.mosip.liveness.core.Frame;
 import io.mosip.liveness.core.LivenessErrorCode;
 import io.mosip.liveness.core.LivenessException;
+import io.mosip.liveness.core.PadAttackType;
 import io.mosip.liveness.core.PadVerdict;
 import io.mosip.liveness.core.ProbabilityCalibration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfByte;
 import org.opencv.core.Rect;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
@@ -238,5 +240,208 @@ class OnnxMiniFasNetBackendTest {
                 () -> backend.initialize(Map.of(OnnxMiniFasNetBackend.OPTION_TEMPERATURE, "0.5")));
         assertThrows(LivenessException.class,
                 () -> backend.initialize(Map.of(OnnxMiniFasNetBackend.OPTION_TEMPERATURE, "hot")));
+    }
+
+    // ------------------------------------------------------------------
+    // ONNX intra-op threads: a cost knob, never a decision input
+    // ------------------------------------------------------------------
+
+    /** The three SPI answers for one frame, as an exact hex fingerprint. */
+    private static String conversationValues(Map<String, String> options, Frame frame) {
+        OnnxMiniFasNetBackend backend = new OnnxMiniFasNetBackend();
+        backend.initialize(options);
+        try {
+            FaceSignals signals = backend.analyzeFrame(frame);
+            PadVerdict pad = backend.assessPad(frame, signals);
+            return Double.toHexString(signals.qualityScore())
+                    + "|" + Double.toHexString(backend.scorePassiveLiveness(frame, signals))
+                    + "|" + pad.attackDetected() + "/" + pad.attackType()
+                    + "/" + Double.toHexString(pad.confidence());
+        } finally {
+            backend.shutdown();
+        }
+    }
+
+    /**
+     * Configuring the intra-op thread count must not move a single bit: one
+     * thread, the derived default and a wider setting answer identically on both
+     * fixtures. The knob exists because fewer threads measured <em>faster</em> on
+     * a shared CPU (see the performance baseline), not because it is a model
+     * parameter — and a score that shifted with it would be a decision change.
+     */
+    @Test
+    void intraOpThreadCountDoesNotMoveAnyValue() throws Exception {
+        Frame genuine = fixtureFrame("real-face.jpg");
+        Frame attack = fixtureFrame("print-attack.jpg");
+
+        String genuineDefault = conversationValues(Map.of(), genuine);
+        String attackDefault = conversationValues(Map.of(), attack);
+        assertEquals(genuineDefault, conversationValues(
+                        Map.of(OnnxMiniFasNetBackend.OPTION_INTRA_OP_THREADS, "1"), genuine),
+                "one intra-op thread must not move the genuine face's values");
+        assertEquals(attackDefault, conversationValues(
+                        Map.of(OnnxMiniFasNetBackend.OPTION_INTRA_OP_THREADS, "1"), attack),
+                "one intra-op thread must not move the attack fixture's values");
+        assertEquals(genuineDefault, conversationValues(
+                        Map.of(OnnxMiniFasNetBackend.OPTION_INTRA_OP_THREADS, "4"), genuine),
+                "four intra-op threads must not move the genuine face's values");
+        assertEquals(attackDefault, conversationValues(
+                        Map.of(OnnxMiniFasNetBackend.OPTION_INTRA_OP_THREADS, "4"), attack),
+                "four intra-op threads must not move the attack fixture's values");
+    }
+
+    @Test
+    void intraOpThreadsDefaultToTheCoreDerivationAndRejectNonPositiveValues() {
+        int cores = Runtime.getRuntime().availableProcessors();
+        assertEquals(Math.max(1, cores / 2), OnnxMiniFasNetBackend.intraOpThreads(Map.of()));
+        if (cores <= 2) {
+            // The target hardware: one inference thread, so the other core stays
+            // free for decode/detection of the next frame.
+            assertEquals(1, OnnxMiniFasNetBackend.intraOpThreads(Map.of()),
+                    "the 2-core target must run one intra-op thread");
+        }
+        assertEquals(3, OnnxMiniFasNetBackend.intraOpThreads(
+                Map.of(OnnxMiniFasNetBackend.OPTION_INTRA_OP_THREADS, " 3 ")),
+                "an explicit value is honoured, surrounding blanks trimmed");
+        assertThrows(LivenessException.class, () -> OnnxMiniFasNetBackend.intraOpThreads(
+                Map.of(OnnxMiniFasNetBackend.OPTION_INTRA_OP_THREADS, "0")),
+                "0 hands the choice back to ORT and must be refused, not absorbed");
+        assertThrows(LivenessException.class, () -> OnnxMiniFasNetBackend.intraOpThreads(
+                Map.of(OnnxMiniFasNetBackend.OPTION_INTRA_OP_THREADS, "many")));
+    }
+
+    // ------------------------------------------------------------------
+    // Per-frame reuse: the memo must change the cost, never a value
+    // ------------------------------------------------------------------
+
+    /** A committed fixture as an RGB_888 {@link Frame}, straight from the classpath. */
+    private static Frame fixtureFrame(String name) throws Exception {
+        try (InputStream in = OnnxMiniFasNetBackendTest.class.getClassLoader()
+                .getResourceAsStream("fixtures/" + name)) {
+            assertNotNull(in, "fixture " + name + " must be on the test classpath");
+            MatOfByte buf = new MatOfByte(in.readAllBytes());
+            Mat bgr = Imgcodecs.imdecode(buf, Imgcodecs.IMREAD_COLOR);
+            buf.release();
+            assertTrue(!bgr.empty(), "fixture " + name + " must decode as an image");
+            Mat rgb = new Mat();
+            Imgproc.cvtColor(bgr, rgb, Imgproc.COLOR_BGR2RGB);
+            int width = rgb.cols();
+            int height = rgb.rows();
+            byte[] data = new byte[height * width * rgb.channels()];
+            rgb.get(0, 0, data);
+            bgr.release();
+            rgb.release();
+            return Frame.of(data, width, height, Frame.Format.RGB_888, System.currentTimeMillis(), 1);
+        }
+    }
+
+    /**
+     * The memo must not move a single bit. These are the values this backend
+     * produced <b>before</b> it existed, captured on the pre-change code
+     * (2026-10-13) for the genuine-face and print-attack fixtures.
+     *
+     * <p>{@link Double#toHexString} pins every mantissa bit, so this is an
+     * exact-equality test on the crop, the input scaling, the softmax output and
+     * the quality blend — a shared tolerance would hide exactly the drift
+     * (wrong crop, rescaled input, re-ordered softmax) that this change risks.</p>
+     */
+    @Test
+    void memoizedAnalysisReproducesTheExactPreMemoValues() throws Exception {
+        OnnxMiniFasNetBackend backend = new OnnxMiniFasNetBackend();
+        backend.initialize(Map.of());
+        try {
+            Frame genuine = fixtureFrame("real-face.jpg");
+            FaceSignals genuineSignals = backend.analyzeFrame(genuine);
+            assertEquals(1, genuineSignals.faceCount(), "the fixture must contain one detectable face");
+            assertEquals("0x1.db82b901dc375p-1", Double.toHexString(genuineSignals.qualityScore()),
+                    "genuine face quality drifted");
+            assertEquals("0x1.fd6f64eda63ap-1",
+                    Double.toHexString(backend.scorePassiveLiveness(genuine, genuineSignals)),
+                    "genuine live probability drifted");
+            PadVerdict genuinePad = backend.assessPad(genuine, genuineSignals);
+            assertTrue(!genuinePad.attackDetected(), "a genuine face must not become an attack");
+            assertEquals("0x1.fd6f64eda63ap-1", Double.toHexString(genuinePad.confidence()),
+                    "genuine PAD confidence drifted");
+
+            Frame printAttack = fixtureFrame("print-attack.jpg");
+            FaceSignals attackSignals = backend.analyzeFrame(printAttack);
+            assertEquals(1, attackSignals.faceCount(), "the attack fixture keeps one detectable face");
+            assertEquals("0x1.c1dd992d3df9ep-2", Double.toHexString(attackSignals.qualityScore()),
+                    "attack face quality drifted");
+            assertEquals("0x1.1fbc56520293cp-11",
+                    Double.toHexString(backend.scorePassiveLiveness(printAttack, attackSignals)),
+                    "print-attack live probability drifted");
+            PadVerdict attackPad = backend.assessPad(printAttack, attackSignals);
+            assertTrue(attackPad.attackDetected(), "the print attack must still be refused");
+            assertEquals(PadAttackType.SCREEN_REPLAY, attackPad.attackType());
+            assertEquals("0x1.ffb70c86ca4cap-1", Double.toHexString(attackPad.confidence()),
+                    "print-attack PAD confidence drifted");
+        } finally {
+            backend.shutdown();
+        }
+    }
+
+    /**
+     * One frame through the engine's per-frame conversation costs one detection
+     * and one inference — it used to cost three detections (analyzeFrame plus a
+     * detection inside each probability pass) and two inferences.
+     */
+    @Test
+    void oneFrameThroughTheSpiConversationCostsOneDetectionAndOneInference() throws Exception {
+        OnnxMiniFasNetBackend backend = new OnnxMiniFasNetBackend();
+        backend.initialize(Map.of());
+        try {
+            Frame frame = fixtureFrame("real-face.jpg");
+            FaceSignals signals = backend.analyzeFrame(frame);
+            backend.scorePassiveLiveness(frame, signals);
+            backend.assessPad(frame, signals);
+            assertEquals(1, backend.detections(), "one frame must be detected once");
+            assertEquals(1, backend.inferences(), "one frame must be inferred once");
+
+            // A frame that is only analysed must not pay for an inference it
+            // never asked for, and different pixels must not reuse the entry.
+            backend.analyzeFrame(noiseFrame());
+            assertEquals(2, backend.detections(), "a new frame must be detected");
+            assertEquals(1, backend.inferences(), "analyzeFrame alone must not infer");
+
+            // shutdown() drops the memo, so a reload can never serve the old
+            // model's numbers back to a caller.
+            backend.shutdown();
+            backend.initialize(Map.of());
+            backend.analyzeFrame(frame);
+            assertEquals(3, backend.detections(), "a reload must invalidate the memo");
+        } finally {
+            backend.shutdown();
+        }
+    }
+
+    /**
+     * The HTTP path rebuilds the frame for every backend call (fresh object,
+     * fresh timestamp, identical pixels), so the memo must key on content: the
+     * rebuilt frame has to reuse the analysis, and changed pixels must not.
+     */
+    @Test
+    void memoKeysOnPixelContentNotOnTheFrameObject() throws Exception {
+        OnnxMiniFasNetBackend backend = new OnnxMiniFasNetBackend();
+        backend.initialize(Map.of());
+        try {
+            Frame first = fixtureFrame("real-face.jpg");
+            double firstScore = backend.scorePassiveLiveness(first, backend.analyzeFrame(first));
+            int detections = backend.detections();
+            int inferences = backend.inferences();
+
+            Frame rebuilt = fixtureFrame("real-face.jpg");   // same pixels, new object and timestamp
+            double rebuiltScore = backend.scorePassiveLiveness(rebuilt, backend.analyzeFrame(rebuilt));
+            assertEquals(Double.toHexString(firstScore), Double.toHexString(rebuiltScore),
+                    "a rebuilt frame must produce the identical score");
+            assertEquals(detections, backend.detections(), "a rebuilt frame must reuse the detection");
+            assertEquals(inferences, backend.inferences(), "a rebuilt frame must reuse the inference");
+
+            Frame changed = fixtureFrame("print-attack.jpg");
+            backend.analyzeFrame(changed);
+            assertEquals(detections + 1, backend.detections(), "different pixels must be detected afresh");
+        } finally {
+            backend.shutdown();
+        }
     }
 }

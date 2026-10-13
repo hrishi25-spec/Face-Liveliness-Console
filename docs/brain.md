@@ -319,6 +319,84 @@ should keep polling `/challenges/validate` with the same `challengeId` while the
 response is `continue`, and stop the moment it changes — `static/console.js`
 (loaded by `static/index.html`) is a reference implementation of exactly that loop.
 
+### Roles (`GET /api/v1/auth/role`)
+```
+GET /api/v1/auth/role
+  Headers: X-Admin-API-Key: <MOSIP_ADMIN_API_KEY>, X-Operator-API-Key: <MOSIP_OPERATOR_API_KEY>
+  → 200: { "role": "SUPERVISOR" | "OPERATOR" }
+  → 401: { error, message, status, timestamp }   (no key, or a key that matches nothing)
+```
+
+Which role a caller's headers prove, for a console that has to pick its surface.
+The admin key is answered `SUPERVISOR` (a supervisor can do everything an operator
+can) and the operator key `OPERATOR`; both are compared in constant time by
+`OperatorKeyGuard`, and the response is the role name alone — never the key, and
+not a fingerprint of it. The gate is **fail-closed**: blank
+`MOSIP_OPERATOR_API_KEY` means no caller is answered `OPERATOR` (an empty header
+matches nothing), while a blank pair refuses everyone; the admin key still works
+with the operator key unset, so a deployment that never configured one keeps its
+supervisor. `MOSIP_OPERATOR_API_KEY` must be at least 16 characters and differ
+from the admin key, both enforced at startup (`SecurityValidator`).
+
+The route is listed in `RouteInventory.OPERATOR_KEYED` and enforced by
+`OperatorKeyFilter` like every other keyed route, and `RateLimitFilter` meters its
+requests per client IP on the existing per-IP budget (`SESSION_CREATE_LIMIT`), so
+an unauthenticated caller guessing the key is throttled and the refusal is
+counted as `rateLimitedOperatorKey` rather than as a refused session creation.
+The same list, filter and budget apply to the two operator feeds below.
+
+### Operator feeds (`GET /api/v1/sessions`, `GET /api/v1/rejections`)
+```
+GET /api/v1/sessions?workflowType=RESIDENT&status=FAILED&limit=50
+  Headers: X-Operator-API-Key: <MOSIP_OPERATOR_API_KEY>   (X-Admin-API-Key is accepted too)
+  → 200: [ { id, workflowType, deviceId, status, currentStage, retryCount,
+             finalResult, failureReason, createdAt, closedAt }, ... ]
+  → 400: limit outside 1..200, or an unknown workflowType/status
+  → 401: { error, message, status, timestamp }   (no role in the headers)
+
+GET /api/v1/rejections?limit=50
+  → 200: { limit,
+           sessions: [ SessionListItem, ... ],       # status = FAILED, newest first
+           events:   [ { id, eventType, sessionId, details, createdAt }, ... ] }
+```
+
+The two reads the operator surface exists for. Both are newest first and page
+limited, and both sit behind the key gate above — there is no second authentication
+path, and nothing is checked inside the handlers. `limit` is **1..200**; outside it
+the request is `400` rather than silently clamped (a clamped page reads as a short
+result set), and an absent or empty `limit` (`?limit=`) is the default **50**.
+
+On the session feed `workflowType` and `status` are optional: they are applied in
+SQL, together with the page size — `LivenessSessionRepository.findRecent` orders by
+`created_at DESC` and the single-page `PageRequest` becomes its `LIMIT`, so the page
+is the newest matching rows rather than a window cut out of a full table read. A
+blank parameter (`?workflowType=`) means "no filter", which is what a console that
+always renders the field sends; an unknown value is a `400`.
+
+Rows are `SessionListItem` — id, workflow, device, status, stage, retry count, final
+result, failure reason, timestamps — and nothing else: no `subjectRef` (a list is not
+an identity lookup), no frozen policy snapshot, no frame data. `RejectionsController`
+reuses that projection for its failed rows, so the two feeds cannot disagree about
+what a session row exposes.
+
+The rejections feed answers "which sessions failed, and what was rejected inside
+them": the `FAILED` sessions plus the `PAD_REJECTED` and `CHALLENGE_FAILED` audit
+events, each list capped at `limit` on its own (a rejection is often one session
+*and* one or more events, so one shared cap would split arbitrarily between them).
+The event payload is the stored `details` map unchanged — exactly what
+`GET /api/v1/sessions/{id}/audit` already answers for that session, so the feed
+exposes no attack detail the session's own trail does not. `PAD_REJECTED` is one of
+the free-form names the HTTP API writes and is *not* in `AuditEventType`, so the two
+names the feed queries are literals in `RejectionsController.REJECTION_EVENT_TYPES`.
+
+Neither route carries a `{sessionId}`, so neither belongs in
+`SESSION_SCOPED`: an ownership claim cannot guard a list of sessions the caller did
+not create, and the key is the guard instead. `ApiRouteInventoryTest` asserts exactly
+that — the feeds are operator-keyed, are not session-scoped, and creation
+(`POST /api/v1/sessions`) stays open. Like the role probe, they are metered per
+client IP on the session-creation budget, so a console polling them paces itself
+against the same budget a key guesser spends.
+
 ### Configuration
 ```
 GET /api/v1/config/{workflowType}
@@ -347,15 +425,16 @@ PUT /api/v1/config/{workflowType}
 GET /api/v1/metrics
   → OperationalMetrics { totalSessions, passedSessions, failedSessions, activeSessions, passRate, avgPassiveToActiveEscalationRate,
       avgFramesPerSession, avgChallengesPerSession, livenessRetryRate, livenessFailureRate, padRejectionRate,
-      rateLimitAllowedRequests, rateLimitedRequests, rateLimitedSessionCreate, rateLimitedFrames, rateLimitRejectionRate }
+      rateLimitAllowedRequests, rateLimitedRequests, rateLimitedSessionCreate, rateLimitedFrames, rateLimitedOperatorKey,
+      rateLimitRejectionRate }
 ```
 
 The `rateLimit*` fields come from `RateLimitCounters`, **not** from the
 database: they count what the limiter has admitted and refused per rule
-(`session-create` per IP, `frames` per session) since process start, so they
-reset on restart while the session counters do not. `rateLimitRejectionRate` is
-`rejected / (allowed + rejected)` over the two limited routes, and is `0.0`
-(never `NaN`) when there has been no traffic.
+(`session-create` per IP, `frames` per session, `operator-key` per IP) since
+process start, so they reset on restart while the session counters do not.
+`rateLimitRejectionRate` is `rejected / (allowed + rejected)` over the limited
+routes, and is `0.0` (never `NaN`) when there has been no traffic.
 
 ### Threshold Calibration
 ```

@@ -122,10 +122,10 @@ determinism and observed behaviour are measured in
 7. `GET /api/v1/metrics` — anonymized operational metrics (pass rate, escalation
    rate, retry rate, PAD rejection rate, etc.) plus rate-limiter tallies:
    `rateLimitAllowedRequests`, `rateLimitedRequests` and the per-rule split
-   `rateLimitedSessionCreate` / `rateLimitedFrames`, with
-   `rateLimitRejectionRate`. Those four/five come from in-process counters, so
-   they start at zero on restart while the session metrics come from the
-   database.
+   `rateLimitedSessionCreate` / `rateLimitedFrames` /
+   `rateLimitedOperatorKey`, with `rateLimitRejectionRate`. Those come from
+   in-process counters, so they start at zero on restart while the session
+   metrics come from the database.
 
 All decisions are logged to the `audit_logs` table (session created, each
 frame's verdict is in `frame_events`, challenges issued/passed/failed,
@@ -415,6 +415,17 @@ Hardening built into the service (no extra dependencies):
     -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY" \
     -d '{"passiveThreshold": 0.85}'
   ```
+- **Operator key and the role probe** — `GET /api/v1/auth/role` reports which
+  role a key proves, so the console can choose its surface from the service's
+  answer instead of guessing: `X-Admin-API-Key` → `{"role":"SUPERVISOR"}`,
+  `X-Operator-API-Key` matching `MOSIP_OPERATOR_API_KEY` → `{"role":"OPERATOR"}`,
+  anything else → **401**. The two keys are compared in constant time, the
+  comparison **fails closed** (a blank operator key means nobody is ever answered
+  `OPERATOR`, and an empty header never matches one), and the response holds the
+  role and nothing else — no key, not even a fingerprint of one. Key attempts on
+  operator routes spend the existing per-IP rate-limit budget, so guessing is
+  throttled rather than free. See
+  [docs/configuration.md](docs/configuration.md#the-two-api-keys-and-the-roles-they-prove).
 - **Policy edits are audited** — the key alone must not be enough to weaken
   liveness silently. Each successful `PUT` writes a `CONFIG_CHANGED` entry in
   the *same transaction* as the policy update: which workflow, which fields

@@ -20,8 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Flood-protection contract for {@link RateLimitFilter}: limits trip with a
- * 429 + Retry-After, budgets are keyed per client IP (session creation) and
- * per session id (frame work), and everything unscoped passes through.
+ * 429 + Retry-After, budgets are keyed per client IP (session creation and
+ * operator-key attempts) and per session id (frame work), and everything
+ * unscoped passes through.
  */
 class RateLimitFilterTest {
 
@@ -147,11 +148,118 @@ class RateLimitFilterTest {
     // ------------------------------------------------------------------ pass-through
 
     @Test
-    void getRequests_areNeverRateLimited() throws Exception {
+    void ordinaryGetRequests_areNeverRateLimited() throws Exception {
+        // The operator-keyed routes are the GETs with a budget of their own
+        // (below); every other read stays unlimited, so browsing cannot exhaust a
+        // budget. The session *feed* is one of the metered ones now — it lists
+        // other people's sessions and needs a key to reach — while a session's own
+        // read and the aggregate metrics stay open.
         RateLimitFilter filter = filter(1, 1);
         for (int i = 0; i < 5; i++) {
             assertTrue(run(filter, "GET", "/api/v1/metrics", "10.0.0.1").passed());
         }
+        for (int i = 0; i < 5; i++) {
+            assertTrue(run(filter, "GET",
+                    "/api/v1/sessions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "10.0.0.1").passed());
+        }
+        for (int i = 0; i < 5; i++) {
+            assertTrue(run(filter, "GET", "/api/v1/config/audit", "10.0.0.1").passed());
+        }
+    }
+
+    // -------------------------------------------------- operator-key attempts (per IP)
+
+    /** The endpoint an unauthenticated caller guesses keys against. */
+    private static final String ROLE_PROBE = "/api/v1/auth/role";
+
+    @Test
+    void operatorKeyAttempts_tripThePerIpBudget() throws Exception {
+        RateLimitFilter filter = filter(2, 60);
+
+        assertTrue(run(filter, "GET", ROLE_PROBE, "10.0.0.1").passed());
+        assertTrue(run(filter, "GET", ROLE_PROBE, "10.0.0.1").passed());
+
+        Result third = run(filter, "GET", ROLE_PROBE, "10.0.0.1");
+        assertTrue(!third.passed(), "a key guesser must not get unlimited attempts");
+        assertEquals(429, third.response().getStatus());
+        assertTrue(third.response().getContentAsString().contains("RATE_LIMITED"));
+        assertTrue(Integer.parseInt(third.response().getHeader("Retry-After")) >= 1);
+    }
+
+    @Test
+    void operatorKeyBudget_isPerClientIp() throws Exception {
+        RateLimitFilter filter = filter(1, 60);
+
+        assertTrue(run(filter, "GET", ROLE_PROBE, "10.0.0.1").passed());
+        assertEquals(429, run(filter, "GET", ROLE_PROBE, "10.0.0.1").response().getStatus());
+        assertTrue(run(filter, "GET", ROLE_PROBE, "10.0.0.2").passed(),
+                "another address must keep its own attempts, or one flood locks everyone out");
+    }
+
+    @Test
+    void operatorKeyAttempts_publishTheirOwnBucket() throws Exception {
+        RateLimitFilter filter = filter(3, 60);
+
+        Result attempt = run(filter, "GET", ROLE_PROBE, "10.0.0.1");
+        assertEquals(RateLimitFilter.BUCKET_OPERATOR_KEY,
+                attempt.response().getHeader("X-RateLimit-Bucket"));
+        assertEquals("3", attempt.response().getHeader("X-RateLimit-Limit"),
+                "the per-IP limit is the one already configured, not a second knob");
+        assertEquals("2", attempt.response().getHeader("X-RateLimit-Remaining"));
+    }
+
+    /**
+     * The operator feeds are reads, but they are operator-keyed reads: they spend
+     * the same per-IP budget as a key guess, and all three operator routes share
+     * one bucket. Otherwise a guesser could move to the feeds and be answered at
+     * full speed there.
+     */
+    @Test
+    void theOperatorFeeds_shareTheRoleProbeBudget() throws Exception {
+        RateLimitFilter filter = filter(2, 60);
+        String feed = "/api/v1/sessions";
+        String rejections = "/api/v1/rejections";
+
+        assertTrue(run(filter, "GET", feed, "10.0.0.1").passed());
+        assertTrue(run(filter, "GET", rejections, "10.0.0.1").passed());
+
+        Result third = run(filter, "GET", feed, "10.0.0.1");
+        assertEquals(429, third.response().getStatus());
+        assertEquals(RateLimitFilter.BUCKET_OPERATOR_KEY,
+                third.response().getHeader("X-RateLimit-Bucket"));
+        assertTrue(run(filter, "GET", feed, "10.0.0.2").passed(),
+                "the feeds are budgeted per client IP, like the key attempts they are");
+    }
+
+    @Test
+    void operatorKeyAttempts_doNotSpendTheSessionCreateBudget() throws Exception {
+        // Same limit and window, separate windows map entry: a burst of key
+        // guesses must not read as session-creation traffic, and vice versa.
+        RateLimitFilter filter = filter(2, 60);
+
+        assertTrue(run(filter, "GET", ROLE_PROBE, "10.0.0.1").passed());
+        assertTrue(run(filter, "GET", ROLE_PROBE, "10.0.0.1").passed());
+        assertEquals(429, run(filter, "GET", ROLE_PROBE, "10.0.0.1").response().getStatus());
+
+        assertTrue(run(filter, "POST", "/api/v1/sessions", "10.0.0.1").passed(),
+                "creating a session after a failed probe must still work");
+    }
+
+    @Test
+    void operatorKeyAttempts_countInTheirOwnTally() throws Exception {
+        RateLimitFilter filter = filter(1, 60);
+
+        run(filter, "GET", ROLE_PROBE, "10.0.0.1");   // allowed
+        run(filter, "GET", ROLE_PROBE, "10.0.0.1");   // rejected
+
+        RateLimitCounters.Counts counts = counters(filter).snapshot();
+        assertEquals(1, counts.operatorKeyAllowed());
+        assertEquals(1, counts.operatorKeyRejected());
+        assertEquals(1, counts.allowed());
+        assertEquals(1, counts.rejected());
+        assertEquals(0, counts.sessionCreateRejected(),
+                "a refused key attempt is not a refused session creation");
+        assertEquals(RateLimitFilter.BUCKET_OPERATOR_KEY, "operator-key");
     }
 
     @Test

@@ -28,12 +28,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The route surface, written down so it cannot grow silently.
  *
  * <p>Every endpoint this service exposes is either reachable by the frame
- * client or it is an operator route that must refuse a caller without
- * {@code X-Admin-API-Key}. This test enumerates the routes actually declared on
- * the controllers and fails when one of them is not in
- * {@code RouteInventory}'s two lists, so adding an endpoint forces the
- * decision — the same reason {@code scripts/check-project-boundaries.mjs}
- * exists for documentation.</p>
+ * client, an admin route that must refuse a caller without
+ * {@code X-Admin-API-Key}, or an operator route that must refuse a caller whose
+ * headers prove no role. This test enumerates the routes actually declared on
+ * the controllers and fails when one of them is not in {@code RouteInventory},
+ * so adding an endpoint forces the decision — the same reason
+ * {@code scripts/check-project-boundaries.mjs} exists for documentation.</p>
  *
  * <p>The classification is not the whole story for a session-scoped route: those
  * are also only reachable by their owner, and {@code SessionOwnershipFilter}
@@ -68,15 +68,17 @@ class ApiRouteInventoryTest {
         Set<String> discovered = new TreeSet<>(discoverRoutes().keySet());
         Set<String> classified = new TreeSet<>(RouteInventory.CLIENT_FACING);
         classified.addAll(RouteInventory.ADMIN_KEYED);
+        classified.addAll(RouteInventory.OPERATOR_KEYED);
         classified.addAll(RouteInventory.SESSION_SCOPED);
 
         Set<String> unclassified = new TreeSet<>(discovered);
         unclassified.removeAll(classified);
         assertTrue(unclassified.isEmpty(),
                 "New route(s) not classified in RouteInventory: " + unclassified
-                        + "\nAdd each to CLIENT_FACING (reachable by the frame client) or to "
+                        + "\nAdd each to CLIENT_FACING (reachable by the frame client), to "
                         + "ADMIN_KEYED (refused by AdminKeyFilter, metered by RateLimitFilter, "
-                        + "and covered in a *FailClosedTest).");
+                        + "and covered in a *FailClosedTest), or to OPERATOR_KEYED (refused by "
+                        + "OperatorKeyFilter to a caller with no role).");
 
         Set<String> stale = new TreeSet<>(classified);
         stale.removeAll(discovered);
@@ -84,9 +86,19 @@ class ApiRouteInventoryTest {
                 "Classified route(s) no longer declared: " + stale
                         + " — remove them from RouteInventory too, so the list stays the truth.");
 
-        Set<String> both = new TreeSet<>(RouteInventory.CLIENT_FACING);
-        both.retainAll(RouteInventory.ADMIN_KEYED);
-        assertTrue(both.isEmpty(), "A route cannot be both open and keyed: " + both);
+        // A route in two classification sets would be claimed by two filters (or,
+        // worse, by a keyed filter and the open client surface): the admin set is
+        // refused by AdminKeyFilter, the operator set by OperatorKeyFilter, and
+        // CLIENT_FACING by neither, so no route may be in two of them.
+        assertDisjoint(RouteInventory.CLIENT_FACING, RouteInventory.ADMIN_KEYED);
+        assertDisjoint(RouteInventory.CLIENT_FACING, RouteInventory.OPERATOR_KEYED);
+        assertDisjoint(RouteInventory.ADMIN_KEYED, RouteInventory.OPERATOR_KEYED);
+    }
+
+    private static void assertDisjoint(Set<String> one, Set<String> other) {
+        Set<String> both = new TreeSet<>(one);
+        both.retainAll(other);
+        assertTrue(both.isEmpty(), "A route cannot be classified twice: " + both);
     }
 
     /**
@@ -146,6 +158,7 @@ class ApiRouteInventoryTest {
 
         Set<String> others = new TreeSet<>(RouteInventory.CLIENT_FACING);
         others.addAll(RouteInventory.ADMIN_KEYED);
+        others.addAll(RouteInventory.OPERATOR_KEYED);
         others.removeAll(RouteInventory.SESSION_SCOPED);
         for (String route : others) {
             assertNull(RouteInventory.sessionIdIn(verbOf(route), samplePathOf(route)),
@@ -200,6 +213,72 @@ class ApiRouteInventoryTest {
                     "AdminKeyFilter would refuse " + route
                             + " — a client-facing route must never match the guard");
         }
+    }
+
+    /**
+     * The operator gate is the same shape as the admin one, and for the same
+     * reason: the filter guards what the list says, so a list that disagrees with
+     * the matcher is an open route (or a route nobody can reach).
+     */
+    @Test
+    void theGuardMatchesExactlyTheOperatorKeyedRoutes() {
+        for (String route : RouteInventory.OPERATOR_KEYED) {
+            assertTrue(RouteInventory.isOperatorRoute(verbOf(route), samplePathOf(route)),
+                    "OperatorKeyFilter would not refuse " + route
+                            + " — listed as operator-keyed, but not matched");
+        }
+        Set<String> others = new TreeSet<>(RouteInventory.CLIENT_FACING);
+        others.addAll(RouteInventory.ADMIN_KEYED);
+        for (String route : others) {
+            assertFalse(RouteInventory.isOperatorRoute(verbOf(route), samplePathOf(route)),
+                    "OperatorKeyFilter would refuse " + route
+                            + " — only operator-keyed routes carry the operator gate");
+        }
+
+        // And the two keyed gates never claim the same request: a route in both
+        // lists would be decided by whichever filter ran first.
+        for (String route : RouteInventory.OPERATOR_KEYED) {
+            assertFalse(RouteInventory.isAdminRoute(verbOf(route), samplePathOf(route)),
+                    route + " is claimed by admin and operator filters alike");
+        }
+    }
+
+    /**
+     * The shape of the operator gate, not just its agreement with the list. The
+     * role probe is reachable only through the gate, and a browser's preflight
+     * (which cannot carry the custom header) must still reach the CORS processor.
+     */
+    @Test
+    void onlyAnOperatorRouteIsOperatorGuarded() {
+        assertTrue(RouteInventory.isOperatorRoute("GET", "/api/v1/auth/role"));
+        // The operator feeds are gated the same way, and they are collections:
+        // no session id of their own, so they must never be, and never be taken
+        // for, a session-scoped route — a list of other people's sessions is
+        // guarded by the key, not by an ownership claim the caller cannot present.
+        assertTrue(RouteInventory.isOperatorRoute("GET", "/api/v1/sessions"));
+        assertTrue(RouteInventory.isOperatorRoute("GET", "/api/v1/rejections"));
+        assertFalse(RouteInventory.isOperatorRoute("POST", "/api/v1/sessions"),
+                "creating a session is the client's own route and stays open");
+        assertNull(RouteInventory.sessionIdIn("GET", "/api/v1/sessions"));
+        assertNull(RouteInventory.sessionIdIn("GET", "/api/v1/rejections"));
+        assertTrue(RouteInventory.isOperatorRoute("GET", "/api/v1/auth/./role"));
+        assertFalse(RouteInventory.isOperatorRoute("POST", "/api/v1/auth/role"),
+                "the method is part of the route");
+        assertFalse(RouteInventory.isOperatorRoute("OPTIONS", "/api/v1/auth/role"),
+                "a preflight cannot carry the key, so it must reach the CORS processor");
+        assertFalse(RouteInventory.isOperatorRoute("GET", "/api/v1/auth/role/extra"),
+                "a deeper path is not the route above it");
+        assertFalse(RouteInventory.isOperatorRoute("GET", "/api/v1/auth"),
+                "the path prefix alone is not the probe");
+        // A walk out of the auth tree is matched on the path it resolves to, so
+        // it lands somewhere ungated when that path is.
+        assertFalse(RouteInventory.isOperatorRoute("GET", "/api/v1/auth/../metrics"));
+        // …and when it resolves onto a gated route it is gated like any other
+        // request to it: /auth/../sessions is the operator's session feed.
+        assertTrue(RouteInventory.isOperatorRoute("GET", "/api/v1/auth/../sessions"));
+        // …and one that resolves back into the probe is that probe, not a way round it.
+        assertTrue(RouteInventory.isOperatorRoute("GET", "/api/v1/sessions/../auth/role"));
+        assertFalse(RouteInventory.isOperatorRoute(null, null));
     }
 
     @Test
