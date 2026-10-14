@@ -23,17 +23,33 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Find JDK 17+
+# Find JDK 25+
+java_major() {
+  local v
+  v="$("$1" -version 2>&1 | head -1 | sed -E 's/.*"([^"]+)".*/\1')" || return 1
+  case "$v" in
+    1.*) printf '%s' "${v#1.}" | cut -d. -f1 ;;
+    *)   printf '%s' "${v%%.*}" ;;
+  esac
+}
+try_java() {
+  [ -n "$1" ] && [ -x "$1" ] || return 1
+  local major
+  major="$(java_major "$1" 2>/dev/null || true)"
+  [ -n "$major" ] && [ "$major" -ge 25 ] 2>/dev/null || return 1
+  JAVA_BIN="$1"
+}
 find_java() {
-  [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ] && { JAVA_HOME/bin/java -version 2>&1 | grep -q 'version "1[7-9]\.' && echo "$JAVA_HOME/bin/java" && return; }
-  command -v java >/dev/null && java -version 2>&1 | grep -q 'version "1[7-9]\.' && command -v java && return
-  for p in /usr/lib/jvm/*/bin/java /opt/java/openjdk/bin/java /opt/homebrew/opt/openjdk@21/bin/java /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/java; do
-    [ -x "$p" ] && "$p" -version 2>&1 | grep -q 'version "1[7-9]\.' && echo "$p" && return
+  [ -n "${JAVA_HOME:-}" ] && try_java "$JAVA_HOME/bin/java" && echo "$JAVA_BIN" && return
+  p="$(command -v java 2>/dev/null || true)"
+  [ -n "$p" ] && try_java "$p" && echo "$JAVA_BIN" && return
+  for p in /usr/lib/jvm/*/bin/java /opt/java/openjdk/bin/java /opt/homebrew/opt/openjdk@25/bin/java /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/java; do
+    try_java "$p" && echo "$JAVA_BIN" && return
   done
   return 1
 }
 
-JAVA_BIN=$(find_java) || { echo "Need JDK 17+. Install: brew install openjdk@21 / apt install openjdk-21-jdk / winget install EclipseAdoptium.Temurin.21.JDK"; exit 1; }
+JAVA_BIN=$(find_java) || { echo "Need JDK 25+. Install: brew install openjdk@25 / apt install openjdk-25-jdk / winget install EclipseAdoptium.Temurin.25.JDK"; exit 1; }
 
 # Build if needed (uses Maven wrapper)
 JAR="target/pad-liveness-backend-1.0.0-SNAPSHOT.jar"

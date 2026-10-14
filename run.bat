@@ -24,7 +24,7 @@ echo Usage: run.bat [--port N] [--profile dev^|default] [--no-browser]
 exit /b 0
 
 :start
-REM Find JDK 17+
+REM Find JDK 25+
 set "JAVA_BIN="
 if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
 if not defined JAVA_BIN for %%i in (java.exe) do if not "%%~$PATH:i"=="" set "JAVA_BIN=%%~$PATH:i"
@@ -40,7 +40,7 @@ if not defined JAVA_BIN for /d %%d in ("%ProgramFiles%\Java\jdk*") do (
 if not defined JAVA_BIN if exist "C:\openjdk\bin\java.exe" set "JAVA_BIN=C:\openjdk\bin\java.exe"
 
 if not defined JAVA_BIN (
-  echo Need JDK 17+. Install: winget install EclipseAdoptium.Temurin.21.JDK
+  echo Need JDK 25+. Install: winget install EclipseAdoptium.Temurin.25.JDK
   exit /b 1
 )
 
@@ -58,14 +58,14 @@ if not defined JVER (
   echo Could not determine the Java version from "%JAVA_BIN%".
   exit /b 1
 )
-REM Accept any JDK 17 or newer: "21.0.12" -^> 21, legacy "1.8.0_382" -^> 8.
+REM Accept any JDK 25 or newer: "25.0.1" -^> 25, legacy "1.8.0_382" -^> 8.
 set "JMAJOR="
 for /f "tokens=1,2 delims=._" %%a in ("%JVER%") do (
   if "%%a"=="1" ( set "JMAJOR=%%b" ) else ( set "JMAJOR=%%a" )
 )
 if not defined JMAJOR set "JMAJOR=0"
-if %JMAJOR% LSS 17 (
-  echo Java %JVER% is too old - this project needs JDK 17 or newer.
+if %JMAJOR% LSS 25 (
+  echo Java %JVER% is too old - this project needs JDK 25 or newer.
   echo   Found: %JAVA_BIN%
   exit /b 1
 )

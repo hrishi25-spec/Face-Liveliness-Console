@@ -4,7 +4,7 @@
 [MOSIP](https://mosip.io/) Registration Client
 **Artifact:** `io.mosip.liveness:pad-liveness-backend` (Spring Boot fat jar / Docker image)
 **Version:** `${revision}`, `1.0.0-SNAPSHOT` by default; release tags stamp the version
-**Runtime:** Java 17, Spring Boot 3.3.3, native OpenCV, optional ONNX / MediaPipe / TFLite backends
+**Runtime:** Java 25, Spring Boot 3.3.3, native OpenCV, optional ONNX / MediaPipe / TFLite backends (artifact bytecode remains Java 17-compatible for the MOSIP Android host)
 **Default branch:** `development`
 
 This document is a **self-contained product requirements and system reference**: what the

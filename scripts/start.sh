@@ -82,31 +82,31 @@ java_major() {  # $1 = path to java
 try_java() {
   [ -n "$1" ] && [ -x "$1" ] || return 1
   local mj; mj="$(java_major "$1" 2>/dev/null || true)"
-  [ -n "$mj" ] && [ "$mj" -ge 17 ] 2>/dev/null || return 1
+  [ -n "$mj" ] && [ "$mj" -ge 25 ] 2>/dev/null || return 1
   JAVA_BIN="$1"; return 0
 }
 
-info "Looking for a JDK 17 or newer…"
+info "Looking for a JDK 25 or newer…"
 if [ -n "${JAVA_HOME:-}" ]; then try_java "$JAVA_HOME/bin/java" || true; fi
 if [ -z "$JAVA_BIN" ] && [ "$(uname -s)" = "Darwin" ] && [ -x /usr/libexec/java_home ]; then
-  try_java "$(/usr/libexec/java_home -v 17 2>/dev/null || true)/bin/java" || true
+  try_java "$(/usr/libexec/java_home -v 25 2>/dev/null || true)/bin/java" || true
 fi
 if [ -z "$JAVA_BIN" ]; then
   try_java "$(command -v java 2>/dev/null || true)" || true
 fi
 if [ -z "$JAVA_BIN" ]; then
   for c in /usr/lib/jvm/*/bin/java /opt/java/openjdk/bin/java \
-           /opt/homebrew/opt/openjdk@21/bin/java /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/java; do
+           /opt/homebrew/opt/openjdk@25/bin/java /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/java; do
     try_java "$c" || true
     [ -n "$JAVA_BIN" ] && break
   done
 fi
 
-[ -n "$JAVA_BIN" ] || die "No JDK 17+ found.
+[ -n "$JAVA_BIN" ] || die "No JDK 25+ found.
   Install one, then either put 'java' on your PATH or set JAVA_HOME.
-    macOS:   brew install openjdk@21
-    Ubuntu:  sudo apt install openjdk-21-jdk
-    Windows: winget install EclipseAdoptium.Temurin.21.JDK"
+    macOS:   brew install openjdk@25
+    Ubuntu:  sudo apt install openjdk-25-jdk
+    Windows: winget install EclipseAdoptium.Temurin.25.JDK"
 
 export JAVA_HOME="${JAVA_HOME:-$(cd "$(dirname "$JAVA_BIN")/.." && pwd)}"
 ok "JDK $(java_major "$JAVA_BIN") → $JAVA_BIN"

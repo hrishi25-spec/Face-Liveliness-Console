@@ -139,7 +139,8 @@ messages only).
 
 Builds if needed, starts the service, waits until it reports healthy, then opens
 the browser console. Runs on **macOS, Linux and Windows** and needs only a
-**JDK 17+** — Maven is not required, because the bundled Maven wrapper fetches it.
+**JDK 25+** — Maven is not required, because the bundled Maven wrapper fetches it.
+The service artifact stays Java 17 bytecode-compatible for the MOSIP Android host.
 
 ```bash
 ./start.sh                 # macOS / Linux / Git Bash
@@ -164,7 +165,7 @@ start.bat                  rem Windows
 A successful launch looks like:
 
 ```
-✓ JDK 21 → /opt/homebrew/Cellar/openjdk@21/.../bin/java
+✓ JDK 25 → /opt/homebrew/Cellar/openjdk@25/.../bin/java
 ✓ Build complete
 ✓ Port 8000 is free
 ✓ Service is up (started in 5s)
@@ -177,9 +178,9 @@ A successful launch looks like:
 Press `Ctrl+C` (or any key in the Windows window) to stop the service cleanly.
 
 On **Windows** the launcher to use is `start.bat`; the older minimal `run.bat` is
-kept for compatibility only. It needs a stock JDK 17+, and the arrangement CI
+kept for compatibility only. It needs a stock JDK 25+, and the arrangement CI
 tests is an install under `C:\Program Files\Eclipse Adoptium` — what
-`winget install EclipseAdoptium.Temurin.21.JDK` gives you — because that space in
+`winget install EclipseAdoptium.Temurin.25.JDK` gives you — because that space in
 the path is what used to break `start.bat`'s version probe. See
 [Tests and gates](#tests-and-gates) for the gate and how to run it locally.
 
@@ -216,7 +217,7 @@ origin, and `localhost` counts as one.
 
 ### 3. Without Docker — manual quick start (H2)
 
-Requires only **JDK 17+** (verified on JDK 21). No PostgreSQL, no Docker.
+Requires only **JDK 25+**. No PostgreSQL, no Docker.
 
 ```bash
 # Build the executable jar (also runs the full test suite)

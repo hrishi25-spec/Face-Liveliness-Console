@@ -19,7 +19,7 @@ Builds automatically if needed, starts on port 8000, opens browser.
 | CPU | 1 vCPU | 2+ vCPU |
 | RAM | 1 GB | 2 GB |
 | Disk | 500 MB | 1 GB |
-| Java | JDK 17+ | JDK 21 |
+| Java | JDK 25+ | JDK 25 |
 
 ## Profiles
 
@@ -61,7 +61,7 @@ start.bat --help           # show options
 - Use a real **Windows console** (`cmd.exe` or PowerShell). Do not launch these
   with Git Bash or WSL — those do not run `.bat` files the same way, and names
   like `start` clash with built-in commands.
-- Install the **full JDK 17+** (JDK 21 recommended). Do **not** use the slim
+- Install the **full JDK 25+**. Do **not** use the slim
   Twitter-style "vscode-jdk" extensions or WSL-only toolchains; `start.bat` and
   `run.bat` need a stock JDK at `C:\Program Files\Java\...` or
   `C:\Program Files\Eclipse Adoptium\...` to find it and to load the OpenCV

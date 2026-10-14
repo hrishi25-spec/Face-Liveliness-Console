@@ -58,7 +58,7 @@ echo.
 if not exist "target" mkdir "target"
 
 rem ------------------------------------------------------------------ 1. find JDK
-echo [.] Looking for a JDK 17 or newer...
+echo [.] Looking for a JDK 25 or newer...
 if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
 if not defined JAVA_BIN (
   for %%i in (java.exe) do if not "%%~$PATH:i"=="" set "JAVA_BIN=%%~$PATH:i"
@@ -66,8 +66,8 @@ if not defined JAVA_BIN (
 
 if not defined JAVA_BIN (
   echo [X] No Java found on PATH and JAVA_HOME is not set.
-  echo     Install a JDK 17+ then reopen this window:
-  echo       winget install EclipseAdoptium.Temurin.21.JDK
+  echo     Install a JDK 25+ then reopen this window:
+  echo       winget install EclipseAdoptium.Temurin.25.JDK
   exit /b 1
 )
 
@@ -83,8 +83,8 @@ for /f "tokens=1,2 delims=._" %%a in ("!JVER!") do (
   if "%%a"=="1" ( set "JMAJOR=%%b" ) else ( set "JMAJOR=%%a" )
 )
 if not defined JMAJOR set "JMAJOR=0"
-if !JMAJOR! LSS 17 (
-  echo [X] Java !JVER! is too old - this project needs JDK 17 or newer.
+if !JMAJOR! LSS 25 (
+  echo [X] Java !JVER! is too old - this project needs JDK 25 or newer.
   echo     Found: %JAVA_BIN%
   exit /b 1
 )
