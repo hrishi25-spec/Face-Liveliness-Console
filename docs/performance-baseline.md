@@ -574,6 +574,13 @@ Three things that table says: the cap is applied **before** detection and scorin
 resize); and it is a cost bound rather than a free knob, which is why the default
 stays at 1280 and the console captures below it anyway.
 
+Note that the cap rows hold the *payload* fixed at 1280x720 q0.85, so cap 640
+decodes the full 720p JPEG and scales it afterwards. The console's own frame has a
+different pixel history — 640x360 scaled *before* the single q0.70 encode — and the
+same nominal 640 px long edge therefore reads `0.6444` here and `0.8555` in 10.3.
+Both are one frame of one fixture rather than a population claim, and the 10.3 row
+is the one that describes the shipped console path.
+
 ### 10.3 Evidence that no decision moved, and what did
 
 Same fixtures, same requests, decision fields compared before/after
@@ -597,8 +604,11 @@ Same fixtures, same requests, decision fields compared before/after
   at 640x360.
 - **The scores behind them are not, and that is the trade-off.** The genuine
   fixture's passive score reads 0.9495 → 0.8555: still above the 0.80 threshold,
-  but with less margin. The print fixture's *label* moves from the heuristic's
-  `PRINTED_PHOTO` to the model's `SCREEN_REPLAY`, because at 640 px the heuristic
+  but with less margin. (The sweep table above reads a lower `0.6444` at the same
+  nominal 640 px, because that row scales a q0.85 720p payload after decode instead
+  of encoding already-scaled pixels — see the note under 10.2.)
+  The print fixture's *label* moves from the heuristic's `PRINTED_PHOTO` to the
+  model's `SCREEN_REPLAY`, because at 640 px the heuristic
   no longer short-circuits the model pass — visible in the phase table as a
   `paddonx` count that is 0 before and 8 after. `padFlag` stays true either way,
   so the block is unchanged; the APCER-by-type tallies and the audit's

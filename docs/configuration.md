@@ -241,6 +241,212 @@ an active challenge.
 |----------|------|---------|-------------|
 | `mosip.liveness.analysis-max-dimension` (`MOSIP_LIVENESS_ANALYSIS_MAX_DIMENSION`) | int | `1280` | Long-edge cap applied to every decoded frame **before** face detection, quality scoring and PAD (`ImageUtils.decodeBase64Frame` → `downscaleForAnalysis`), so a 1080p camera costs the analysis stages about what a 640×480 one does. A **cost bound, not a safety bound**: the 6 MB payload, 8192 px dimension and 40 M-pixel caps are applied first and are not configurable, and frames at or below the cap are never upscaled. Lowering it trades CPU for the detail detection and PAD see. Values below `64` stop the boot (the cascade's smallest model input is 60 px) instead of being clamped. It is **not score-neutral**: measured on one 720p frame (`docs/performance-baseline.md` §10), cap `1280` scores `0.9495` at `428.7 ms` per frame, cap `640` scores `0.6444` (below the `0.80` threshold, so the frame escalates instead of passing) at `151.4 ms`, and cap `480` finds no face at all. Nothing in the decision path reads this value — the frame's pixels simply change — which is why `1280` stays the default: it only means a 1080p camera costs the analysis stages what a 640×480 one does, and the browser console now captures at 640 px (`CAPTURE_MAX_EDGE` in `static/console.js`) regardless. |
 
+---
+
+## Running on 2 cores / 2 GB (`--lowmem`)
+
+The target registration-client machine has **2 CPU cores, 2 GB of RAM and no
+GPU**, on Windows, macOS or Linux. `./start.sh --lowmem` (or
+`start.bat --lowmem`) turns on the whole recommendation — JVM flags plus the
+`lowmem` Spring profile — and prints the exact command line it used. The same
+state is reachable without the launcher: add the `lowmem` profile
+(`--spring.profiles.active=dev,lowmem`) **and** the JVM flags below, because the
+saving is not expressible in YAML.
+
+Nothing here is applied without the flag. The default launch is the same command
+it was before `--lowmem` existed: no flags, no `lowmem` profile, same defaults.
+
+### Measured effect
+
+Cold boots, five per side, **alternating baseline and tuned** (`A`, `B`, `A`, `B` …)
+so that the shared host's drifting load lands on both sides equally; every boot
+starts with the OpenCV native cache cleared and must report `engine: available`
+before it is counted. Both JVMs are pinned to two cores (`taskset -c 0,1`) to
+match the target. RSS is `VmRSS` from `/proc/<pid>/status` at that moment,
+peak RSS is the JVM's own `VmHWM`, and "spring" is the application's own
+`Started PadLivenessApplication in Ns` line.
+
+| | baseline | `--lowmem` | Δ |
+| --- | --- | --- | --- |
+| boot to `/health`, median (min) | 23.1 s (21.2 s) | **19.0 s (18.0 s)** | **−4.1 s (−17.7 %)** |
+| application startup (spring's line), median | 20.1 s | 17.1 s | −3.0 s (−14.9 %) |
+| RSS at `/health`, median | 314.3 MB | **276.7 MB** | **−37.6 MB (−12.0 %)** |
+| peak RSS (`VmHWM`), median | 314.3 MB | 276.7 MB | −37.6 MB |
+| threads at `/health` | 38 | 31 | −7 |
+
+All five tuned boots beat all five baseline boots on both axes (baseline
+21.2–23.3 s and 304–340 MB; tuned 18.0–21.1 s and 266–281 MB), which is what makes
+a difference this small defensible on a machine that is also running other work. A
+second interleaved run of the same pair, taken earlier in the session while the
+host was busier, agreed: 22.3 s → 19.0 s of boot and 320.6 MB → 274.4 MB of RSS,
+again with every tuned boot beating every baseline boot on both axes.
+
+**Without a trained archive** — the state a `--lowmem` launch is in until the
+training step below is run — the launch still measured **22.3 s → 21.2 s** of boot
+(−1.1 s, −4.9 %) and **319.6 MB → 279.9 MB** of RSS (−39.7 MB, −12.4 %) in its own
+interleaved five-boot A/B, with the same 38 → 31 threads. Training the archive is
+worth a further ~2.2 s of boot on top of that, and nothing else.
+
+### Where the saving comes from
+
+Each flag was then measured **on its own**, in its own interleaved A/B of five
+boots per side, same method:
+
+| change | boot to `/health` | RSS | kept |
+| --- | --- | --- | --- |
+| class-data-sharing archive (`-XX:SharedArchiveFile`) | −2.2 s (−10.4 %) | −11.4 MB | **yes** |
+| `-XX:+UseSerialGC` | −0.9 s (−4.0 %) | **−41.2 MB (−12.9 %)** | **yes** |
+| `-Xmx512m` | 22.2 s → 22.2 s (±0) | **−25.4 MB (−8.2 %)** | **yes** |
+| `springdoc` API docs + Swagger UI off | 22.3 s → 22.2 s (14 paired boots: 6 wins, 5 losses, 3 ties) | 318 → 323 MB | no |
+| `logging.level.root: WARN` + `spring.jpa.show-sql: false` | 22.2 s → 22.4 s | 318.3 → 323.1 MB | no |
+| `server.tomcat.threads.max` 50 → 20 and `spring.datasource.hikari.maximum-pool-size` 5 → 2 | 22.2 s → 22.3 s | 329.3 → 323.3 MB (−1.8 %, inside the sample spread) | no |
+| `-Xss512k` | no boot effect attributable (screened) | 325.4 → 327.9 MB — no saving (screened) | no |
+| `spring.main.lazy-initialization: true` | −1 to −4 s | −36 MB | no — see below |
+
+The kept flags do **not** add up: Serial GC and the heap cap both act on the same
+heap footprint, so the combined RSS saving is smaller than the sum of the parts
+(−78 MB on paper, −37 to −46 MB measured depending on how busy the host was).
+
+Two rows are marked *(screened)*: `-Xss512k` and the Tomcat/Hikari pair were first
+measured as five consecutive cold boots each against a control run the same way
+(their RSS medians 327.9 MB, 295.1 MB and 308.1 MB against 325.4 MB). Both were
+rejected on those numbers and then re-measured interleaved where it would have
+mattered, which is the column above. Screening is enough to reject a change that
+saves nothing or that the sample spread swallows; it is not enough to keep one,
+which is why every kept flag has an interleaved pair.
+
+### The JVM flags
+
+- **`-Xmx512m`** caps the heap at 512 MB — a quarter of the machine — so
+  metaspace (~34 MB measured), the code cache, 31 thread stacks and the OpenCV
+  (~65 MB) and ONNX Runtime natives leave the operating system, and a database
+  running beside the service, the majority of the 2 GB. Live use after a session
+  resolved was 43 MB of the 121 MB the collector had grown to, so the cap is
+  headroom, not a squeeze. At idle it measured −25.4 MB (−8.2 %); its real job is
+  to stop the heap growing into memory the host does not have — a cap only shows
+  up in RSS once the JVM would otherwise have used more, which is why one of the
+  five screened boots saved only 2 MB.
+- **`-XX:+UseSerialGC`** — on two cores the collector competes with the frame
+  pipeline for the same CPUs, and the heap is small, so the serial collector's
+  single-threaded young/mixed collections beat G1's region bookkeeping and
+  concurrent marking threads. Measured: **−41.2 MB of RSS (−12.9 %)** and seven
+  fewer threads (38 → 31), which is the collector's own thread pool. Note this is
+  the collector the JVM picks by itself on a *one*-core machine; at two cores it
+  defaults to G1, which is the wrong trade when RAM, not throughput, is the
+  constraint.
+- **class-data sharing (`-XX:SharedArchiveFile=target/lowmem-cds.jsa`)** — the
+  service loads thousands of classes from its fat jar on every boot; the archive
+  lets the JVM map parsed, verified class metadata instead of re-parsing it.
+  Measured: **−2.2 s (−10.4 %)** of boot and −11.4 MB of RSS. It has to be
+  **trained once**, because it is tied to the exact jar it was trained on (the JVM
+  compares the jar's size and mtime — a rebuild invalidates it) and because the
+  archive is written at JVM *exit*, which the launchers cannot guarantee: `start.sh`
+  stops the service with a 4-second grace and `start.bat` uses `taskkill /F`, and
+  both truncate the dump. So the launchers only ever *use* it — `start.sh` when the
+  archive is newer than the jar, `start.bat` when it exists, having dropped it as
+  it rebuilt — and print whether sharing is active or not. Training is left to
+  this deliberate step:
+
+  ```bash
+  # once, on the machine (and with the JDK) that will run the service, after its
+  # last build; the archive lands next to the jar it describes
+  java -Xmx512m -XX:+UseSerialGC -XX:ArchiveClassesAtExit=target/lowmem-cds.jsa \
+    -jar target/pad-liveness-backend-1.0.0-SNAPSHOT.jar --spring.profiles.active=dev
+  # wait for http://localhost:8000/health, then stop it with Ctrl+C — a hard kill
+  # writes no archive
+  ./start.sh --no-build --lowmem      # now reports: class-data sharing: active
+  ```
+
+  **What the training costs, measured:** on this host the whole run took about
+  five minutes — 33 s to reach `/health` and then ~4.4 minutes writing the 68 MB
+  archive, during which the JVM does not exit (the script above waits for it; a
+  launcher that stops the service after four seconds would truncate the dump,
+  which is why the launchers do not try). The archive is written read-only
+  (`0444`). The trade is therefore one-off against every boot: **~5 minutes once
+  against 2.2 s per start**, which is worth it for a deployment that restarts the
+  service — or for an image that can bake the archive in at build time — and not
+  worth it for a single run.
+
+  It lives under `target/` as a build artifact and is never committed, and it is
+  platform-specific (a Windows archive is not valid on Linux). Pointing
+  `-XX:SharedArchiveFile` at a missing or stale archive is a **warning, not a boot
+  failure** — verified: the JVM logs `[warning][cds,dynamic] Unable to use shared
+  archive` and starts without sharing — so a jar rebuilt after training can never
+  fail to boot because of it, it just loses the saving until retrained.
+
+For a deployment that does not use the launchers — a container image, systemd
+unit or Kubernetes manifest — set the same three flags through the JVM options
+your platform already exposes (for example
+`JAVA_TOOL_OPTIONS="-Xmx512m -XX:+UseSerialGC -XX:SharedArchiveFile=/app/lowmem-cds.jsa"`)
+and add `lowmem` to the active profiles. A container image is the best place to
+train the archive: build it in a layer with the command above and have the
+service start before that layer's image stops being writable, or bake the archive
+in at build time — the runtime filesystem is usually read-only.
+
+### The `lowmem` profile
+
+`application-lowmem.yml` is where a *property* would go, and after measurement it
+sets none: every Spring-side candidate either changed nothing measurable (the
+Swagger/OpenAPI surface, Tomcat's thread ceiling, the Hikari pool, quieter
+logging) or bought its boot-time win by deferring work. The file ships as the
+extension point with those findings written down in it, so the next person to
+propose a candidate can see what was already measured — and a deployment that
+names profiles instead of flags can activate the mode without a nonexistent
+profile.
+
+**Lazy initialization is the one candidate that must not be used for this,**
+even though it is the fastest. With `spring.main.lazy-initialization=true` the
+boot no longer includes the dispatcher servlet, the entity manager or the schema
+step; they run on the first request that needs them (visible in the log: the
+`Initializing Spring DispatcherServlet` line moves to the first request's thread).
+On a fresh database the service would therefore answer `/health` before a single
+Flyway migration had run, and a schema or configuration error would surface as a
+failed first frame instead of a failed boot. That is a behaviour change, not a
+memory saving, so it is out — along with anything else that trades a startup
+check for a runtime one. The OpenCV warm-up is unaffected either way: it is
+started before the Spring context exists (`PadLivenessApplication`), which is why
+`/health` keeps reporting `engine: available` in every configuration measured
+here.
+
+### What does not change
+
+Frames were pushed through both launches — the same fixture, one session each and
+up to 12 submissions in it, both JVMs pinned to two cores; the run stops when the
+session resolves, which is frame 5 — and the decision sequence is identical: four
+`retry_passive` frames and then `proceed`, with the same
+`faceDetected=true`, `padFlag=false`, `padAttackType=null`,
+`livenessScore=0.9139281719741627` and `faceQuality=0.8095082759857177` on every
+frame, and the same session summary (`PASSED`, `finalResult=true`, 5 frames
+evaluated). The heap stayed far under the 512 MB cap: serial GC's whole generation
+set was 121 MB (37.5 MB young + 83 MB tenured, 43 MB of it live) with a 33.7 MB
+metaspace, against 107.5 MB of G1 heap and **83.6 MB** of metaspace on the
+baseline. That 50 MB of metaspace difference appears with the shared archive
+present and is consistent with shared class metadata being accounted outside the
+Metaspace pool, which would make it part of where the RSS saving comes from — the
+measurement is the numbers above, the attribution is not separately verified. RSS
+with frames processed: 335 MB tuned against 367 MB baseline.
+
+### Reproducing a measurement
+
+Any of the numbers above can be re-taken with the checked-in cold-boot gate, which
+already clears the OpenCV native cache before each boot and refuses a boot whose
+engine is missing:
+
+```bash
+# BOOT_MEDIAN_JAR=full measures the jar the launchers run (the gate's own
+# default is the -Pslim jar); the environment override adds the JVM flags.
+BOOT_MEDIAN_JAR=full BOOT_MEDIAN_PROFILE=dev,lowmem \
+  JAVA_TOOL_OPTIONS="-Xmx512m -XX:+UseSerialGC" ./scripts/boot-median.sh
+```
+
+It reports the median only (`BOOT_MEDIAN_RUNS` sets the count, `BOOT_MEDIAN_MAX_SECONDS`
+the budget) and does not read RSS, and it does not pin cores — verified as written,
+it measured 29.2 s over two boots on this host, which is higher than the tables
+above because the load was shared across four cores and both boots were cold. The
+tables above used a harness that also pinned the JVM to two cores and sampled
+`VmRSS`/`VmHWM` at `/health`, interleaving the two configurations so the host's
+load drift hit both sides.
+
 ## Required environment variables
 
 The application reads several environment variables for configuration. Secret values must be provided via secure mechanisms (e.g., Docker secrets, Kubernetes secrets, CI/CD masked variables) and **never** hard-coded in image or version control.

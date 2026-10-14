@@ -8,6 +8,8 @@
 #   ./start.sh --port 9000     serve on a different port
 #   ./start.sh --no-browser    don't open a browser
 #   ./start.sh --profile prod  run against PostgreSQL instead of H2
+#   ./start.sh --lowmem        2-core / 2 GB tuning: capped heap, Serial GC,
+#                              class-data-sharing archive, 'lowmem' profile
 #
 # Works on macOS, Linux and Windows Git Bash / MSYS2 / Cygwin.
 #
@@ -26,7 +28,9 @@ DO_BUILD=1
 DO_CLEAN=0
 RUN_TESTS=0
 OPEN_BROWSER=1
+LOWMEM=0
 JAR="target/pad-liveness-backend-1.0.0-SNAPSHOT.jar"
+CDS="target/lowmem-cds.jsa"
 LOG="target/mossip-startup.log"
 APP_PID=""
 
@@ -44,7 +48,7 @@ warn() { printf '%s\n' "${YEL}!${OFF} $*"; }
 die()  { printf '%s\n' "${RED}✗ $*${OFF}" >&2; exit 1; }
 
 usage() {
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -57,6 +61,7 @@ while [ $# -gt 0 ]; do
     --rebuild)     DO_BUILD=1; DO_CLEAN=1; RUN_TESTS=1; shift ;;
     --test)        RUN_TESTS=1; shift ;;
     --no-browser)  OPEN_BROWSER=0; shift ;;
+    --lowmem)      LOWMEM=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *)             die "Unknown option: $1 (try --help)" ;;
   esac
@@ -162,10 +167,43 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ------------------------------------------------- 5b. lowmem JVM arguments
+#
+# `--lowmem` exists for the 2-core / 2 GB target: the heap is capped so the
+# JVM cannot grow into the memory the OS, the database and the OpenCV/ONNX
+# natives need, Serial GC keeps the collector's own threads (seven of them, 38
+# -> 31) and its footprint down now that the live set is only a few tens of
+# megabytes, and a class-data-sharing archive skips re-parsing the thousands of
+# classes this service loads on every boot. The Spring side of the same profile lives in
+# application-lowmem.yml; each flag's measured effect is in
+# docs/configuration.md (§ "Running on 2 cores / 2 GB"). Nothing here applies
+# without --lowmem: the default launch is untouched.
+JVM_OPTS=(-Dfile.encoding=UTF-8 -Djava.awt.headless=true)
+PROFILE_ARG="$PROFILE"
+CDS_NOTE=""
+if [ "$LOWMEM" = 1 ]; then
+  PROFILE_ARG="$PROFILE,lowmem"
+  JVM_OPTS+=(-Xmx512m -XX:+UseSerialGC)
+  # The archive is only valid for the exact jar it was trained on (the JVM
+  # checks the jar's size and mtime), and every rebuild rewrites the jar — so
+  # "older than the jar" is exactly the stale case. It is used when valid and
+  # simply left out otherwise: training it *during* a service boot would need
+  # the JVM to be stopped gently enough to write it (this launcher, and
+  # start.bat's taskkill, do not guarantee that), and a boot that silently
+  # regenerates an artifact is worth less than a documented one-time step. The
+  # command that trains it is in docs/configuration.md.
+  if [ -f "$CDS" ] && [ "$CDS" -nt "$JAR" ]; then
+    JVM_OPTS+=("-XX:SharedArchiveFile=$CDS")
+    CDS_NOTE="active"
+  else
+    CDS_NOTE="not trained — see docs/configuration.md"
+  fi
+fi
+
 info "Starting service (logs → $LOG)…"
 START_TS=$(date +%s)
-"$JAVA_BIN" -Dfile.encoding=UTF-8 -Djava.awt.headless=true \
-  -jar "$JAR" --spring.profiles.active="$PROFILE" --server.port="$PORT" \
+"$JAVA_BIN" "${JVM_OPTS[@]}" \
+  -jar "$JAR" --spring.profiles.active="$PROFILE_ARG" --server.port="$PORT" \
   > "$LOG" 2>&1 &
 APP_PID=$!
 
@@ -207,6 +245,11 @@ ok "Service is up (started in $(( $(date +%s) - START_TS ))s)"
 say "  ${B}Console${OFF}      $URL"
 say "  API docs${OFF}     http://localhost:$PORT/swagger-ui/index.html"
 say "  Health${OFF}       http://localhost:$PORT/health"
+if [ "$LOWMEM" = 1 ]; then
+  say "  Lowmem${OFF}       ${JVM_OPTS[*]}"
+  say "  ${DIM}profile $PROFILE_ARG${OFF}"
+  say "  ${DIM}class-data sharing: $CDS_NOTE${OFF}"
+fi
 if [ "$ENGINE" = "available" ]; then
   say "  Engine${OFF}       ${GRN}available${OFF} (OpenCV native library loaded)"
 else

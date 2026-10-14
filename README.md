@@ -156,6 +156,7 @@ start.bat                  rem Windows
 | `--test` | run tests during the build |
 | `--port N` | serve on port N (default 8000) |
 | `--profile NAME` | Spring profile: `dev` (H2, default) or `default` (PostgreSQL) |
+| `--lowmem` | tune for the 2-core / 2 GB target: capped heap, Serial GC, class-data-sharing archive, `lowmem` Spring profile (see [configuration.md](docs/configuration.md)) |
 | `--no-browser` | do not open a browser |
 | `--doctor` | `start.bat` only: report what would block a start — JDK, port and jar, plus the engine: the live `/health` of a service already on the port, or the jar's Windows-native entries when nothing is running. Never builds, starts or stops anything. Exits 1 when something would block a start. |
 | `--help` | show the options and exit |

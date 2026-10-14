@@ -9,6 +9,8 @@ rem    start.bat --port 9000     serve on a different port
 rem    start.bat --no-browser    do not open a browser
 rem    start.bat --doctor        report what would block a start, without starting
 rem    start.bat --profile prod  run against PostgreSQL instead of H2
+rem    start.bat --lowmem        2-core / 2 GB tuning: capped heap, Serial GC,
+rem                              class-data-sharing archive, 'lowmem' profile
 rem ============================================================================
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
@@ -19,8 +21,13 @@ set "DO_BUILD=1"
 set "DO_CLEAN=0"
 set "RUN_TESTS=0"
 set "OPEN_BROWSER=1"
+<<<<<<< Updated upstream
 set "DOCTOR=0"
+=======
+set "LOWMEM=0"
+>>>>>>> Stashed changes
 set "JAR=target\pad-liveness-backend-1.0.0-SNAPSHOT.jar"
+set "CDS=target\lowmem-cds.jsa"
 set "LOG=target\mossip-startup.log"
 set "JAVA_BIN="
 
@@ -47,7 +54,11 @@ if /i "%~1"=="--no-build" ( set "DO_BUILD=0" & shift & goto parse )
 if /i "%~1"=="--rebuild"  ( set "DO_BUILD=1" & set "DO_CLEAN=1" & set "RUN_TESTS=1" & shift & goto parse )
 if /i "%~1"=="--test"     ( set "RUN_TESTS=1" & shift & goto parse )
 if /i "%~1"=="--no-browser" ( set "OPEN_BROWSER=0" & shift & goto parse )
+<<<<<<< Updated upstream
 if /i "%~1"=="--doctor"    ( set "DOCTOR=1" & shift & goto parse )
+=======
+if /i "%~1"=="--lowmem" ( set "LOWMEM=1" & shift & goto parse )
+>>>>>>> Stashed changes
 echo [X] Unknown option: %~1  (try start.bat --help)
 exit /b 2
 :parsed
@@ -153,9 +164,39 @@ if defined PORTBUSY (
 )
 echo [ok] Port %PORT% is free
 
+rem ------------------------------------------------- 5a. lowmem JVM arguments
+rem
+rem --lowmem exists for the 2-core / 2 GB target: the heap is capped so the JVM
+rem cannot grow into the memory the OS, the database and the OpenCV/ONNX natives
+rem need, Serial GC keeps the collector's own threads and footprint down, and a
+rem class-data-sharing archive skips re-parsing the classes this service loads
+rem on every boot. The Spring half of the profile is application-lowmem.yml; each
+rem flag's measured effect is in docs/configuration.md. Without --lowmem none of
+rem this is applied.
+set "JVM_OPTS=-Dfile.encoding=UTF-8 -Djava.awt.headless=true"
+set "PROFILE_ARG=%PROFILE%"
+set "CDS_NOTE=none"
+if "%LOWMEM%"=="1" (
+  set "PROFILE_ARG=%PROFILE%,lowmem"
+  set "JVM_OPTS=!JVM_OPTS! -Xmx512m -XX:+UseSerialGC"
+  rem The archive is only valid for the exact jar it was trained on (the JVM
+  rem checks the jar's size and mtime), so a rebuild invalidates it; training it
+  rem during a service boot would also need a gentle stop this launcher cannot
+  rem guarantee (taskkill /F truncates the dump). It is therefore used when it
+  rem exists and left out otherwise, and the one-time training command is in
+  rem docs/configuration.md.
+  if "%DO_BUILD%"=="1" if exist "%CDS%" del /q "%CDS%" >nul 2>&1
+  if exist "%CDS%" (
+    set "JVM_OPTS=!JVM_OPTS! -XX:SharedArchiveFile=%CDS%"
+    set "CDS_NOTE=active"
+  ) else (
+    set "CDS_NOTE=not trained - see docs/configuration.md"
+  )
+)
+
 rem --------------------------------------------------------------------- 5. run
 echo [.] Starting service ^(log -^> %LOG%^)...
-start "MOSIP Liveness Service" "%JAVA_BIN%" -Dfile.encoding=UTF-8 -Djava.awt.headless=true -jar "%JAR%" --spring.profiles.active=%PROFILE% --server.port=%PORT% --logging.file.name="%LOG%"
+start "MOSIP Liveness Service" "%JAVA_BIN%" !JVM_OPTS! -jar "%JAR%" --spring.profiles.active=!PROFILE_ARG! --server.port=%PORT% --logging.file.name="%LOG%"
 
 set "HAVECURL="
 where curl >nul 2>&1 && set "HAVECURL=1"
@@ -201,6 +242,10 @@ echo [ok] Service is up
 echo    Console      http://localhost:%PORT%/
 echo    API docs     http://localhost:%PORT%/swagger-ui/index.html
 echo    Health       http://localhost:%PORT%/health
+if "%LOWMEM%"=="1" (
+  echo    Lowmem       !JVM_OPTS!
+  echo    Profile      !PROFILE_ARG!   class-data sharing: !CDS_NOTE!
+)
 if "!ENGINE!"=="available" (
   echo    Engine       available ^(OpenCV native library loaded^)
 ) else (
@@ -376,6 +421,7 @@ echo    --rebuild       clean build + full test suite
 echo    --test          run tests during the build
 echo    --port N        serve on port N (default 8000)
 echo    --profile NAME  spring profile: dev (H2, default) or default (PostgreSQL)
+echo    --lowmem        2-core / 2 GB tuning (capped heap, Serial GC, CDS, lowmem profile)
 echo    --no-browser    do not open a browser
 echo    --doctor        report JDK, port, jar and OpenCV engine state, then exit
 echo    --help          show this help

@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased] - 2026-10-11
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+### Added — A low-resource launch (`--lowmem`) for the 2-core / 2 GB target
+
+- `./start.sh --lowmem` / `start.bat --lowmem` start the service the way the
+  target registration-client machine needs it: `-Xmx512m`, `-XX:+UseSerialGC`, a
+  class-data-sharing archive when one has been trained, and the opt-in `lowmem`
+  Spring profile. The launchers print the JVM options and the profile they used,
+  and **nothing changes without the flag** — the default launch is the same
+  command it was before this option existed.
+- **Measured, five cold boots per side, alternating baseline and tuned** so the
+  shared host's load drift hits both (2 pinned cores, OpenCV native cache cleared
+  before every boot, `engine: available` required): boot to `/health` **23.1 s →
+  19.0 s** (−4.1 s, −17.7 %; min 21.2 → 18.0 s) and RSS at `/health` **314.3 MB →
+  276.7 MB** (−37.6 MB, −12.0 %), with threads 38 → 31. Every tuned boot beat
+  every baseline boot on both axes, and a second interleaved run earlier in the
+  session repeated it (22.3 → 19.0 s, 320.6 → 274.4 MB).
+- **Per flag**, each in its own interleaved A/B: class-data sharing **−2.2 s**
+  (−10.4 %) of boot and −11.4 MB; `-XX:+UseSerialGC` **−41.2 MB** (−12.9 %) and
+  seven fewer threads; `-Xmx512m` **−25.4 MB** (−8.2 %) with no boot cost. The kept
+  flags do not add up — Serial GC and the heap cap act on the same heap footprint
+  (−78 MB on paper, −37 to −46 MB measured).
+- **Nothing Spring-side earned a place.** Tomcat's thread ceiling (50 → 20) and
+  the Hikari pool (5 → 2) moved RSS by −1.8 %, inside the sample spread, with no
+  boot change; `-Xss512k` saved nothing; disabling the Swagger/OpenAPI surface was
+  flat over 14 paired boots (SpringDoc builds the document on the first request to
+  `/v3/api-docs`, not during startup); quieter logging was flat too. All five are
+  recorded with their numbers in `application-lowmem.yml`, which therefore sets
+  **no property** — it ships as the documented extension point.
+- **Lazy initialization was the fastest candidate and is rejected on behaviour,
+  not speed**: `spring.main.lazy-initialization=true` moves the dispatcher
+  servlet, the entity manager and the schema step from boot to the first request,
+  so the service would answer `/health` before a migration had run and a schema
+  error would surface as a failed first frame. It is called out in the profile and
+  the docs so nobody re-proposes it as a free win.
+- Class-data sharing ships as a **documented one-time training step**, not an
+  automatic one: the archive is tied to the exact jar and is written at JVM exit,
+  which neither launcher can guarantee (`start.sh` stops with a 4-second grace,
+  `start.bat` uses `taskkill /F`). The launchers use it when it is present and
+  newer than the jar, and say whether sharing is active; a missing or stale archive
+  is a JVM warning, never a boot failure (verified).
+
+>>>>>>> Stashed changes
 ### Changed — A capture budget on the browser console, and a configurable analysis cap
 
 - The console sent the camera's **native** frame: 1280x720 on a webcam that
