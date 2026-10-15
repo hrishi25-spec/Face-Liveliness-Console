@@ -98,7 +98,7 @@ const IGNORED_DIRS = new Set([
   '.gradle', '.dart_tool', '.idea', '.venv', 'venv', 'node_modules',
   'target', 'build', 'dist', 'out', '__pycache__', 'screenshots',
   '.pytest_cache', '.ruff_cache', '.mypy_cache', '.cache', 'htmlcov',
-  'coverage', '.pub-cache', '.terraform',
+  'coverage', '.pub-cache', '.terraform', 'MOSSIP-Vibe-Coded',
 ]);
 
 /**
@@ -229,7 +229,7 @@ function walk(dir, visit, skip = new Set(), depth = 0) {
     if (entry.isSymbolicLink()) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) continue;
+      if (IGNORED_DIRS.has(entry.name) || (entry.name.startsWith('.') && entry.name !== '.')) continue;
       if (skip.has(full)) continue;
       if (depth > 12) continue;
       walk(full, visit, skip, depth + 1);
@@ -294,7 +294,7 @@ function discoverScopes() {
   // is not itself a project and needs no guidance of its own.
   for (const entry of readdirSync(ROOT, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    if (IGNORED_DIRS.has(entry.name) || TOOLING_DIRS.has(entry.name)) continue;
+    if (IGNORED_DIRS.has(entry.name) || TOOLING_DIRS.has(entry.name) || (entry.name.startsWith('.') && entry.name !== '.')) continue;
     const dir = join(ROOT, entry.name);
     const nested = new Set([...guidanceDirs].filter((d) => d !== dir));
     const hasOwnSources = findSourceExtension(dir, nested).size > 0;
@@ -304,7 +304,8 @@ function discoverScopes() {
 
   for (const dir of guidanceDirs) {
     if (scopeDirs.has(dir)) continue;
-    scopeDirs.set(dir, { name: relative(ROOT, dir) || '.', kind: detectKind(dir) });
+    const name = (relative(ROOT, dir) || '.').replace(/\\/g, '/');
+    scopeDirs.set(dir, { name, kind: detectKind(dir) });
   }
 
   return scopeDirs;
@@ -322,11 +323,12 @@ function hasOwnGuidance(scopeDir, allScopeDirs) {
 
 /** R2: the root map names this path (raw, percent-decoded, or as a link). */
 function mapMentions(mapText, scopeName) {
-  if (scopeName === '.') return true;
+  const normScope = scopeName.replace(/\\/g, '/');
+  if (normScope === '.') return true;
   const decoded = mapText.replace(/%20/g, ' ');
   const needles = [
-    `${scopeName}/`, `${scopeName}\``, `${scopeName})`, `${scopeName} `,
-    `${scopeName}*`, `${scopeName}.`,
+    `${normScope}/`, `${normScope}\``, `${normScope})`, `${normScope} `,
+    `${normScope}*`, `${normScope}.`,
   ];
   return needles.some((needle) => decoded.includes(needle));
 }
@@ -549,7 +551,7 @@ function documentedInScope(scopeDir, allScopeDirs, exempt) {
   walk(scopeDir, (full, name) => {
     if (!DOC_FILES.has(name)) return;
     for (const entry of documentedGateCommands(full)) {
-      found.push({ ...entry, scope: relative(ROOT, dirname(full)) || '.', exempt });
+      found.push({ ...entry, scope: (relative(ROOT, dirname(full)) || '.').replace(/\\/g, '/'), exempt });
     }
   }, nested);
   return found;
@@ -557,10 +559,11 @@ function documentedInScope(scopeDir, allScopeDirs, exempt) {
 
 /** The reason this scope is declared outside CI coverage, if it is. */
 function ciExemptionReason(mapText, scopeName) {
-  if (scopeName === '.') return null;
+  const normScope = scopeName.replace(/\\/g, '/');
+  if (normScope === '.') return null;
   const decoded = mapText.replace(/%20/g, ' ');
   for (const line of decoded.split(/\r?\n/)) {
-    if (!mapMentions(line, scopeName)) continue;
+    if (!mapMentions(line, normScope)) continue;
     const index = line.indexOf(CI_EXEMPT_MARKER);
     if (index === -1) continue;
     return line.slice(index + CI_EXEMPT_MARKER.length).trim() || '(no reason given)';

@@ -485,7 +485,34 @@ PUT /api/v1/config/{workflowType}
 | challengeTypes | string[] | non-empty | ["blink","smile","turn_left","turn_right"] |
 | challengeTimeoutMs | int | ≥ 1000 (floor from `min-challenge-window-ms`, default 15 000) | 15000 |
 | maxRetryCount | int | ≥ 0 | 3 |
-| onRepeatedFailure | string | LOCK\|ESCALATE\|ALLOW_RETRY | LOCK |### Metrics
+| onRepeatedFailure | string | LOCK\|ESCALATE\|ALLOW_RETRY | LOCK |
+
+### User Management (`/api/v1/users`)
+```
+GET /api/v1/users
+  Headers: session cookie (or Authorization: Bearer <token>) for a SUPERVISOR account
+  → 200: [ { username, role, disabled, mustChangePassword, createdAt, passwordChangedAt }, ... ]
+  → 401: no session; 403: session not SUPERVISOR
+
+POST /api/v1/users
+  Headers: session cookie (or Authorization: Bearer <token>) for a SUPERVISOR account
+  Body: { "username": "...", "role": "OPERATOR|SUPERVISOR", "initialPassword": "..." }
+  → 201: UserResponse (account created; owes password change)
+  → 409: username already exists
+
+PUT /api/v1/users/{username}
+  Headers: session cookie (or Authorization: Bearer <token>) for a SUPERVISOR account
+  Body: { "role": "...", "disabled": boolean, "newPassword": "..." }
+  → 200: UserResponse (updated; new password revokes existing sessions)
+  → 404: user not found; 409: cannot disable or demote the last active supervisor
+
+DELETE /api/v1/users/{username}
+  Headers: session cookie (or Authorization: Bearer <token>) for a SUPERVISOR account
+  → 204
+  → 404: user not found; 409: cannot delete the last active supervisor
+```
+
+### Metrics
 ```
 GET /api/v1/metrics
   → OperationalMetrics { totalSessions, passedSessions, failedSessions, activeSessions, passRate, avgPassiveToActiveEscalationRate,
