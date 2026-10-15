@@ -1,5 +1,8 @@
 name: CI
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 # Unit and integration suites run as two parallel jobs. Both jobs share the
 # same checkout/JDK setup; the suite split is a surefire -Dtest filter, so no
 # extra plugins or pom changes are needed.
