@@ -41,11 +41,76 @@
   </div>
 </header>
 
-<!-- Role select: the console opens here and each role owns one view container.
-     Supervisor carries the whole test console; Resident and Operator are
-     placeholders until their capture/auth screens land (one interaction model,
-     three roles — docs/ui-ux-design.md §1). The picker routes the UI only: it is
-     not an authorization boundary, and the service still enforces its own rules. -->
+<!-- Initial Login / Sign In page with options to select from Resident, Operator, and Supervisor -->
+<div id="login-page" class="view">
+  <section>
+    <h2>Sign in — Select User Role</h2>
+    <div class="body">
+      <p class="hint mt0">Select a role to sign in and access your respective console view:</p>
+
+      <div class="role-selector mt12">
+        <button type="button" id="role-select-resident" class="role-selector-btn active">Resident</button>
+        <button type="button" id="role-select-operator" class="role-selector-btn">Operator</button>
+        <button type="button" id="role-select-supervisor" class="role-selector-btn">Supervisor</button>
+      </div>
+
+      <!-- Resident Sign In -->
+      <div id="signin-panel-resident" class="signin-panel">
+        <div class="signin-desc">
+          <strong>Resident Access:</strong> Biometric face verification only. Residents have access strictly to the camera capture frame and verification instructions.
+        </div>
+        <div class="row mt12">
+          <label class="field">Resident Identifier / Subject Ref
+            <input id="input-resident-id" type="text" value="RESIDENT-001" placeholder="e.g. RESIDENT-001">
+          </label>
+        </div>
+        <div class="row mt12">
+          <button id="btn-login-resident" class="primary role-btn">Sign in as Resident</button>
+        </div>
+      </div>
+
+      <!-- Operator Sign In -->
+      <div id="signin-panel-operator" class="signin-panel" hidden>
+        <div class="signin-desc">
+          <strong>Operator Console:</strong> Monitor sessions, view audit trails, inspection logs, and operational metrics in read-only mode. Operators cannot modify system policy or configurations.
+        </div>
+        <div class="row mt12">
+          <label class="field">Operator Username
+            <input id="input-operator-user" type="text" value="operator" placeholder="Username">
+          </label>
+          <label class="field">Password
+            <input id="input-operator-pass" type="password" value="operator1234" placeholder="Password">
+          </label>
+        </div>
+        <div id="status-login-operator" class="cfg-status"></div>
+        <div class="row mt12">
+          <button id="btn-login-operator" class="primary role-btn">Sign in as Operator</button>
+        </div>
+      </div>
+
+      <!-- Supervisor Sign In -->
+      <div id="signin-panel-supervisor" class="signin-panel" hidden>
+        <div class="signin-desc">
+          <strong>Supervisor Administration:</strong> Full administrative privileges with authority to edit policies, manage users, run threshold sweeps, and update configurations.
+        </div>
+        <div class="row mt12">
+          <label class="field">Supervisor Username
+            <input id="input-supervisor-user" type="text" value="supervisor" placeholder="Username">
+          </label>
+          <label class="field">Password
+            <input id="input-supervisor-pass" type="password" value="supervisor123" placeholder="Password">
+          </label>
+        </div>
+        <div id="status-login-supervisor" class="cfg-status"></div>
+        <div class="row mt12">
+          <button id="btn-login-supervisor" class="primary role-btn">Sign in as Supervisor</button>
+        </div>
+      </div>
+
+    </div>
+  </section>
+</div>
+
 <!-- Role-based access is enforced server-side; the UI shows Resident capture or Staff login. --><div id="role-resident" class="view" hidden>
   <section>
     <h2>Resident — face capture</h2>
@@ -80,12 +145,16 @@
         <b>Instructions</b> — the messages this screen renders come from the shared message        keys (the desktop catalogue, byte-for-byte the Flutter
         <code>LivenessView.defaultMessages</code>). Only generic text ever reaches this panel:        scores, PAD detail and model internals stay in the audit trail and diagnostics.
       </p>
-      <dl class="kv" id="res-guide"><dt>—</dt><dd>—</dd></dl>
+      <p class="hint">
+        The page must be opened at <b>http://localhost:8000</b> — browsers only expose
+        the camera on a secure origin, and <code>localhost</code> counts as one.
+      </p>
+      <dl class="kv" id="res-guide" hidden><dt>—</dt><dd>—</dd></dl>
     </div>
   </section>
 </div>
 
-<main id="role-supervisor">
+<main id="role-supervisor" hidden>
   <div>
     <!-- One panel per tab, showing one at a time. The first four are the Operator
          views (Verify, Sessions, Audit, Rejection reasons — the Supervisor is a
@@ -282,6 +351,9 @@
     <section>
       <h2>Config policy</h2>
       <div class="body">
+        <div id="operator-policy-banner" class="warnbox" hidden>
+          <strong>Operator Notice:</strong> You are viewing policy details in read-only mode. You do not have authority to modify or save policies.
+        </div>
         <div class="row">
           <label class="field">Workflow
             <select id="cfg-workflow">

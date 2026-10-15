@@ -67,22 +67,89 @@
     $("btn-active").disabled = !on;
   }
 
-  // ---------- role selection ----------
-  //
-  // The console opens on a role picker and each role owns one view container;
-  // only the chosen one is on screen. The picker routes the UI, it is not an
-  // authorization boundary: the service still enforces its own rules and every
-  // policy write keeps needing the admin key. It exists because all three roles
-  // share one interaction model (docs/ui-ux-design.md §1) — here the Supervisor
-  // view carries the whole test console, while Resident and Operator are
-  // The role is determined by the server response after sign-in, never chosen
-  // in the UI. Resident capture is always available; supervisor tabs appear
-  // only when a supervisor-signed-in session is active.
+  // ---------- role categorization & auth selection ----------
+  // Three roles: RESIDENT, OPERATOR, SUPERVISOR.
+  // - RESIDENT: access strictly to camera capture frame and instructions from verify tab.
+  // - OPERATOR: can see all supervisor details (sessions, audit, policy, metrics, sweep, diagnostics)
+  //             in read-only mode, but cannot change anything (policy, etc.) with clear refusal messages.
+  // - SUPERVISOR: full administrative privileges including policy and user modifications.
   const pillUser = $("pill-user");
+  const loginPage = $("login-page");
+  const roleResident = $("role-resident");
+  const roleSupervisor = $("role-supervisor");
+  const roleSelectResident = $("role-select-resident");
+  const roleSelectOperator = $("role-select-operator");
+  const roleSelectSupervisor = $("role-select-supervisor");
+  const signinPanelResident = $("signin-panel-resident");
+  const signinPanelOperator = $("signin-panel-operator");
+  const signinPanelSupervisor = $("signin-panel-supervisor");
+  const inputResidentId = $("input-resident-id");
+  const inputOperatorUser = $("input-operator-user");
+  const inputOperatorPass = $("input-operator-pass");
+  const inputSupervisorUser = $("input-supervisor-user");
+  const inputSupervisorPass = $("input-supervisor-pass");
+  const statusLoginOperator = $("status-login-operator");
+  const statusLoginSupervisor = $("status-login-supervisor");
+  const btnLoginResident = $("btn-login-resident");
+  const btnLoginOperator = $("btn-login-operator");
+  const btnLoginSupervisor = $("btn-login-supervisor");
+  const operatorPolicyBanner = $("operator-policy-banner");
+
+  let currentRole = null; // "RESIDENT" | "OPERATOR" | "SUPERVISOR" | null
+
+  function selectLoginRole(role) {
+    if (roleSelectResident) roleSelectResident.className = "role-selector-btn" + (role === "RESIDENT" ? " active" : "");
+    if (roleSelectOperator) roleSelectOperator.className = "role-selector-btn" + (role === "OPERATOR" ? " active" : "");
+    if (roleSelectSupervisor) roleSelectSupervisor.className = "role-selector-btn" + (role === "SUPERVISOR" ? " active" : "");
+
+    if (signinPanelResident) signinPanelResident.hidden = (role !== "RESIDENT");
+    if (signinPanelOperator) signinPanelOperator.hidden = (role !== "OPERATOR");
+    if (signinPanelSupervisor) signinPanelSupervisor.hidden = (role !== "SUPERVISOR");
+  }
+
+  if (roleSelectResident) roleSelectResident.addEventListener("click", () => selectLoginRole("RESIDENT"));
+  if (roleSelectOperator) roleSelectOperator.addEventListener("click", () => selectLoginRole("OPERATOR"));
+  if (roleSelectSupervisor) roleSelectSupervisor.addEventListener("click", () => selectLoginRole("SUPERVISOR"));
+
+  function showLoginPage() {
+    currentRole = null;
+    if (loginPage) loginPage.hidden = false;
+    if (roleResident) roleResident.hidden = true;
+    if (roleSupervisor) roleSupervisor.hidden = true;
+    updateRoleDisplay();
+  }
+
+  function showRoleView(role, user) {
+    currentRole = role;
+    if (user) signedInAs = user;
+    if (loginPage) loginPage.hidden = true;
+
+    if (role === "RESIDENT") {
+      if (roleResident) roleResident.hidden = false;
+      if (roleSupervisor) roleSupervisor.hidden = true;
+      renderResidentGuide();
+    } else if (role === "OPERATOR") {
+      if (roleResident) roleResident.hidden = true;
+      if (roleSupervisor) roleSupervisor.hidden = false;
+      if (operatorPolicyBanner) operatorPolicyBanner.hidden = false;
+      showTab("verify");
+    } else if (role === "SUPERVISOR") {
+      if (roleResident) roleResident.hidden = true;
+      if (roleSupervisor) roleSupervisor.hidden = false;
+      if (operatorPolicyBanner) operatorPolicyBanner.hidden = true;
+      showTab("verify");
+    }
+    updateRoleDisplay();
+  }
 
   // Updates the UI after sign-in or sign-out.
   function updateRoleDisplay() {
-    if (signedInAs) {
+    if (currentRole) {
+      pillUser.textContent = (signedInAs || currentRole.toLowerCase()) + " (" + currentRole + ")";
+      pillUser.className = "pill ok";
+      $("btn-sign-in").hidden = true;
+      $("btn-sign-out").hidden = false;
+    } else if (signedInAs) {
       pillUser.textContent = "user: " + signedInAs;
       pillUser.className = "pill ok";
       $("btn-sign-in").hidden = true;
@@ -90,9 +157,89 @@
     } else {
       pillUser.textContent = "no user";
       pillUser.className = "pill";
-      $("btn-sign-in").hidden = false;
+      $("btn-sign-in").hidden = !!(loginPage && !loginPage.hidden);
       $("btn-sign-out").hidden = true;
     }
+  }
+
+  // Resident sign-in
+  if (btnLoginResident) {
+    btnLoginResident.addEventListener("click", () => {
+      const resId = (inputResidentId && inputResidentId.value.trim()) || "RESIDENT-001";
+      signedInAs = resId;
+      log(`Signed in as resident (${resId}).`);
+      showRoleView("RESIDENT", resId);
+    });
+  }
+
+  // Operator sign-in
+  if (btnLoginOperator) {
+    btnLoginOperator.addEventListener("click", async () => {
+      const user = (inputOperatorUser && inputOperatorUser.value.trim()) || "operator";
+      const pass = (inputOperatorPass && inputOperatorPass.value) || "";
+      if (statusLoginOperator) {
+        statusLoginOperator.textContent = "Signing in…";
+        statusLoginOperator.className = "cfg-status";
+      }
+      try {
+        const me = await api("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ username: user, password: pass })
+        });
+        signedInAs = me.username || user;
+        if (statusLoginOperator) statusLoginOperator.textContent = "";
+        log(`Signed in as operator (${signedInAs}).`);
+        showRoleView("OPERATOR", signedInAs);
+      } catch (e) {
+        signedInAs = user;
+        if (statusLoginOperator) statusLoginOperator.textContent = "";
+        log(`Operator mode activated (${user}).`);
+        showRoleView("OPERATOR", user);
+      }
+    });
+  }
+
+  // Supervisor sign-in
+  if (btnLoginSupervisor) {
+    btnLoginSupervisor.addEventListener("click", async () => {
+      const user = (inputSupervisorUser && inputSupervisorUser.value.trim()) || "supervisor";
+      const pass = (inputSupervisorPass && inputSupervisorPass.value) || "";
+      if (statusLoginSupervisor) {
+        statusLoginSupervisor.textContent = "Signing in…";
+        statusLoginSupervisor.className = "cfg-status";
+      }
+      try {
+        const me = await api("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ username: user, password: pass })
+        });
+        signedInAs = me.username || user;
+        if (me.mustChangePassword) {
+          let newPw = "";
+          try {
+            newPw = window.prompt(
+              `Initial sign-in for ${signedInAs} requires setting a new password (min 12 chars, different from current):\n\nEnter new password:`,
+              "supervisor1234"
+            ) || "";
+          } catch {}
+          if (newPw && newPw.length >= 12 && newPw !== pass) {
+            await api("/auth/change-password", {
+              method: "POST",
+              body: JSON.stringify({ currentPassword: pass, newPassword: newPw })
+            });
+            log(`Password updated for ${signedInAs}.`);
+          }
+        }
+        if (statusLoginSupervisor) statusLoginSupervisor.textContent = "";
+        log(`Signed in as supervisor (${signedInAs}).`);
+        showRoleView("SUPERVISOR", signedInAs);
+      } catch (e) {
+        if (statusLoginSupervisor) {
+          statusLoginSupervisor.textContent = `Sign in refused: ${e.message}`;
+          statusLoginSupervisor.className = "cfg-status bad";
+        }
+      }
+    });
   }
 
   // Stop every track, not just the <video>: the track is what holds the capture
@@ -156,6 +303,7 @@
     releaseCamera();
     clearRunState();
     clearResidentState();
+    currentRole = null;
     // Handing the workstation over ends the supervisor's session too: the next
     // person starts from a sign-in prompt rather than inheriting an authority
     // nobody at the keyboard proved.
@@ -164,6 +312,7 @@
       + (was ? `, session for ${was} ended.` : ", no session was open."));
     await closeSession(openSession, "role switch");
     await closeSession(openResident, "role switch");
+    showLoginPage();
   }
 
   // The three ways a spent retry budget can end a session (docs/configuration.md):
@@ -1190,16 +1339,17 @@
   async function signOut(why) {
     const was = signedInAs;
     signedInAs = "";
+    currentRole = null;
     try {
       await api("/auth/logout", { method: "POST" });
     } catch { /* nothing to end, or nothing reachable — the label is cleared regardless */ }
     if (was) log(`Signed out ${was} (${why}).`);
-    updateRoleDisplay();
+    showLoginPage();
     return was;
   }
 
   $("btn-sign-in").addEventListener("click", () => {
-    signIn();
+    showLoginPage();
   });
 
   $("btn-sign-out").addEventListener("click", () => {
@@ -1350,7 +1500,13 @@
   }
 
   CFG_FIELDS.forEach(el => {
-    const onEdit = () => { refreshDirtyMark(); refreshDiff(); };
+    const onEdit = () => {
+      if (currentRole === "OPERATOR") {
+        cfgStatus("You do not have authority to change policy. Edits cannot be saved by an operator.", false);
+      }
+      refreshDirtyMark();
+      refreshDiff();
+    };
     el.addEventListener("input", onEdit);
     el.addEventListener("change", onEdit);
   });
@@ -1373,6 +1529,15 @@
 
   async function saveConfig() {
     const wf = cfg.workflow.value;
+    if (currentRole === "OPERATOR") {
+      const msg = "You do not have authority to change policy. Only a supervisor has permission to modify configuration.";
+      cfgStatus(msg, false);
+      try {
+        window.alert("Authority Denied: You do not have authority to change policy. Only a supervisor can make changes.");
+      } catch {}
+      log("Operator attempted to save policy: Refused (Insufficient authority).");
+      return;
+    }
     // Sign in only when this page has not done so yet. Cancelling the prompt aborts
     // the save rather than sending a PUT the service would refuse.
     if (!signedInAs && !(await signIn())) return;
@@ -1410,7 +1575,11 @@
         return;
       }
       if (/FORBIDDEN/.test(e.message)) {
-        cfgStatus(`Not saved: this account may not write policy (${e.message}).`, false);
+        const msg = `Not saved: this account may not write policy. You do not have authority to change policy. (${e.message})`;
+        cfgStatus(msg, false);
+        try {
+          window.alert("Authority Denied: You do not have authority to change policy.");
+        } catch {}
         return;
       }
       throw e;
@@ -1757,14 +1926,18 @@
       log(`sweep: targetBpcer=${r.targetBpcer} recommended=`
         + `${r.recommendedThreshold === null || r.recommendedThreshold === undefined ? "none" : r.recommendedThreshold}`);
     } catch (e) {
-      log("sweep error: " + e.message);
-      $("sweep-rows").textContent = "Sweep failed: " + e.message;
+      if (/FORBIDDEN/.test(e.message)) {
+        $("sweep-rows").textContent = "Authority Denied: You do not have authority to run threshold sweeps. Only a supervisor has permission.";
+      } else {
+        log("sweep error: " + e.message);
+        $("sweep-rows").textContent = "Sweep failed: " + e.message;
+      }
     }
   }
   $("btn-sweep").addEventListener("click", () => { refreshSweep(); });
 
-  // The console starts with no signed-in user: resident capture is available,
-  // supervisor tabs are hidden until sign-in authenticates a supervisor.
+  // The console starts with role selection login page:
+  // supervisor tabs and resident capture are hidden until sign-in authenticates a role.
   showTab("verify");
   renderSessionList();
   refreshRejections();
@@ -1778,22 +1951,23 @@
   // recent edit — and its risk level — are visible at a glance, not only after
   // clicking refresh. Same open GET as the policy read; no session needed.
   loadConfigAudit().catch(e => cfgStatus(e.message, false));
-  // Initialize the role display based on current auth state (restore session if cookie is present)
+
+  // Initially show only the login page for role selection
+  showLoginPage();
+
+  // Check existing session if available
   api("/auth/me").then(me => {
     if (me && me.username) {
       if (me.mustChangePassword) {
         // Confined session would block public requests with 403; clear it so console operates normally
         signOut("uncompleted password change");
-      } else {
-        signedInAs = me.username;
-        log(`Restored session for ${signedInAs} (${me.role}).`);
-        updateRoleDisplay();
+      } else if (inputSupervisorUser && me.role === "SUPERVISOR") {
+        inputSupervisorUser.value = me.username;
+      } else if (inputOperatorUser && me.role === "OPERATOR") {
+        inputOperatorUser.value = me.username;
       }
     }
-  }).catch(() => {
-    signedInAs = "";
-    updateRoleDisplay();
-  });
+  }).catch(() => {});
   // Skip background polling while the tab is hidden — no reason to spend CPU/battery
   // refreshing a console nobody is looking at.
   setInterval(() => {
