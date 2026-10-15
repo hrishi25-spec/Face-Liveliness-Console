@@ -4,47 +4,414 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.3</version>
+    <relativePath/>
+  </parent>
+
   <groupId>io.mosip.liveness</groupId>
-  <artifactId>face-liveness-engine</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <artifactId>pad-liveness-backend</artifactId>
+  <!-- CI-friendly version: resolves to the <revision> property below
+       unless overridden on the command line (-Drevision=...), which is
+       how the release job stamps the tag's version into the jar. Every
+       other build keeps the snapshot default, so local artifacts and
+       start.sh keep their familiar name. -->
+  <version>${revision}</version>
   <packaging>jar</packaging>
-  <name>MOSIP Face Liveness &amp; PAD Engine (Desktop Java)</name>
-  <description>Offline face liveness + presentation attack detection engine with passive/active stages, pluggable backends, and ISO/IEC 30107 aligned evaluation.</description>
+  <name>MOSIP Face Liveness &amp; PAD Service (FastAPI-style Spring Boot)</name>
+  <description>Face liveness detection and Presentation Attack Detection (PAD) for MOSIP Registration Client workflows: resident registration, operator authentication, and supervisor authentication.</description>
 
   <properties>
-    <maven.compiler.release>17</maven.compiler.release>
+    <java.version>17</java.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <junit.version>5.10.2</junit.version>
+    <!-- Spring Boot 3.3 manages Testcontainers 1.19, whose Docker API client
+         is too old for current Docker daemons. Keep the suite on the latest
+         compatible 1.x line. -->
+    <testcontainers.version>1.21.4</testcontainers.version>
+    <revision>1.0.0-SNAPSHOT</revision>
+    <!-- Desktop (JavaFX) overlay UI. Provided by the MOSIP Registration Client
+         host at runtime — see the javafx-controls dependency below. -->
+    <javafx.version>17.0.10</javafx.version>
   </properties>
 
   <dependencies>
+    <!-- Spring Boot Web (REST API) -->
     <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <version>${junit.version}</version>
-      <scope>test</scope>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
-    <!--
-      Optional runtime for the real PAD backend: drop org.tensorflow:tensorflow-lite
-      (and the MiniFASNet .tflite model) on the classpath to activate
-      io.mosip.liveness.backend.TfLiteMiniFasNetBackend. The core engine has no
-      compile-time dependency on it.
-    -->
+
+    <!-- Spring Boot Data JPA (ORM) -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+
+    <!-- Spring Boot Validation (request DTO validation) -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!-- PostgreSQL driver -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- BCrypt password hashing (at.favre.lib). Chosen over hand-rolled
+         PBKDF2 for the operator account passwords behind POST
+         /api/v1/auth/login:
+           * the hash is self-describing ($2a$12$...), so the cost and the
+             algorithm travel with the stored value and a future rehash can
+             happen at login instead of a flag day;
+           * verification is constant time inside the library, which is the
+             property this service needs and the one easiest to get wrong by
+             hand;
+           * it is memory-hard-ish in the way that matters here — 2^12 cost
+             on the 2-core target is ~300 ms per verification, which is a
+             deliberate ceiling on offline guessing.
+         Zero third-party code beyond at.favre.lib:bytes (a ~20 KB byte-array
+         helper by the same author); nothing else is pulled in. -->
+    <dependency>
+      <groupId>at.favre.lib</groupId>
+      <artifactId>bcrypt</artifactId>
+      <version>0.10.2</version>
+    </dependency>
+
+    <!-- Flyway (DB migrations, replaces Alembic) -->
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+
+    <!-- SpringDoc OpenAPI (Swagger UI, like FastAPI /docs) -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+      <version>2.6.0</version>
+    </dependency>
+
+    <!-- H2 in-memory database (dev profile / zero-dependency local run) -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- OpenCV (headless, for face detection / image processing in services).
+         Scope is compile (not provided) so the native libraries are bundled in
+         the executable jar and loadLocally() works under `java -jar`. -->
     <dependency>
       <groupId>org.openpnp</groupId>
       <artifactId>opencv</artifactId>
       <version>4.9.0-0</version>
+    </dependency>
+
+    <!-- ONNX Runtime: desktop-JVM inference for the MiniFASNet face
+         anti-spoofing model (Apache-2.0). The TFLite runtime is an
+         Android-only AAR (see docs/status-report.md §4), so ONNX Runtime is
+         the offline, cross-platform path for the same weights. -->
+    <dependency>
+      <groupId>com.microsoft.onnxruntime</groupId>
+      <artifactId>onnxruntime</artifactId>
+      <version>1.24.2</version>
+    </dependency>
+
+    <!-- Micrometer (timers for the per-frame pipeline). Version is managed by
+         spring-boot-starter-parent and resolves to the same 1.13.3 already on
+         the classpath transitively as micrometer-observation, so this adds no
+         third-party code that Spring Boot does not already ship. We take only
+         micrometer-core — not spring-boot-starter-actuator — because the service
+         already has its own /api/v1/metrics surface and does not need the
+         actuator endpoint set. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-core</artifactId>
+    </dependency>
+
+    <!-- Lombok (reduce boilerplate) -->
+    <!--
+      Desktop (JavaFX) liveness overlay — LivenessChallengeOverlay.fxml +
+      controller. Scope `provided`: the overlay runs inside the MOSIP
+      Registration Client (a JavaFX application) which supplies the JavaFX
+      runtime; this service never starts a toolkit. Provided keeps JavaFX on
+      the compile/test classpath while staying out of the packaged service.
+    -->
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>${javafx.version}</version>
       <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-fxml</artifactId>
+      <version>${javafx.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
+
+    <!-- Testing -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- Headless JavaFX: the desktop overlay can only be proved to render by
+         actually instantiating it, and neither a build machine nor a CI runner
+         has a display. Monocle is the headless glass platform (a screen with no
+         window system behind it); testfx-core supplies the FX-thread test
+         plumbing (asyncFx + waitFor) that runs each step on the JavaFX
+         Application Thread and reports the failure on the test thread. Both are
+         test-only — like the JavaFX dependencies above, none of this ships in
+         the service jar. -->
+    <dependency>
+      <groupId>org.testfx</groupId>
+      <artifactId>testfx-core</artifactId>
+      <version>4.0.18</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- Monocle is not optional here, and neither is the version: it is the
+         headless glass platform, and it is built against the exact JavaFX it
+         runs on. The jdk-12.0.1+2 build that TestFX's own documentation
+         suggests dies with an AbstractMethodError on Window._updateViewSize as
+         soon as the first window is created, so this tracks javafx.version
+         above (17.0.10). -->
+    <dependency>
+      <groupId>org.testfx</groupId>
+      <artifactId>openjfx-monocle</artifactId>
+      <version>${javafx.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 
   <build>
     <plugins>
       <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+            </exclude>
+            <!-- Provided scope still lands in BOOT-INF/lib — the service
+                 never starts a JavaFX toolkit (the RC host does), so keep
+                 the overlay's compile-time libs out of the runnable jar. -->
+            <exclude>
+              <groupId>org.openjfx</groupId>
+              <artifactId>javafx-base</artifactId>
+            </exclude>
+            <exclude>
+              <groupId>org.openjfx</groupId>
+              <artifactId>javafx-graphics</artifactId>
+            </exclude>
+            <exclude>
+              <groupId>org.openjfx</groupId>
+              <artifactId>javafx-controls</artifactId>
+            </exclude>
+            <exclude>
+              <groupId>org.openjfx</groupId>
+              <artifactId>javafx-fxml</artifactId>
+            </exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.2.5</version>
+        <configuration>
+          <!-- Headless JavaFX for every fork. The overlay smoke test starts the
+               JavaFX toolkit, and a CI runner has no X server, so glass is
+               pinned to Monocle's Headless screen and the rasteriser to
+               software; without these the toolkit start fails on the runner
+               and the smoke test could only ever pass on a developer machine.
+               They are inert for the non-JavaFX tests in the suite. -->
+          <systemPropertyVariables>
+            <glass.platform>Monocle</glass.platform>
+            <monocle.platform>Headless</monocle.platform>
+            <prism.order>sw</prism.order>
+          </systemPropertyVariables>
+        </configuration>
       </plugin>
     </plugins>
   </build>
+
+  <!--
+    Slim jar: same runnable app, minus the natives for platforms it cannot run on.
+
+    Why this exists — `org.openpnp:opencv` (109 MB) ships natives for EIGHT
+    platforms: linux x86_64/x86_32/ARMv7/ARMv8, osx x86_64/ARMv8, windows
+    x86/x64. `com.microsoft.onnxruntime` (41 MB) ships four plus a 54 MB macOS
+    .dSYM debug blob. A Linux x86_64 CI runner and the Docker image need
+    exactly one of each; the other ~250 MB is payload that can never load there.
+
+    The important subtlety — the opencv jar holds the Java bindings AND the
+    natives. Dropping the whole dependency is NOT a slimming trick: Spring then
+    cannot introspect beans whose method signatures mention `Mat` and the app
+    dies at startup with `NoClassDefFoundError: org/opencv/core/Mat` before any
+    request is served. Only the *native* entries are removed; the API classes
+    stay, so the pipeline runs normally and the app is fully functional.
+
+    How — spring-boot's <excludes> only drops whole dependencies and cannot
+    filter *inside* one, so this profile unpacks both jars into
+    target/classes (which repackage embeds verbatim in BOOT-INF/classes) while
+    excluding the originals from BOOT-INF/lib. Net effect is the same layout
+    with the unused platforms removed.
+
+    Result: ~209 MB -> ~120 MB, and the jar boots and runs the real pipeline on
+    linux x86_64. On any other platform the natives are absent, so AppConfig's
+    catch fires and the app degrades exactly as it does in the Alpine image
+    today (nu.pattern ships no musl build, so its glibc .so never loads there
+    either) — it serves the API, config/audit, rate limiting and console, and
+    frame processing reports the documented "OpenCV native library unavailable".
+
+      ./mvnw clean package -DskipTests -Pslim
+
+    pomtail:
+    - `clean` is required. The unpack writes into target/classes, so a slim
+      build followed by a non-slim build would leave a linux-only native in
+      target/classes ahead of the full opencv jar on the classpath, and OpenCV
+      would then fail to load on a macOS/Windows dev machine. Always clean when
+      switching profiles.
+    - <mainClass> is pinned deliberately. With <classifier> set, spring-boot
+      3.3.3's auto-detection writes
+      `Start-Class: org.springframework.boot.loader.launch.JarLauncher`, so the
+      loader launches *itself* and recurses to StackOverflowError before Spring
+      starts. Pinning it makes the manifest deterministic.
+    - lombok and the JavaFX set are restated in <excludes> because Maven merges
+      profile plugin configuration positionally onto the base list; restating
+      every base exclude makes the result independent of merge order.
+    - The classifier is what stops this from being mistaken for the real
+      artifact: the repackaged jar is `-slim.jar`, the plain jar is left beside
+      it. It also means two jars match the
+      `target/pad-liveness-backend-*.jar` glob used by the Dockerfile COPY and
+      the CI upload step, so neither build may pass -Pslim.
+    - Opt-in only (never activeByDefault): the default package must keep
+      producing the fully runnable, cross-platform jar, and the CI test jobs
+      depend on the real natives being on the classpath.
+  -->
+  <profiles>
+    <profile>
+      <id>slim</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>strip-unused-platform-natives</id>
+                <phase>prepare-package</phase>
+                <goals>
+                  <goal>unpack</goal>
+                </goals>
+                <configuration>
+                  <artifactItems>
+                    <artifactItem>
+                      <groupId>org.openpnp</groupId>
+                      <artifactId>opencv</artifactId>
+                      <version>4.9.0-0</version>
+                      <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                      <!-- Keep only linux/x86_64 — the platform this jar targets. -->
+                      <excludes>
+                        nu/pattern/opencv/linux/x86_32/**,nu/pattern/opencv/linux/ARMv7/**,nu/pattern/opencv/linux/ARMv8/**,nu/pattern/opencv/osx/**,nu/pattern/opencv/windows/**
+                      </excludes>
+                    </artifactItem>
+                    <artifactItem>
+                      <groupId>com.microsoft.onnxruntime</groupId>
+                      <artifactId>onnxruntime</artifactId>
+                      <version>1.24.2</version>
+                      <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                      <!-- Keep only linux-x64. The osx-aarch64 exclude also drops
+                           the ~54 MB .dSYM debug bundle nested inside it. -->
+                      <excludes>
+                        ai/onnxruntime/native/osx-aarch64/**,ai/onnxruntime/native/linux-aarch64/**,ai/onnxruntime/native/win-x64/**
+                      </excludes>
+                    </artifactItem>
+                  </artifactItems>
+                  <!-- Repackaging on every build would rewrite ~40 MB of classes
+                       for no reason when only the native payload changed. -->
+                  <overWriteReleases>false</overWriteReleases>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+            <configuration>
+              <classifier>slim</classifier>
+              <mainClass>io.mosip.liveness.PadLivenessApplication</mainClass>
+              <!-- The originals were unpacked into BOOT-INF/classes above; keeping
+                   them in BOOT-INF/lib too would just double the payload. -->
+              <excludes>
+                <exclude>
+                  <groupId>org.projectlombok</groupId>
+                  <artifactId>lombok</artifactId>
+                </exclude>
+                <exclude>
+                  <groupId>org.openjfx</groupId>
+                  <artifactId>javafx-base</artifactId>
+                </exclude>
+                <exclude>
+                  <groupId>org.openjfx</groupId>
+                  <artifactId>javafx-graphics</artifactId>
+                </exclude>
+                <exclude>
+                  <groupId>org.openjfx</groupId>
+                  <artifactId>javafx-controls</artifactId>
+                </exclude>
+                <exclude>
+                  <groupId>org.openjfx</groupId>
+                  <artifactId>javafx-fxml</artifactId>
+                </exclude>
+                <exclude>
+                  <groupId>org.openpnp</groupId>
+                  <artifactId>opencv</artifactId>
+                </exclude>
+                <exclude>
+                  <groupId>com.microsoft.onnxruntime</groupId>
+                  <artifactId>onnxruntime</artifactId>
+                </exclude>
+              </excludes>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
 </project>

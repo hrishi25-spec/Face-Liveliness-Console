@@ -23,6 +23,11 @@ public enum LivenessErrorCode {
     CHALLENGE_TIMEOUT("E502", "Verification timed out. Please try again."),
     MAX_RETRIES_EXCEEDED("E503", "Verification could not be completed. Please contact support."),
 
+    // v3 additions
+    SESSION_TIMEOUT("E504", "Face verification timed out. Please try again."),
+    MODEL_INTEGRITY("E505", "Model integrity check failed."),
+    ACTIVE_REEVAL_FAILED("E506", "Liveness score dropped during active challenge. Please try again."),
+
     // Input / state
     INVALID_FRAME_DATA("E601", "Invalid capture data received."),
     INVALID_SESSION("E602", "Unknown or closed session."),

@@ -9,5 +9,12 @@ public record MetricsSnapshot(
         double retryRate,
         double failureRate,
         double escalationRate,
-        long padBlocks) {
+        long padBlocks,
+
+        // Per-species APCER (Attack Presentation Classification Error Rate)
+        // APCER = proportion of attack presentations classified as bona fide
+        double printPhotoApcer,
+        double screenReplayApcer,
+        double videoReplayApcer,
+        double otherApcer) {
 }

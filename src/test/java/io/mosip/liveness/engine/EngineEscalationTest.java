@@ -4,6 +4,7 @@ import io.mosip.liveness.audit.AuditEventType;
 import io.mosip.liveness.backend.MockLivenessBackend;
 import io.mosip.liveness.config.LivenessConfig;
 import io.mosip.liveness.core.Challenge;
+import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.FaceSignals;
 import io.mosip.liveness.core.Frame;
 import io.mosip.liveness.testing.MutableClock;
@@ -13,10 +14,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -38,6 +43,7 @@ class EngineEscalationTest {
                 .minChallengeCount(2)
                 .challengeTimeoutMs(5_000)
                 .maxRetries(1)
+                .passiveThresholdActive(0.0)  // disable passive re-eval during active to test challenge flow in isolation
                 .build(), backend, audit, new MetricsCollector(), clock);
         backend.subject().livenessScore = 0.40;   // below default threshold -> escalation
         backend.subject().scoreNoise = 0.0;
@@ -107,8 +113,23 @@ class EngineEscalationTest {
                 frames.add(frame());
                 backend.enqueueSignal(liveSignals(0.34, 0, 0, 0, 0));
             }
+            case LOOK_UP -> gazeFrames(frames, 0.0, -1.0);
+            case LOOK_DOWN -> gazeFrames(frames, 0.0, 1.0);
+            case LOOK_LEFT -> gazeFrames(frames, -1.0, 0.0);
+            case LOOK_RIGHT -> gazeFrames(frames, 1.0, 0.0);
         }
         return frames;
+    }
+
+    private void gazeFrames(List<Frame> frames, double dx, double dy) {
+        frames.add(frame());
+        backend.enqueueSignal(liveSignals(0.34, 0, 0, 0, 0));
+        frames.add(frame());
+        backend.enqueueSignal(liveSignals(0.34, 0, 0, dx, dy));
+        frames.add(frame());
+        backend.enqueueSignal(liveSignals(0.34, 0, 0, dx, dy));
+        frames.add(frame());
+        backend.enqueueSignal(liveSignals(0.34, 0, 0, 0, 0));
     }
 
     @Test
@@ -196,7 +217,8 @@ class EngineEscalationTest {
                 LivenessConfig.builder()
                         .passiveMinFrames(1)
                         .maxRetries(0)
-                        .onRepeatedFailure(io.mosip.liveness.core.RepeatedFailureAction.FALLBACK)
+                        .passiveThresholdActive(0.0)  // disable passive re-eval during active
+                        .onRepeatedFailure(io.mosip.liveness.shared.definitions.RepeatedFailureAction.FALLBACK)
                         .build(),
                 backend, audit, new MetricsCollector(), clock);
         String sid = fallbackEngine.initSession(io.mosip.liveness.core.WorkflowType.SUPERVISOR_AUTH);
@@ -214,6 +236,28 @@ class EngineEscalationTest {
         String sid = engine.initSession(io.mosip.liveness.core.WorkflowType.RESIDENT_REGISTRATION);
         assertThrows(io.mosip.liveness.core.LivenessException.class,
                 () -> engine.requestChallenge(sid));
+    }
+
+    @Test
+    void requestChallengeExcludesGivenTypesFromTheDraw() {
+        String sid = engine.initSession(io.mosip.liveness.core.WorkflowType.RESIDENT_REGISTRATION);
+        pushUntilEscalated(sid);
+
+        Challenge c = engine.requestChallenge(sid, Set.of(ChallengeType.BLINK));
+        assertNotEquals(ChallengeType.BLINK, c.type(),
+                "an excluded type must never be drawn from the pool");
+    }
+
+    @Test
+    void excludingEveryAllowedTypeFallsBackToTheFullPool() {
+        String sid = engine.initSession(io.mosip.liveness.core.WorkflowType.RESIDENT_REGISTRATION);
+        pushUntilEscalated(sid);
+
+        // Defensive guard: an exclusion covering the whole pool must still
+        // issue a challenge instead of failing — the pool never goes empty.
+        Challenge c = engine.requestChallenge(sid, EnumSet.allOf(ChallengeType.class));
+        assertNotNull(c.type(),
+                "full-pool exclusion must fall back to the unfiltered pool");
     }
 
     @Test

@@ -8,12 +8,14 @@ public enum AssessmentStatus {
     PASSED,
     /** Passive score below threshold; escalate to Stage 2 challenge-response. */
     ESCALATED_TO_ACTIVE,
-    /** A challenge is currently open; feed frames via validateChallenge. */
+    /** A challenge is currently open; frames are being evaluated. */
     CHALLENGE_IN_PROGRESS,
     /** Presentation attack detected — terminal, no retry path. */
     PAD_BLOCKED,
     /** Hard failure (e.g. threshold miss with active liveness disabled). */
     FAILED,
     /** Transient capture problem the user can correct (no face, bad quality...). */
-    RETRYABLE_ERROR
+    RETRYABLE_ERROR,
+    /** Session duration exceeded maxSessionDurationMs. */
+    SESSION_TIMED_OUT
 }

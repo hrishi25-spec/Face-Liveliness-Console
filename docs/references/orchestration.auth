@@ -1,0 +1,600 @@
+################################################################################
+#  orchestration.auth
+#  Face Liveness + PAD orchestration for the MOSIP Android Registration Client
+#
+#  Covers : Resident face capture · Operator auth · Supervisor auth
+#  Stack  : Flutter (Dart UI) · Pigeon bridge · Native Java layer · CameraX /
+#           SBI device adapters · TFLite/MediaPipe engine · Android Keystore
+#  Status : Design spec. Items tagged [VERIFY] must be confirmed against the
+#           mosip/android-registration-client repo and the device vendor's SBI.
+################################################################################
+
+
+================================================================================
+1. PURPOSE
+================================================================================
+One orchestrator drives liveness for all three workflows so behaviour is
+identical online/offline and across roles.
+
+  Liveness is a GATE placed in front of the existing capture / authentication
+  step. It never replaces device capture or biometric matching.
+
+  gate result  = PASS | FAIL | ABORTED | BLOCKED
+  PASS yields  = LivenessResult { sessionId, evidence, bestFrameRef }
+  Downstream   = existing capture (SBI) or existing match (Biometric SDK / auth)
+                 runs ONLY after PASS and ONLY inside the same session window.
+
+Design rules:
+  R1  Fail closed. Exception, timeout, missing/invalid model => FAIL, never skip.
+  R2  Frames never cross the Pigeon channel. Preview uses a Flutter Texture.
+  R3  The user never selects a challenge. Orchestrator selects (SecureRandom).
+  R4  No decision depends on network. Config/model are cached locally.
+  R5  UI receives generic messages; PAD detail goes to audit/diagnostics only.
+
+
+================================================================================
+2. COMPONENTS AND RESPONSIBILITIES
+================================================================================
+
+  Layer     Component                    Responsibility
+  --------  ---------------------------  ---------------------------------------
+  Dart      LivenessScreen / ViewModel   Render state, prompts, retry UI; send
+                                         start/cancel commands only
+  Bridge    LivenessHostApi (Pigeon)     Dart -> Java commands
+  Bridge    LivenessFlutterApi (Pigeon)  Java -> Dart events/state
+  Native    LivenessOrchestrator         State machine, attempt/retry counting,
+                                         timers, session binding, audit
+  Native    LivenessPolicyProvider       Resolve effective policy per role
+  Native    FaceFrameSource (interface)  Deliver frames (CameraX, SBI, Mock)
+  Native    FaceAnalyzer (interface)     Face count, quality, pose, eyes, smile
+  Native    LivenessEngine (interface)   Passive score + PAD + action verify
+  Native    ChallengeSelector            Random, non-repeating challenge sequence
+  Native    PreviewTextureBridge         Push frames to Flutter TextureRegistry
+  Native    LivenessEvidenceSigner       Sign evidence with Android Keystore key
+  Native    ModelStore                   Signed models, version, rollback
+  Native    AuditBridge                  Write events to existing audit manager
+  Existing  SBI intent client            Final signed face capture      [VERIFY]
+  Existing  Biometric SDK                1:1 match (offline operator)   [VERIFY]
+
+
+================================================================================
+3. POLICY (CONFIGURATION SCHEMA)
+================================================================================
+Source: existing global-param / config-sync framework, cached in local DB.
+        Keys prefixed:  mosip.registration.liveness.*          [VERIFY mechanism]
+Resolution: workflow-specific key > common key > built-in safe default.
+
+--- effective policy object (after resolution) ---
+policy:
+  version: "2026-10-01.3"            # recorded in every evidence record
+  enabled: true
+  passive:
+    threshold: 0.80                  # 0..1
+    windowFrames: 10                 # median over last N quality-passing frames
+    minValidFrames: 6                # frames needed before a decision
+    decisionTimeoutSec: 6            # no decision by then => attempt fails
+  active:
+    enabled: true
+    minChallenges: 1                 # supervisor default: 2
+    challengeTypes: [BLINK, SMILE, TURN_LEFT, TURN_RIGHT]
+    challengeTimeoutSec: 8
+  maxRetries: 3
+  onRepeatedFailure: BLOCK           # BLOCK | FALLBACK_OTHER_MODALITY |
+                                     # LOCKOUT_TEMPORARY | SUPERVISOR_EXCEPTION
+  lockoutSeconds: 120                # used by LOCKOUT_TEMPORARY
+  quality:
+    maxFaces: 1
+    minFaceAreaRatio: 0.15
+    maxYawDeg: 15                    # for passive/neutral phase
+    maxPitchDeg: 15
+
+--- built-in security floor (code constants, cannot be lowered by config) ---
+  passive.threshold          >= 0.60
+  maxRetries                 <= 5
+  challengeTimeoutSec        in [3, 20]
+  supervisor.enabled=false   => ignored unless build flag ALLOW_DISABLE_LIVENESS
+  invalid/missing value      => use safe default + audit "CONFIG_INVALID"
+
+--- suggested defaults per role ---
+  RESIDENT  : as above
+  OPERATOR  : as above
+  SUPERVISOR: active.minChallenges = 2, onRepeatedFailure = BLOCK
+
+
+================================================================================
+4. STATE MACHINE
+================================================================================
+
+States
+  IDLE
+  INITIALIZING          open frame source, load model, create session+nonce
+  POSITIONING           wait for exactly one acceptable face (quality gate)
+  PASSIVE_EVALUATING    collect window, compute score + PAD
+  CHALLENGE_PROMPT      show selected action
+  CHALLENGE_VERIFYING   analyse frames for action + re-run PAD/score
+  CHALLENGE_PASSED      one challenge done; more required? -> next prompt
+  ATTEMPT_FAILED        record failure reason, decide retry/terminal
+  RETRY_WAIT            short pause, new session nonce + new challenge sequence
+  PASSED                gate satisfied; hand off to capture/match
+  TERMINAL_FAILURE      retries exhausted -> onRepeatedFailure mode
+  DEVICE_ERROR          device/camera/frame failure (not an attempt)
+  ABORTED               user cancel / lifecycle (app background)
+
+Transitions (guard -> action)
+  IDLE                -> INITIALIZING         start(role, workflow)
+  INITIALIZING        -> POSITIONING          source+model ready
+  INITIALIZING        -> DEVICE_ERROR         source/model failure (fail closed)
+  POSITIONING         -> PASSIVE_EVALUATING   >= minValidFrames good frames
+  POSITIONING         -> POSITIONING          no/multiple/poor face (emit hint,
+                                              NOT counted as attempt)
+  PASSIVE_EVALUATING  -> ATTEMPT_FAILED       padAttackDetected
+  PASSIVE_EVALUATING  -> PASSED               score >= threshold && !pad
+  PASSIVE_EVALUATING  -> CHALLENGE_PROMPT     score < threshold && active.enabled
+  PASSIVE_EVALUATING  -> ATTEMPT_FAILED       score < threshold && !active.enabled
+  PASSIVE_EVALUATING  -> ATTEMPT_FAILED       decisionTimeout
+  CHALLENGE_PROMPT    -> CHALLENGE_VERIFYING  prompt shown, baseline captured
+  CHALLENGE_VERIFYING -> CHALLENGE_PASSED     action verified && !pad && score ok
+  CHALLENGE_VERIFYING -> ATTEMPT_FAILED       padAttackDetected | timeout |
+                                              wrong action | face lost > 2 s
+  CHALLENGE_PASSED    -> CHALLENGE_PROMPT     completed < minChallenges
+  CHALLENGE_PASSED    -> PASSED               completed >= minChallenges
+  ATTEMPT_FAILED      -> RETRY_WAIT           attempts < maxRetries
+  ATTEMPT_FAILED      -> TERMINAL_FAILURE     attempts >= maxRetries
+  RETRY_WAIT          -> INITIALIZING         (fresh session)
+  any                 -> DEVICE_ERROR         3 consecutive invalid frames |
+                                              disconnect | camera revoked
+  DEVICE_ERROR        -> INITIALIZING         user taps retry (attempt unchanged)
+  any                 -> ABORTED              cancel() | onPause beyond grace
+
+Invariants
+  - attemptCount increments ONLY on ATTEMPT_FAILED.
+  - Every new attempt gets a new sessionId, nonce and challenge sequence.
+  - PASSED is valid for validitySec (default 30). After expiry, capture/match
+    must be refused and the gate re-run.
+  - Orchestrator state is single-threaded (one serial executor); engine and
+    source callbacks post into it.
+
+
+================================================================================
+5. SEQUENCE DIAGRAMS (Mermaid)
+================================================================================
+
+--- 5.1 Resident face capture (passive pass) ---
+```mermaid
+sequenceDiagram
+  participant UI as Flutter UI
+  participant B as Pigeon
+  participant O as LivenessOrchestrator
+  participant S as FaceFrameSource
+  participant E as LivenessEngine
+  participant D as SBI Capture (existing)
+  UI->>B: startSession(role=RESIDENT)
+  B->>O: start()
+  O->>O: resolve policy, new session+nonce
+  O->>S: open()
+  S-->>O: frames (continuous)
+  O->>E: analyze(frame)
+  E-->>O: quality, passiveScore, padFlags
+  O-->>UI: state=PASSIVE_EVALUATING ("Checking face liveness…")
+  O->>O: score>=threshold && !pad
+  O-->>UI: state=PASSED
+  UI->>D: capture face (existing flow)
+  D-->>UI: signed face
+  O->>O: binding check (session window, consistency)
+  UI->>UI: accept face
+```
+
+--- 5.2 Passive fails -> active challenge -> retry ---
+```mermaid
+sequenceDiagram
+  participant UI as Flutter UI
+  participant O as Orchestrator
+  participant E as Engine
+  participant C as ChallengeSelector
+  O->>E: analyze(frames)
+  E-->>O: score 0.55 (< 0.80), pad=none
+  O->>C: select(types, min=1, exclude=last)
+  C-->>O: [TURN_LEFT]
+  O-->>UI: state=CHALLENGE_PROMPT ("Please turn your head to the left")
+  loop until timeout
+    O->>E: verifyAction(TURN_LEFT, frame)
+    E-->>O: progress / detected / pad re-check
+    O-->>UI: feedback ("Please continue" / "Action detected" / "Hold still")
+  end
+  alt verified
+    O-->>UI: PASSED
+  else failed/timeout/pad
+    O-->>UI: ATTEMPT_FAILED (retriesLeft=n)
+    O->>O: RETRY_WAIT -> new session & new challenge
+  end
+```
+
+--- 5.3 Operator / Supervisor authentication (online or offline) ---
+```mermaid
+sequenceDiagram
+  participant UI as Flutter UI
+  participant O as Orchestrator
+  participant D as SBI Capture (existing)
+  participant M as Biometric SDK / Auth service
+  participant A as Audit
+  UI->>O: startSession(role=OPERATOR|SUPERVISOR, userId)
+  O->>O: policy(role) ; liveness gate (passive -> active if needed)
+  O-->>UI: PASSED
+  UI->>D: capture face
+  D-->>UI: signed face
+  O->>O: verify session valid && consistency(bestFrame, signedFace)
+  UI->>M: match (local templates if offline, auth service if online)
+  M-->>UI: match result
+  UI->>UI: authenticated = livenessPassed AND matchPassed
+  O->>A: LIVENESS_* + AUTH_* events (signed evidence)
+```
+Supervisor extra rule: supervisorUserId != currently logged-in operatorUserId.
+
+
+================================================================================
+6. NATIVE INTERFACES (Java)
+================================================================================
+
+public interface FaceFrameSource {
+    SourceCapabilities capabilities();            // fps, resolutions, formats,
+                                                  // signed?, hasIrDepth?
+    void open(SourceConfig cfg, FrameListener l) throws DeviceException;
+    void close();
+    interface FrameListener {
+        void onFrame(FaceFrame frame);            // never blocks; engine drops old
+        void onSourceError(DeviceError error);    // DISCONNECTED, PERMISSION, INVALID_FRAME...
+    }
+}
+
+public final class FaceFrame {
+    long timestampNanos; int width, height, rotationDeg;
+    FrameFormat format;                           // YUV_420_888 | NV21 | JPEG | RGBA
+    byte[] data /* or buffer ref */; boolean mirrored; String sourceId;
+}
+
+public interface FaceAnalyzer {
+    FaceObservation analyze(FaceFrame f);         // faceCount, bbox, yaw/pitch/roll,
+                                                  // eyeOpenL/R, smileProb, landmarks,
+                                                  // quality{blur, luminance, areaRatio}
+}
+
+public interface LivenessEngine {
+    EngineInfo info();                            // name, version, modelVersion,
+                                                  // supportedChallenges, certified?
+    void init(ModelRef model) throws EngineException;
+    PassiveResult passive(FaceFrame f, FaceObservation o);   // score + PadFlags
+    ActionProgress verifyAction(Challenge c, ActionContext ctx,
+                                FaceFrame f, FaceObservation o);
+    void release();
+}
+
+public interface LivenessPolicyProvider {
+    LivenessPolicy resolve(Role role, Workflow workflow);
+}
+
+public interface ChallengeSelector {
+    List<Challenge> select(Set<ChallengeType> pool, int min, ChallengeType lastUsed);
+}
+
+public interface LivenessOrchestrator {
+    SessionHandle start(Role role, Workflow workflow, String userIdOrNull);
+    void cancel(String sessionId);
+    LivenessResult currentResult(String sessionId);   // null unless PASSED+valid
+    void setListener(LivenessListener l);             // events -> Pigeon FlutterApi
+}
+
+Enums
+  Role           : RESIDENT | OPERATOR | SUPERVISOR
+  ChallengeType  : BLINK | SMILE | TURN_LEFT | TURN_RIGHT | LOOK_UP | LOOK_DOWN
+  FailReason     : PAD_DETECTED | LOW_LIVENESS | CHALLENGE_FAILED |
+                   CHALLENGE_TIMEOUT | DECISION_TIMEOUT
+  DeviceError    : DEVICE_UNAVAILABLE | DISCONNECTED | CAMERA_UNAVAILABLE |
+                   PERMISSION_DENIED | INVALID_FRAME | ENGINE_ERROR
+  Hint           : NO_FACE | MULTIPLE_FACES | TOO_FAR | TOO_DARK | BLURRY |
+                   LOOK_STRAIGHT | HOLD_STILL
+
+
+================================================================================
+7. PIGEON API (Dart <-> Java)   [VERIFY existing pigeon file conventions]
+================================================================================
+
+class LivenessStateEvent {
+  String sessionId;
+  String state;              // enum name from section 4
+  String? challenge;         // current challenge type
+  String? hint;              // Hint enum name
+  String? uiMessageKey;      // localisation key, NOT raw text
+  int attemptsUsed;
+  int attemptsMax;
+  int? challengeIndex;       // 1-based
+  int? challengeTotal;
+  double? progress;          // 0..1 for UI ring (no raw score exposed)
+  String? failCategory;      // GENERIC | DEVICE | MAX_RETRIES
+}
+
+class LivenessStartResult {
+  String sessionId;
+  int? previewTextureId;     // Flutter Texture id for live preview
+  String? errorCode;
+}
+
+class LivenessFinalResult {
+  String sessionId;
+  String outcome;            // PASSED | TERMINAL_FAILURE | ABORTED
+  String? nextAction;        // PROCEED | BLOCK | FALLBACK | LOCKOUT | EXCEPTION
+  int? lockoutSeconds;
+  int validForSeconds;       // gate validity window when PASSED
+}
+
+@HostApi()
+abstract class LivenessHostApi {
+  @async LivenessStartResult startSession(String role, String workflow, String? userId);
+  void cancelSession(String sessionId);
+  @async LivenessFinalResult awaitResult(String sessionId);   // optional; events suffice
+  Map<String, String> diagnosticsSnapshot();                  // diagnostic mode only
+}
+
+@FlutterApi()
+abstract class LivenessFlutterApi {
+  void onState(LivenessStateEvent event);
+  void onFinal(LivenessFinalResult result);
+}
+
+Notes
+  - uiMessageKey maps to localised strings (supports i18n and per-deployment text).
+  - Raw passive scores / PAD flags are NOT sent to Dart unless diagnostic mode
+    is enabled (R5).
+  - Preview: native pushes frames to a TextureRegistry.SurfaceTextureEntry; Dart
+    shows Texture(textureId). Face-box/oval overlays drawn in Dart from normalised
+    coordinates sent at <= 10 Hz (optional field).
+
+
+================================================================================
+8. ORCHESTRATOR PSEUDO-CODE
+================================================================================
+
+start(role, workflow, userId):
+    policy = policyProvider.resolve(role, workflow)
+    if !policy.enabled and !BUILD.ALLOW_DISABLE_LIVENESS:  policy.enabled = true
+    if !policy.enabled: return PASSED_BYPASSED (audited, evidence.bypassed=true)
+    attempts = 0
+    runAttempt()
+
+runAttempt():
+    s = newSession(nonce = secureRandom(16), start = now())
+    audit(LIVENESS_STARTED, s, policy.version)
+    try:
+        engine.init(modelStore.activeModel())            # verifies hash/signature
+        source.open(cfg, onFrame)
+    catch -> transition(DEVICE_ERROR); return            # fail closed
+
+onFrame(f):                                              # runs on analysis thread,
+    post(serialExecutor):                                # dropped if busy
+        obs = analyzer.analyze(f)
+        switch state:
+          POSITIONING:
+            hint = qualityGate(obs, policy.quality)
+            if hint != null: emit(hint) ; return
+            if ++goodFrames >= policy.passive.minValidFrames:
+                transition(PASSIVE_EVALUATING)
+          PASSIVE_EVALUATING:
+            r = engine.passive(f, obs)
+            window.add(r.score) ; padSeen |= r.pad.attackDetected
+            if padSeen:                   fail(PAD_DETECTED); return
+            if window.size >= policy.passive.windowFrames:
+                score = median(window)
+                if score >= policy.passive.threshold: pass(); return
+                if policy.active.enabled: beginActive()
+                else: fail(LOW_LIVENESS)
+            if elapsed > decisionTimeoutSec: fail(DECISION_TIMEOUT)
+          CHALLENGE_VERIFYING:
+            p = engine.verifyAction(current, ctx, f, obs)
+            r = engine.passive(f, obs)                    # re-evaluate PAD/liveness
+            if r.pad.attackDetected:      fail(PAD_DETECTED); return
+            if p.done:                    challengeDone()
+            elif p.wrongAction:           fail(CHALLENGE_FAILED)
+            elif now() > challengeDeadline: fail(CHALLENGE_TIMEOUT)
+            else: emit(progress/feedback)
+
+beginActive():
+    seq = challengeSelector.select(policy.active.challengeTypes ∩
+                                   engine.info().supportedChallenges,
+                                   policy.active.minChallenges, lastUsedThisDevice)
+    if seq.isEmpty(): fail(CHALLENGE_FAILED) (config error, audited)
+    session.sequence = seq ; idx = 0 ; promptNext()
+
+challengeDone():
+    if ++idx >= seq.size(): pass() else promptNext()
+
+pass():
+    best = bestFrameOfSession()
+    evidence = signer.sign({sessionId, nonce, role, userId?, policy.version,
+        engine.info(), modelVersion, passiveScore(median), challenges+results,
+        timings, bestFrameSha256, deviceId, ts})
+    session.validUntil = now() + validitySec
+    transition(PASSED) ; audit(LIVENESS_PASSED, evidence)
+    source.close()                         # frames released from memory
+
+fail(reason):
+    attempts++ ; audit(LIVENESS_FAILED, reason)          # PAD detail only here
+    source.close()
+    if attempts >= policy.maxRetries: terminal()
+    else: transition(RETRY_WAIT) -> runAttempt()          # new session/challenge
+
+terminal():
+    apply policy.onRepeatedFailure:
+        BLOCK                    -> nextAction=BLOCK
+        FALLBACK_OTHER_MODALITY  -> nextAction=FALLBACK (only OPERATOR/SUPERVISOR,
+                                    only if another modality is configured)
+        LOCKOUT_TEMPORARY        -> persist lockoutUntil (survives app restart)
+        SUPERVISOR_EXCEPTION     -> nextAction=EXCEPTION (RESIDENT only; audited)
+    audit(LIVENESS_TERMINAL_FAILURE)
+
+Consume gate downstream:
+    isGateValid(sessionId) = result.state==PASSED && now()<validUntil
+    bindingOk = isGateValid && consistency(bestFrame, signedCapture) >= T_bind
+    # T_bind from policy; if no on-device 1:1 matcher available, bindingOk relies
+    # on session validity + signed-device capture timing  [VERIFY, see analyse.md R6]
+
+
+================================================================================
+9. ERROR -> ACTION MAP
+================================================================================
+
+  Condition                  State            Counts attempt  UI message key
+  -------------------------  ---------------  --------------  ------------------------------
+  Device unavailable         DEVICE_ERROR     no              liveness.device.unavailable
+  Device disconnected        DEVICE_ERROR     no              liveness.device.disconnected
+  Camera unavailable/denied  DEVICE_ERROR     no              liveness.camera.unavailable
+  Face not detected          POSITIONING      no              liveness.hint.look_camera
+  Multiple faces             POSITIONING      no              liveness.hint.single_person
+  Poor quality               POSITIONING      no              liveness.hint.lighting/distance
+  Score below threshold      -> active        no              liveness.checking -> prompt
+  PAD detected               ATTEMPT_FAILED   YES             liveness.pad.generic
+  Challenge failed           ATTEMPT_FAILED   YES             liveness.failed.try_again
+  Challenge timeout          ATTEMPT_FAILED   YES             liveness.failed.try_again
+  Max retries                TERMINAL_FAILURE -               liveness.max_retries.recovery
+  Invalid frames (3 in row)  DEVICE_ERROR     no              liveness.device.error
+  Engine/model error         DEVICE_ERROR     no              liveness.unavailable (fail closed)
+
+Default English strings (localisable)
+  liveness.checking            "Checking face liveness…"
+  prompt.blink                 "Please blink"
+  prompt.smile                 "Please smile"
+  prompt.turn_left             "Please turn your head to the left"
+  prompt.turn_right            "Please turn your head to the right"
+  feedback.continue            "Please continue"
+  feedback.detected            "Action detected"
+  feedback.hold                "Hold still"
+  success                      "Good, face captured successfully"
+  liveness.failed.try_again    "We could not verify face liveness. Please try again."
+  liveness.pad.generic         "Face verification could not be completed. Please try again."
+
+
+================================================================================
+10. AUDIT EVENTS (stored locally, synced later)
+================================================================================
+
+  Event id               When                      Payload (no images)
+  ---------------------  ------------------------  -----------------------------------
+  LIVENESS_STARTED       session start             role, workflow, policyVersion, sessionId
+  LIVENESS_PASSIVE_DONE  passive decision          medianScore, frames, ms
+  LIVENESS_CHALLENGE     per challenge             type, result, ms
+  LIVENESS_PASSED        gate passed               evidenceId, totalMs, engine/model ver
+  LIVENESS_FAILED        attempt failed            reason, attempt n/max, (PAD detail)
+  LIVENESS_TERMINAL      retries exhausted         mode applied
+  LIVENESS_DEVICE_ERR    device/camera/engine err  errorCode, sourceId
+  LIVENESS_CONFIG_BAD    invalid config            key, fallbackUsed
+  LIVENESS_BYPASSED      disabled by policy        role, reason
+  LIVENESS_BINDING_FAIL  consistency/window fail   cause
+  MODEL_UPDATED          model swap/rollback       old/new version, hash ok
+
+Diagnostic mode (opt-in, local): adds raw scores, per-frame timings, FPS, delegate
+used. Still no pixels. Anonymised metrics (avg liveness time, challenge time,
+retry rate, failure rate) aggregated without user ids.
+
+
+================================================================================
+11. ADAPTER ORCHESTRATION (VENDOR INDEPENDENCE)
+================================================================================
+
+Source selection at start():
+    caps = discover()                                  # device capability discovery
+    if workflow device has SBI stream      -> SbiStreamFaceSource     [VERIFY]
+    else if L0 / built-in camera allowed   -> CameraXFaceSource
+    else if dev/test build                 -> MockFaceFrameSource(video)
+    else                                   -> DEVICE_ERROR (cannot satisfy liveness)
+
+Dual-source mode (only if device cannot stream):
+    liveness frames  <- CameraXFaceSource
+    final biometric  <- SBI one-shot signed capture
+    link             <- consistency(bestFrame, signedCapture) + same-session window
+    (document the weaker trust level; policy flag liveness.requireSignedStream
+     can forbid this mode in high-assurance deployments)
+
+Adding a vendor = implement FaceFrameSource (+ optional capability flags). No change
+to orchestrator, engine, UI, or policy.
+
+Engine selection:
+    engine = EngineRegistry.get(config.engineId)       # "reference-tflite" default
+    engine.info().certified is shown in diagnostics and recorded in evidence.
+
+
+================================================================================
+12. THREADING, LIFECYCLE AND RESOURCES
+================================================================================
+
+  Threads
+    camera/source thread  -> pushes frames (non-blocking)
+    analysis thread       -> single HandlerThread; keep-only-latest frame
+    orchestrator executor -> single serial executor; owns all state
+    main thread           -> Pigeon event delivery only
+
+  Lifecycle
+    onPause  > 3 s  -> ABORTED, release camera/engine, audit
+    rotation        -> keep session; recompute rotation/mirroring from frame meta
+    process death   -> session is not resumable; lockoutUntil persisted in DB
+
+  Resource limits (targets)
+    analysis resolution <= 640x480; 10–15 fps; process every 2nd frame if over budget
+    inference delegate order: NNAPI/GPU -> XNNPACK CPU
+    memory: frames are pooled and zeroed on close; no frame persisted
+    window FLAG_SECURE set on liveness screens
+
+
+================================================================================
+13. MODEL AND POLICY UPDATE ORCHESTRATION
+================================================================================
+
+  Online:
+    sync -> manifest {modelId, version, sha256, signature, minAppVersion}
+         -> download to temp -> verify signature + hash -> atomic swap
+         -> keep previous version -> health-check inference
+         -> on failure auto-rollback + audit MODEL_UPDATED(rollback)
+  Offline:
+    signed bundle sideload (same verification path)           [bonus]
+  Active sessions never switch model mid-session.
+  Policy updates apply at the next start() (policy.version recorded per session).
+
+
+================================================================================
+14. INTEGRATION POINTS TO CHANGE  [VERIFY exact classes/screens in repo]
+================================================================================
+
+  Flutter
+    - Resident biometric (face) capture screen  -> embed LivenessView; call
+      startSession before existing capture; capture button enabled only on PASSED
+    - Operator/Supervisor biometric login dialogs -> same widget, role param
+    - Localisation files                         -> add message keys (section 9)
+    - Pigeon definitions                         -> add Liveness*Api (section 7)
+  Native (Java)
+    - New package  io.mosip.registration.liveness.*  (all of section 6)
+    - Biometrics capture service / SBI intent client  -> require valid gate before
+      issuing capture; run binding check after capture
+    - Auth service for operator/supervisor       -> authenticated = gate AND match
+    - Config/global-param loader                 -> read liveness keys, validate
+    - Audit manager                              -> new event ids (section 10)
+    - Model store + sync job                     -> signed model update
+  Build
+    - Add TFLite/MediaPipe deps (bundled models, no Play Services dependency)
+    - ProGuard/R8 keep rules for engine classes
+    - ABI split decisions (arm64-v8a primary) to limit APK size
+
+
+================================================================================
+15. ACCEPTANCE CHECKLIST
+================================================================================
+
+  [ ] Passive pass proceeds without any user action
+  [ ] Passive low score auto-starts a random active challenge
+  [ ] User cannot choose the challenge; sequence differs between sessions
+  [ ] PAD detection blocks capture/auth and shows only the generic message
+  [ ] Print, screen and replay test set blocked; APCER/BPCER report produced
+  [ ] Retry limit enforced; onRepeatedFailure modes work, lockout survives restart
+  [ ] Same behaviour in airplane mode for resident, operator, supervisor
+  [ ] Gate expiry and session binding enforced before capture/match
+  [ ] All 13 listed error conditions mapped and tested
+  [ ] Disabling liveness via config is impossible without the build flag
+  [ ] Two frame-source adapters (mock + CameraX or real SBI) pass the same suite
+  [ ] Audit events present; no biometric images in logs or storage
+  [ ] Meets performance targets on the low-end test device

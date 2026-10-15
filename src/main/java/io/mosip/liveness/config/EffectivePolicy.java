@@ -1,7 +1,7 @@
 package io.mosip.liveness.config;
 
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 
 import java.util.Set;
 
@@ -17,7 +17,34 @@ public record EffectivePolicy(
         int maxRetries,
         long challengeTimeoutMs,
         Set<ChallengeType> allowedChallenges,
-        RepeatedFailureAction onRepeatedFailure) {
+        RepeatedFailureAction onRepeatedFailure,
+        double passiveThresholdActive,
+        // v3 fields
+        long maxSessionDurationMs,
+        int frameSamplingRate,
+        int frameSamplingMinFps,
+        double combinedPassiveWeight,
+        double combinedActiveWeight
+) {
+    /**
+     * Normalizes the {@code passiveThresholdActive} sentinel: any negative value
+     * means "fall back to {@code passiveThreshold}". Applied here so the rule
+     * holds no matter how the policy was constructed (engine builder or
+     * DB-backed {@link io.mosip.liveness.services.ConfigService}).
+     */
+    public EffectivePolicy {
+        if (passiveThresholdActive < 0) {
+            passiveThresholdActive = passiveThreshold;
+        }
+    }
+
+    /**
+     * Secondary passive threshold for active challenge window.
+     * Configured separately; defaults to passiveThreshold.
+     */
+    public double passiveThresholdActive() {
+        return passiveThresholdActive;
+    }
 
     public String summary() {
         return "threshold=" + passiveThreshold

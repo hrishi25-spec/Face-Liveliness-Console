@@ -60,22 +60,16 @@ public final class MediaPipeFaceMeshBackend implements LivenessBackend {
     private static final int LEFT_IRIS_RIGHT   = 470;
     private static final int LEFT_IRIS_BOTTOM  = 471;
     private static final int LEFT_IRIS_LEFT    = 472;
-    // Right iris: center=473, top=474, right=475, bottom=476, left=477
+    // Right iris: center=473 (the surrounding 474-477 points are unused, so they
+    // are not declared here — a constant nobody reads is a claim about the model
+    // nothing checks)
     private static final int RIGHT_IRIS_CENTER = 473;
-    private static final int RIGHT_IRIS_TOP    = 474;
-    private static final int RIGHT_IRIS_RIGHT  = 475;
-    private static final int RIGHT_IRIS_BOTTOM = 476;
-    private static final int RIGHT_IRIS_LEFT   = 477;
 
     // MediaPipe FaceMesh landmark indices (468-point model)
     // Left eye contour (6 points for EAR)
     private static final int[] LEFT_EYE = {33, 160, 158, 133, 153, 144};
     // Right eye contour (6 points for EAR)
     private static final int[] RIGHT_EYE = {362, 385, 387, 263, 373, 380};
-    // Upper lip contour
-    private static final int[] UPPER_LIP = {61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 308, 415, 310, 311, 312, 13, 82, 81, 80, 191, 78};
-    // Lower lip contour
-    private static final int[] LOWER_LIP = {61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185, 61};
     // Nose tip
     private static final int NOSE_TIP = 1;
     // Chin
@@ -90,17 +84,6 @@ public final class MediaPipeFaceMeshBackend implements LivenessBackend {
     private static final int LEFT_TEMPLE = 234;
     // Right temple
     private static final int RIGHT_TEMPLE = 454;
-
-    // 3D reference points for solvePnP (approximate human face measurements)
-    // Model points: nose tip, chin, left eye outer, right eye outer, left temple, right temple
-    private static final double[][] MODEL_POINTS_3D = {
-            {0.0, 0.0, 0.0},         // Nose tip
-            {0.0, -63.6, -12.5},     // Chin
-            {-43.3, 32.7, -26.0},    // Left eye outer corner
-            {43.3, 32.7, -26.0},     // Right eye outer corner
-            {-80.0, -20.0, -15.0},   // Left temple
-            {80.0, -20.0, -15.0}     // Right temple
-    };
 
     // TFLite
     private Object interpreter;

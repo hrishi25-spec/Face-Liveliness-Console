@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Desktop (JavaFX) liveness challenge overlay — docs/ui-ux-design.md
+  (screen §1, challenge UX §3, failure/retry rules §4).
+
+  Controller: io.mosip.liveness.client.LivenessChallengeOverlay, attached via
+  FXMLLoader.setRoot(this) + setController(this). There is deliberately NO
+  fx:controller / fx:id on the root: the root StackPane IS the controller
+  instance, and an fx:controller would build a second copy of it.
+
+  The root must be <fx:root>: FXMLLoader rejects a pre-set root when the document
+  declares a concrete element ("Root value already specified."), so a literal
+  <StackPane> here would make every LivenessChallengeOverlay construction throw
+  and the overlay could never be shown. The type attribute names the class the
+  host hands in via setRoot.
+-->
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.shape.Ellipse?>
+
+<fx:root type="javafx.scene.layout.StackPane"
+         xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+         styleClass="liveness-overlay" visible="false" managed="false">
+
+    <!-- Live camera preview (JavaFX ImageView path): the host adds its camera
+         node here or feeds setPreviewImage(). Transparent when empty so the
+         overlay can also sit over the host's own preview. -->
+    <StackPane fx:id="previewSlot" styleClass="liveness-preview" mouseTransparent="true"/>
+
+    <!-- Positioning guidance: oval face guide (hint text lives in the status card). -->
+    <Ellipse styleClass="liveness-oval-guide" radiusX="110" radiusY="140" mouseTransparent="true"/>
+
+    <VBox styleClass="liveness-bottom" alignment="BOTTOM_CENTER" spacing="12">
+        <padding>
+            <Insets top="24" right="24" bottom="24" left="24"/>
+        </padding>
+
+        <!-- Status card: INITIALIZING / POSITIONING / PASSIVE_EVALUATING /
+             CHALLENGE_PASSED / PASSED / ABORTED (design §1 state table). -->
+        <StackPane fx:id="statusCard" styleClass="liveness-card, status-card"
+                   alignment="CENTER" visible="false" managed="false">
+            <VBox spacing="8" alignment="CENTER">
+                <ProgressBar fx:id="statusProgress" progress="-1" maxWidth="220"
+                             visible="false" managed="false"/>
+                <Label fx:id="statusLabel" styleClass="status-label" wrapText="true"/>
+            </VBox>
+        </StackPane>
+
+        <!-- Challenge card: CHALLENGE_PROMPT / CHALLENGE_VERIFYING — prompt,
+             turn index (1/N), normalised progress, live feedback line. -->
+        <VBox fx:id="challengeCard" styleClass="liveness-card, challenge-card"
+              alignment="CENTER" spacing="8" visible="false" managed="false">
+            <Label fx:id="challengeIndex" styleClass="challenge-index"
+                   visible="false" managed="false"/>
+            <Label fx:id="challengePrompt" styleClass="challenge-prompt" wrapText="true"/>
+            <ProgressBar fx:id="challengeProgress" progress="0" maxWidth="220"/>
+            <Label fx:id="challengeFeedback" styleClass="challenge-feedback"
+                   visible="false" managed="false"/>
+        </VBox>
+
+        <!-- Failure card: ATTEMPT_FAILED / RETRY_WAIT / TERMINAL_FAILURE /
+             DEVICE_ERROR — generic message + LOCK_OUT countdown (design §4). -->
+        <VBox fx:id="failureCard" styleClass="liveness-card, failure-card"
+              alignment="CENTER" spacing="8" visible="false" managed="false">
+            <Label fx:id="failureMessage" styleClass="failure-message" wrapText="true"/>
+            <Label fx:id="lockoutLabel" styleClass="lockout-countdown"
+                   visible="false" managed="false"/>
+        </VBox>
+
+        <!-- Context-sensitive actions: Retry only where design §4 allows it. -->
+        <HBox styleClass="liveness-actions" alignment="CENTER" spacing="12">
+            <Button fx:id="retryButton" styleClass="liveness-retry"
+                    visible="false" managed="false"/>
+            <Button fx:id="cancelButton" styleClass="liveness-cancel"
+                    visible="false" managed="false"/>
+        </HBox>
+    </VBox>
+</fx:root>

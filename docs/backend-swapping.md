@@ -1,5 +1,10 @@
 # MOSIP Face Liveness & PAD Engine — Backend Swapping Guide
 
+> **Interoperability evidence:** the formal mock / ONNX / MediaPipe comparison
+> across the full test suite lives in
+> [`backend-interoperability-report.md`](backend-interoperability-report.md),
+> backed by the shared contract test `LivenessBackendInteroperabilityTest`.
+
 ## The `LivenessBackend` Interface
 
 All liveness/PAD inference is behind a single pluggable interface:

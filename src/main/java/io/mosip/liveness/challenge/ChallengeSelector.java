@@ -71,11 +71,17 @@ public final class ChallengeSelector {
     }
 
     private Map<String, Double> parametersFor(ChallengeType type) {
-        if (type == ChallengeType.LOOK_DIRECTION) {
-            double[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-            double[] d = dirs[random.nextInt(dirs.length)];
-            return Map.of("dirX", d[0], "dirY", d[1]);
-        }
-        return Map.of();
+        return switch (type) {
+            case LOOK_DIRECTION -> {
+                double[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                double[] d = dirs[random.nextInt(dirs.length)];
+                yield Map.of("dirX", d[0], "dirY", d[1]);
+            }
+            case LOOK_UP -> Map.of("dirX", 0.0, "dirY", -1.0);
+            case LOOK_DOWN -> Map.of("dirX", 0.0, "dirY", 1.0);
+            case LOOK_LEFT -> Map.of("dirX", -1.0, "dirY", 0.0);
+            case LOOK_RIGHT -> Map.of("dirX", 1.0, "dirY", 0.0);
+            default -> Map.of();
+        };
     }
 }

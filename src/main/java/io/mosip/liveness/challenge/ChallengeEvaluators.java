@@ -1,6 +1,7 @@
 package io.mosip.liveness.challenge;
 
 import io.mosip.liveness.core.Challenge;
+import io.mosip.liveness.core.ChallengeProgress;
 import io.mosip.liveness.core.FaceSignals;
 
 import java.util.List;
@@ -19,10 +20,12 @@ public final class ChallengeEvaluators {
     public static final double DEFAULT_SMILE_THRESHOLD = 0.55;
     public static final double DEFAULT_TURN_DEGREES = 12.0;
     public static final double DEFAULT_GAZE_TOLERANCE = 0.35;
+    /** Number of consecutive frames with action detected before HOLD_STILL. */
+    public static final int ACTION_CONFIRM_FRAMES = 2;
 
     private ChallengeEvaluators() { }
 
-    /** Evaluate whether the sequence of signals satisfies the challenge. */
+    /** Evaluate whether the sequence of signals satisfies the challenge (batch mode). */
     public static boolean evaluate(Challenge challenge, List<FaceSignals> sequence) {
         if (sequence == null || sequence.isEmpty()) return false;
         return switch (challenge.type()) {
@@ -33,13 +36,77 @@ public final class ChallengeEvaluators {
             case LOOK_DIRECTION -> looked(sequence,
                     challenge.parameters().getOrDefault("dirX", 1.0),
                     challenge.parameters().getOrDefault("dirY", 0.0));
+            case LOOK_UP -> looked(sequence, 0.0, -1.0);
+            case LOOK_DOWN -> looked(sequence, 0.0, 1.0);
+            case LOOK_LEFT -> looked(sequence, -1.0, 0.0);
+            case LOOK_RIGHT -> looked(sequence, 1.0, 0.0);
         };
     }
 
     /**
-     * Blink: EAR must dip below the close threshold and then recover above the
-     * open threshold within the window — a static photo cannot do this.
+     * Evaluate a single frame against the active challenge and return the
+     * progress state for real-time UI feedback.
+     *
+     * @return the challenge progress for this frame, and whether the action is detected
      */
+    public static FrameChallengeResult evaluateFrame(Challenge challenge, FaceSignals signals,
+                                                     int framesWithAction) {
+        if (signals == null) return new FrameChallengeResult(false, ChallengeProgress.AWAITING_ACTION);
+
+        boolean actionDetected = switch (challenge.type()) {
+            case BLINK -> frameBlinked(signals);
+            case SMILE -> frameSmiled(signals);
+            case TURN_HEAD_LEFT -> frameTurned(signals, -DEFAULT_TURN_DEGREES);
+            case TURN_HEAD_RIGHT -> frameTurned(signals, DEFAULT_TURN_DEGREES);
+            case LOOK_DIRECTION -> frameLooked(signals,
+                    challenge.parameters().getOrDefault("dirX", 1.0),
+                    challenge.parameters().getOrDefault("dirY", 0.0));
+            case LOOK_UP -> frameLooked(signals, 0.0, -1.0);
+            case LOOK_DOWN -> frameLooked(signals, 0.0, 1.0);
+            case LOOK_LEFT -> frameLooked(signals, -1.0, 0.0);
+            case LOOK_RIGHT -> frameLooked(signals, 1.0, 0.0);
+        };
+
+        ChallengeProgress progress;
+        if (!actionDetected) {
+            progress = ChallengeProgress.AWAITING_ACTION;
+        } else if (framesWithAction + 1 < ACTION_CONFIRM_FRAMES) {
+            progress = ChallengeProgress.ACTION_DETECTED;
+        } else {
+            progress = ChallengeProgress.HOLD_STILL;
+        }
+
+        return new FrameChallengeResult(actionDetected, progress);
+    }
+
+    /** Result of evaluating a single frame during the active challenge. */
+    public record FrameChallengeResult(boolean actionDetected, ChallengeProgress progress) { }
+
+    // ---- single-frame evaluators (for frame-by-frame mode) ----
+
+    static boolean frameBlinked(FaceSignals s) {
+        var ear = s.minEyeAspectRatio();
+        return ear.isPresent() && ear.get() < DEFAULT_BLINK_CLOSE_EAR;
+    }
+
+    static boolean frameSmiled(FaceSignals s) {
+        var smile = s.smileScore();
+        return smile.isPresent() && smile.get() > DEFAULT_SMILE_THRESHOLD;
+    }
+
+    static boolean frameTurned(FaceSignals s, double targetDegrees) {
+        var yaw = s.yawDegrees();
+        return yaw.isPresent() && (targetDegrees < 0 ? yaw.get() <= targetDegrees : yaw.get() >= targetDegrees);
+    }
+
+    static boolean frameLooked(FaceSignals s, double dirX, double dirY) {
+        if (s.gazeX().isEmpty() || s.gazeY().isEmpty()) return false;
+        return Math.abs(s.gazeX().get() - dirX) <= DEFAULT_GAZE_TOLERANCE
+                && Math.abs(s.gazeY().get() - dirY) <= DEFAULT_GAZE_TOLERANCE;
+    }
+
+    // ---- batch evaluators (for validateChallenge batch mode) ----
+
     static boolean blinked(List<FaceSignals> seq) {
         Double minEar = null;
         int minIdx = -1;
@@ -58,7 +125,6 @@ public final class ChallengeEvaluators {
         return false;
     }
 
-    /** Smile: smile score must exceed the threshold at least once in the window. */
     static boolean smiled(List<FaceSignals> seq) {
         return seq.stream()
                 .map(FaceSignals::smileScore)
@@ -66,7 +132,6 @@ public final class ChallengeEvaluators {
                 .anyMatch(s -> s > DEFAULT_SMILE_THRESHOLD);
     }
 
-    /** Head turn: yaw must reach the target angle (negative = left, positive = right). */
     static boolean turned(List<FaceSignals> seq, double targetDegrees) {
         return seq.stream()
                 .map(FaceSignals::yawDegrees)
@@ -74,10 +139,6 @@ public final class ChallengeEvaluators {
                 .anyMatch(targetDegrees < 0 ? y -> y <= targetDegrees : y -> y >= targetDegrees);
     }
 
-    /**
-     * Gaze direction: normalized gaze vector must stay within tolerance of the
-     * engine-selected target direction for at least half the frames.
-     */
     static boolean looked(List<FaceSignals> seq, double dirX, double dirY) {
         long matches = seq.stream()
                 .filter(s -> s.gazeX().isPresent())

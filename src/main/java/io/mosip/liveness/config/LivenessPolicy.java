@@ -1,7 +1,7 @@
 package io.mosip.liveness.config;
 
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 
 import java.util.Set;
 
@@ -22,6 +22,13 @@ public final class LivenessPolicy {
     private Long challengeTimeoutMs;
     private Set<ChallengeType> allowedChallenges;
     private RepeatedFailureAction onRepeatedFailure;
+    // v3 fields
+    private Long maxSessionDurationMs;
+    private Integer frameSamplingRate;
+    private Integer frameSamplingMinFps;
+    private Double combinedPassiveWeight;
+    private Double combinedActiveWeight;
+    private Double passiveThresholdActive;
 
     public LivenessPolicy withLivenessEnabled(boolean v) { this.livenessEnabled = v; return this; }
     public LivenessPolicy withActiveLivenessEnabled(boolean v) { this.activeLivenessEnabled = v; return this; }
@@ -34,6 +41,13 @@ public final class LivenessPolicy {
     public LivenessPolicy withChallengeTimeoutMs(long v) { this.challengeTimeoutMs = v; return this; }
     public LivenessPolicy withAllowedChallenges(Set<ChallengeType> v) { this.allowedChallenges = Set.copyOf(v); return this; }
     public LivenessPolicy withOnRepeatedFailure(RepeatedFailureAction v) { this.onRepeatedFailure = v; return this; }
+    // v3 setters
+    public LivenessPolicy withMaxSessionDurationMs(long v) { this.maxSessionDurationMs = v; return this; }
+    public LivenessPolicy withFrameSamplingRate(int v) { this.frameSamplingRate = v; return this; }
+    public LivenessPolicy withFrameSamplingMinFps(int v) { this.frameSamplingMinFps = v; return this; }
+    public LivenessPolicy withCombinedPassiveWeight(double v) { this.combinedPassiveWeight = v; return this; }
+    public LivenessPolicy withCombinedActiveWeight(double v) { this.combinedActiveWeight = v; return this; }
+    public LivenessPolicy withPassiveThresholdActive(double v) { this.passiveThresholdActive = v; return this; }
 
     public Boolean livenessEnabled() { return livenessEnabled; }
     public Boolean activeLivenessEnabled() { return activeLivenessEnabled; }
@@ -46,6 +60,13 @@ public final class LivenessPolicy {
     public Long challengeTimeoutMs() { return challengeTimeoutMs; }
     public Set<ChallengeType> allowedChallenges() { return allowedChallenges; }
     public RepeatedFailureAction onRepeatedFailure() { return onRepeatedFailure; }
+    // v3 getters
+    public Long maxSessionDurationMs() { return maxSessionDurationMs; }
+    public Integer frameSamplingRate() { return frameSamplingRate; }
+    public Integer frameSamplingMinFps() { return frameSamplingMinFps; }
+    public Double combinedPassiveWeight() { return combinedPassiveWeight; }
+    public Double combinedActiveWeight() { return combinedActiveWeight; }
+    public Double passiveThresholdActive() { return passiveThresholdActive; }
 
     /** @return the first non-null override value, else the base default. */
     static <T> T coalesce(T override, T base) {

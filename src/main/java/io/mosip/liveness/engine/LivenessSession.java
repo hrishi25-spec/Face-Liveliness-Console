@@ -3,6 +3,7 @@ package io.mosip.liveness.engine;
 import io.mosip.liveness.challenge.ChallengeSelector;
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.core.Challenge;
+import io.mosip.liveness.core.ChallengeProgress;
 import io.mosip.liveness.core.LivenessErrorCode;
 import io.mosip.liveness.core.WorkflowType;
 
@@ -21,6 +22,9 @@ final class LivenessSession {
     private final long startedAtMillis;
     private final ChallengeSelector selector;
     private final ArrayDeque<Double> scores = new ArrayDeque<>();
+    // v3: passive re-evaluation during active phase
+    private final ArrayDeque<Double> activePassiveScores = new ArrayDeque<>();
+    private final List<ChallengeProgress> challengeProgressEvents = new ArrayList<>();
 
     private State state = State.SCORING;
     private boolean bypass;
@@ -36,6 +40,10 @@ final class LivenessSession {
     private LivenessErrorCode errorCode;
     private SessionSummary.Outcome outcome;
     private io.mosip.liveness.core.PadAttackType padAttackType;
+    // v3: track if action was detected for hold-still logic
+    private boolean actionDetectedThisChallenge;
+    // v7: per-session frame counter for sampling
+    private int frameCounter;
 
     LivenessSession(String sessionId, WorkflowType workflow, EffectivePolicy policy, long startedAtMillis) {
         this.sessionId = sessionId;
@@ -65,6 +73,13 @@ final class LivenessSession {
     SessionSummary.Outcome outcome() { return outcome; }
     io.mosip.liveness.core.PadAttackType padAttackType() { return padAttackType; }
     ChallengeSelector selector() { return selector; }
+    List<ChallengeProgress> challengeProgressEvents() { return List.copyOf(challengeProgressEvents); }
+    boolean actionDetectedThisChallenge() { return actionDetectedThisChallenge; }
+
+    // ---- session timeout check (G3) ----
+    boolean isSessionTimedOut(long nowMillis) {
+        return (nowMillis - startedAtMillis) > policy.maxSessionDurationMs();
+    }
 
     // ---- transitions ----
 
@@ -106,6 +121,8 @@ final class LivenessSession {
         challengeStartedAtMillis = nowMillis;
         challengeDeadlineMillis = nowMillis + policy.challengeTimeoutMs();
         state = State.IN_CHALLENGE;
+        actionDetectedThisChallenge = false;
+        activePassiveScores.clear();
     }
 
     void setCurrentChallenge(Challenge challenge) {
@@ -115,6 +132,7 @@ final class LivenessSession {
     void awaitNextChallenge() {
         currentChallenge = null;
         state = State.ESCALATED;
+        actionDetectedThisChallenge = false;
     }
 
     void registerChallengeSuccess() {
@@ -141,9 +159,42 @@ final class LivenessSession {
         outcome = SessionSummary.Outcome.ABORTED;
     }
 
+    // v3: passive re-evaluation during active phase
+    void addActivePassiveScore(double score) {
+        activePassiveScores.addLast(score);
+        while (activePassiveScores.size() > policy.passiveWindowFrames()) {
+            activePassiveScores.pollFirst();
+        }
+    }
+
+    /** Check if passive score dropped below threshold during active challenge. */
+    boolean passiveScoreFailedDuringActive(double thresholdActive) {
+        if (activePassiveScores.size() < policy.passiveMinFrames()) {
+            return false; // not enough frames yet
+        }
+        List<Double> snapshot = new ArrayList<>(activePassiveScores);
+        double median = LivenessDecisionLogic.median(snapshot);
+        return median < thresholdActive;
+    }
+
+    // v3: challenge progress tracking
+    void recordChallengeProgress(ChallengeProgress progress) {
+        challengeProgressEvents.add(progress);
+        if (progress == ChallengeProgress.ACTION_DETECTED || progress == ChallengeProgress.HOLD_STILL) {
+            actionDetectedThisChallenge = true;
+        }
+    }
+
     SessionSummary summarize(long durationMs) {
         return new SessionSummary(sessionId, workflow, outcome, escalated, lastMedianScore,
-                padAttackType, challengeAttempts, challengesPassed, challengesFailed, durationMs);
+                padAttackType, challengeAttempts, challengesPassed, challengesFailed, durationMs,
+                challengeProgressEvents());
+    }
+
+    // G7: per-session frame sampling counter
+    boolean incrementAndCheckFrameSampling() {
+        frameCounter++;
+        return frameCounter % policy.frameSamplingRate() == 0;
     }
 
     long startedAtMillis() { return startedAtMillis; }

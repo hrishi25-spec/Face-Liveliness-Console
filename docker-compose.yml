@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pad_liveness_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mosip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-pad_liveness}
+    ports:
+      # Bound to loopback so the database is reachable from the host for local
+      # development only, not from the network.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mosip}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: pad_liveness_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-pad_liveness}
+      POSTGRES_APP_USER: pad_runtime
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+      POSTGRES_MIGRATE_USER: pad_migrate
+      # First-supervisor bootstrap. Set both in .env only for the first boot
+      # against an empty database: every privileged route needs an account, and
+      # this is how the first one exists. Leaving them set is a no-op from then
+      # on (the bootstrap does nothing once any account exists), but the honest
+      # deployment unsets them after signing in and replacing the password.
+      MOSIP_AUTH_BOOTSTRAP_USERNAME: ${MOSIP_AUTH_BOOTSTRAP_USERNAME:-}
+      MOSIP_AUTH_BOOTSTRAP_PASSWORD: ${MOSIP_AUTH_BOOTSTRAP_PASSWORD:-}
+      # HMAC key for the config audit chain; optional, but recommended.
+      MOSIP_AUDIT_HMAC_SECRET: ${MOSIP_AUDIT_HMAC_SECRET:-}
+      # Keep the old key available while immutable history still needs it.
+      MOSIP_AUDIT_HMAC_PREVIOUS_SECRET: ${MOSIP_AUDIT_HMAC_PREVIOUS_SECRET:-}
+      # Challenge-window floor in ms (default 15000, hard minimum 1000).
+      MIN_CHALLENGE_WINDOW_MS: ${MIN_CHALLENGE_WINDOW_MS:-15000}
+      # Peers whose forwarded client IP may be believed for rate limiting, e.g.
+      # the reverse proxy or this compose network's gateway. Empty = trust nobody.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+    ports:
+      - "8000:8000"
+    command: java -jar /app/app.jar --spring.profiles.active=default
+
+volumes:
+  pg_data:

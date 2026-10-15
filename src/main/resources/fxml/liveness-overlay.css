@@ -1,0 +1,105 @@
+/*
+ * Desktop (JavaFX) liveness challenge overlay — docs/ui-ux-design.md.
+ * Dark translucent cards over the live camera preview; no technical detail
+ * (scores, PAD, model internals) is ever rendered (design §1).
+ */
+
+.liveness-overlay {
+    -fx-background-color: transparent;
+}
+
+.liveness-preview {
+    -fx-background-color: transparent;
+}
+
+/* Positioning guidance: white oval, green once PASSED (design §1). */
+.liveness-oval-guide {
+    -fx-fill: transparent;
+    -fx-stroke: rgba(255, 255, 255, 0.75);
+    -fx-stroke-width: 3;
+}
+
+.liveness-overlay.passed .liveness-oval-guide {
+    -fx-stroke: #4caf50;
+}
+
+/* Status / challenge / failure cards. */
+.liveness-card {
+    -fx-background-color: rgba(20, 20, 20, 0.85);
+    -fx-background-radius: 14;
+    -fx-padding: 16 20 16 20;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.35), 12, 0.2, 0, 3);
+}
+
+.failure-card {
+    -fx-background-color: rgba(140, 20, 20, 0.9);
+}
+
+.status-label,
+.failure-message {
+    -fx-text-fill: white;
+    -fx-font-size: 15px;
+    -fx-alignment: center;
+    -fx-text-alignment: center;
+}
+
+.challenge-index {
+    -fx-text-fill: rgba(255, 255, 255, 0.75);
+    -fx-font-size: 12px;
+}
+
+.challenge-prompt {
+    -fx-text-fill: white;
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-alignment: center;
+    -fx-text-alignment: center;
+}
+
+.challenge-feedback {
+    -fx-text-fill: rgba(255, 255, 255, 0.9);
+    -fx-font-size: 13px;
+}
+
+.lockout-countdown {
+    -fx-text-fill: #ffd54f;
+    -fx-font-size: 13px;
+}
+
+/* Context-sensitive actions (design §1 screen sketch). */
+.liveness-retry {
+    -fx-background-color: #1976d2;
+    -fx-text-fill: white;
+    -fx-background-radius: 8;
+    -fx-padding: 8 20 8 20;
+    -fx-font-size: 14px;
+}
+
+.liveness-retry:hover {
+    -fx-background-color: #1565c0;
+}
+
+.liveness-cancel {
+    -fx-background-color: transparent;
+    -fx-text-fill: rgba(255, 255, 255, 0.85);
+    -fx-border-color: rgba(255, 255, 255, 0.5);
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+    -fx-padding: 8 20 8 20;
+    -fx-font-size: 14px;
+}
+
+.liveness-cancel:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.12);
+}
+
+.progress-bar > .track {
+    -fx-background-color: rgba(255, 255, 255, 0.25);
+    -fx-background-radius: 4;
+}
+
+.progress-bar > .bar {
+    -fx-background-color: #64b5f6;
+    -fx-background-radius: 4;
+    -fx-padding: 3;
+}

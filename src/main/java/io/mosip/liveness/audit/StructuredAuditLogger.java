@@ -6,7 +6,8 @@ import java.time.Instant;
 /**
  * Writes key=value structured audit lines to a PrintStream (file or stdout).
  * Format: ts=... event=... session=... workflow=... k=v ...
- * Never emits raw frames or model internals — only decisions and scores.
+ * Never emits raw frames, model internals, secrets, keys, tokens, or raw biometric data — only decisions and scores.
+ * Developers should audit their usage of AuditEvent.field() to ensure no sensitive data is inadvertently logged.
  */
 public final class StructuredAuditLogger implements AuditLogger {
 
@@ -15,6 +16,11 @@ public final class StructuredAuditLogger implements AuditLogger {
 
     public StructuredAuditLogger(PrintStream out) {
         this.out = out;
+    }
+
+    /** Factory for a stdout logger (convenience for quick setup). */
+    public static StructuredAuditLogger toStdout() {
+        return new StructuredAuditLogger(System.out);
     }
 
     @Override
