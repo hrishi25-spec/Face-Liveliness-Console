@@ -28,6 +28,12 @@ public class ChallengeResponse {
     private ChallengeStatus status;
     private Integer attemptNumber;
     private Integer timeoutMs;
+    /**
+     * True for a challenge requested by hand on a session that already passed
+     * (an extra check whose verdict never rewrites the session outcome);
+     * false/null for an engine-issued escalation challenge.
+     */
+    private Boolean manual;
     private OffsetDateTime issuedAt;
     private OffsetDateTime completedAt;
 }

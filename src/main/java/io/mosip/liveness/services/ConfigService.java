@@ -1,8 +1,10 @@
 package io.mosip.liveness.services;
 
 import io.mosip.liveness.config.EffectivePolicy;
+import io.mosip.liveness.config.LivenessConfig;
+import io.mosip.liveness.config.WorkflowPolicyDefaults;
 import io.mosip.liveness.core.ChallengeType;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 import io.mosip.liveness.crud.ConfigPolicyRepository;
 import io.mosip.liveness.models.entity.ConfigPolicy;
@@ -27,6 +29,25 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ConfigService {
 
+    /**
+     * Fallback challenge window when neither the DB row nor the caller supplies
+     * one. Kept as a single named constant so it cannot drift away from the
+     * engine default declared in {@link LivenessConfig}.
+     */
+    private static final long DEFAULT_CHALLENGE_TIMEOUT_MS = LivenessConfig.DEFAULT_CHALLENGE_TIMEOUT_MS;
+
+    /*
+     * Every DB-miss fallback is pinned to the engine's own constants. These
+     * used to be three unrelated literals (0.75 / 0.50 / 5 / 7) while
+     * application.yml, LivenessConfig and the docs said 0.80 / 0.50 / 5 / 7 —
+     * so a missing config_policies row silently changed the operating point.
+     * One source of truth: LivenessConfig, mirrored by application.yml.
+     */
+    private static final double DEFAULT_PASSIVE_THRESHOLD = LivenessConfig.DEFAULT_PASSIVE_THRESHOLD;
+    private static final double DEFAULT_MIN_FACE_QUALITY = LivenessConfig.DEFAULT_MIN_FACE_QUALITY;
+    private static final int DEFAULT_PASSIVE_MIN_FRAMES = LivenessConfig.DEFAULT_PASSIVE_MIN_FRAMES;
+    private static final int DEFAULT_PASSIVE_WINDOW_FRAMES = LivenessConfig.DEFAULT_PASSIVE_WINDOW_FRAMES;
+
     private final ConfigPolicyRepository configRepo;
 
     /**
@@ -36,7 +57,10 @@ public class ConfigService {
     public EffectivePolicy getEffectivePolicy(WorkflowType workflow) {
         ConfigPolicy db = configRepo.findByWorkflowType(toDbWorkflow(workflow)).orElse(null);
         if (db == null) {
-            return defaultEffectivePolicy();
+            // No row yet: use the workflow's own defaults, never one global
+            // fallback — the whole point of the three workflows is that their
+            // operating points differ even before an operator edits them.
+            return WorkflowPolicyDefaults.forWorkflow(workflow);
         }
         return mapToEffectivePolicy(db);
     }
@@ -59,16 +83,16 @@ public class ConfigService {
         return new EffectivePolicy(
                 db.getLivenessEnabled() != null ? db.getLivenessEnabled() : true,
                 db.getActiveLivenessEnabled() != null ? db.getActiveLivenessEnabled() : true,
-                db.getPassiveThreshold() != null ? db.getPassiveThreshold() : 0.75,
-                0.50,  // minFaceQuality (not yet in DB schema)
-                5,     // passiveMinFrames (not yet in DB schema)
-                7,     // passiveWindowFrames (not yet in DB schema)
+                db.getPassiveThreshold() != null ? db.getPassiveThreshold() : DEFAULT_PASSIVE_THRESHOLD,
+                DEFAULT_MIN_FACE_QUALITY,
+                DEFAULT_PASSIVE_MIN_FRAMES,
+                DEFAULT_PASSIVE_WINDOW_FRAMES,
                 db.getMinChallengeCount() != null ? db.getMinChallengeCount() : 1,
                 db.getMaxRetryCount() != null ? db.getMaxRetryCount() : 3,
-                db.getChallengeTimeoutMs() != null ? db.getChallengeTimeoutMs() : 8000L,
+                db.getChallengeTimeoutMs() != null ? db.getChallengeTimeoutMs() : DEFAULT_CHALLENGE_TIMEOUT_MS,
                 challenges,
                 mapFailurePolicy(db.getOnRepeatedFailure()),
-<<<<<<< Updated upstream
+
                 // v3 fields
                 -1.0,  // passiveThresholdActive (sentinel: use passiveThreshold)
                 30000L, // maxSessionDurationMs
@@ -76,14 +100,6 @@ public class ConfigService {
                 10,     // frameSamplingMinFps
                 0.6,    // combinedPassiveWeight
                 0.4);   // combinedActiveWeight
-=======
-                db.getPassiveThreshold() != null ? db.getPassiveThreshold() : 0.75, // passiveThresholdActive
-                30_000L, // maxSessionDurationMs
-                2,       // frameSamplingRate
-                15,      // frameSamplingMinFps
-                0.4,     // combinedPassiveWeight
-                0.6);    // combinedActiveWeight
->>>>>>> Stashed changes
     }
 
     // ---- Enum conversions between core and models layers ----
@@ -113,16 +129,11 @@ public class ConfigService {
             case "SMILE" -> ChallengeType.SMILE;
             case "TURN_LEFT" -> ChallengeType.TURN_HEAD_LEFT;
             case "TURN_RIGHT" -> ChallengeType.TURN_HEAD_RIGHT;
-<<<<<<< Updated upstream
             case "LOOK_DIRECTION" -> ChallengeType.LOOK_DIRECTION;
             case "LOOK_UP" -> ChallengeType.LOOK_UP;
             case "LOOK_DOWN" -> ChallengeType.LOOK_DOWN;
             case "LOOK_LEFT" -> ChallengeType.LOOK_LEFT;
             case "LOOK_RIGHT" -> ChallengeType.LOOK_RIGHT;
-=======
-            case "LOOK_DIRECTION", "LOOK_UP", "LOOK_DOWN", "LOOK_LEFT", "LOOK_RIGHT"
-                    -> ChallengeType.LOOK_DIRECTION;
->>>>>>> Stashed changes
             default -> ChallengeType.BLINK; // safe fallback
         };
     }
@@ -134,16 +145,11 @@ public class ConfigService {
             case SMILE -> io.mosip.liveness.models.enums.ChallengeType.SMILE;
             case TURN_HEAD_LEFT -> io.mosip.liveness.models.enums.ChallengeType.TURN_LEFT;
             case TURN_HEAD_RIGHT -> io.mosip.liveness.models.enums.ChallengeType.TURN_RIGHT;
-<<<<<<< Updated upstream
             case LOOK_DIRECTION -> io.mosip.liveness.models.enums.ChallengeType.LOOK_DIRECTION;
             case LOOK_UP -> io.mosip.liveness.models.enums.ChallengeType.LOOK_UP;
             case LOOK_DOWN -> io.mosip.liveness.models.enums.ChallengeType.LOOK_DOWN;
             case LOOK_LEFT -> io.mosip.liveness.models.enums.ChallengeType.LOOK_LEFT;
             case LOOK_RIGHT -> io.mosip.liveness.models.enums.ChallengeType.LOOK_RIGHT;
-=======
-            case LOOK_DIRECTION, LOOK_UP, LOOK_DOWN, LOOK_LEFT, LOOK_RIGHT
-                    -> io.mosip.liveness.models.enums.ChallengeType.LOOK_DIRECTION;
->>>>>>> Stashed changes
         };
     }
 
@@ -156,28 +162,13 @@ public class ConfigService {
         };
     }
 
-    private EffectivePolicy defaultEffectivePolicy() {
-        return new EffectivePolicy(
-                true, true, 0.75, 0.50, 5, 7,
-                1, 3, 8000L,
-                EnumSet.of(ChallengeType.BLINK, ChallengeType.SMILE,
-                        ChallengeType.TURN_HEAD_LEFT, ChallengeType.TURN_HEAD_RIGHT),
-                RepeatedFailureAction.LOCK_OUT,
-<<<<<<< Updated upstream
-                // v3 fields
-                -1.0,   // passiveThresholdActive
-                30000L, // maxSessionDurationMs
-                1,      // frameSamplingRate
-                10,     // frameSamplingMinFps
-                0.6,    // combinedPassiveWeight
-                0.4);   // combinedActiveWeight
-=======
-                0.75,  // passiveThresholdActive
-                30_000L, // maxSessionDurationMs
-                2,       // frameSamplingRate
-                15,      // frameSamplingMinFps
-                0.4,     // combinedPassiveWeight
-                0.6);    // combinedActiveWeight
->>>>>>> Stashed changes
+    /** Convert the engine's repeated-failure action to the DB/API enum. */
+    public FailurePolicy toDbFailure(RepeatedFailureAction action) {
+        if (action == null) return FailurePolicy.LOCK;
+        return switch (action) {
+            case LOCK_OUT -> FailurePolicy.LOCK;
+            case ESCALATE_TO_OPERATOR -> FailurePolicy.ESCALATE;
+            case FALLBACK -> FailurePolicy.ALLOW_RETRY;
+        };
     }
 }

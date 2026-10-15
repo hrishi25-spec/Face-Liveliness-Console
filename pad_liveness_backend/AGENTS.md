@@ -1,0 +1,13 @@
+# Python liveness backend
+
+These rules apply only to the FastAPI service in this directory.
+
+- Keep this service's routes, schemas, database models, and configuration self-contained. Coordinate intentionally when a public contract shared with the Spring service or clients changes; do not assume both backends have identical internals.
+- PostgreSQL is the service database, and the Alembic revisions in `alembic/versions/` are the source of truth for its schema. Change a model and add a revision together; do not rely on `Base.metadata.create_all` or `app.db.init_db` for anything but a local scratch database.
+- The in-memory SQLite API tests verify request behavior without PostgreSQL, camera hardware, or real model inference. They are not a schema check: SQLite accepts column types, enum handling, and `JSONB`/`UUID`/`timestamptz` behavior differently from PostgreSQL. Do not treat a green SQLite run as evidence that a model or migration change is correct.
+- The PostgreSQL integration tests are that check. `tests/test_postgres_migrations.py` runs the real `alembic` CLI against a `postgres:16-alpine` container, asserts `alembic check` reports no drift from the models, and covers the upgrade/downgrade round trip; `tests/test_postgres_persistence.py` exercises session persistence against the migrated schema. Run them when you touch models, migrations, or persistence code. They need a Docker daemon and skip without one, so CI sets `PAD_LIVENESS_REQUIRE_POSTGRES=1` to fail instead of skipping. boundary-allow: the Alembic drift check runs inside these tests on every CI run rather than as a workflow step of its own
+- Import `Base` from `app.db.base_class` in model modules, never from `app.db.base`. `app.db.base` is the import hub that pulls in every model to complete `Base.metadata`; a model importing from it re-creates a circular import that only surfaces when `app.main` or `app.crud.*` is imported first, which is exactly what `uvicorn app.main:app` does. `tests/test_app_imports.py` guards this by importing the documented entry points in a fresh interpreter.
+- Keep model inference behind the existing liveness/PAD engine interfaces, and keep API responses free of model internals and sensitive frame data.
+- Use environment-based configuration and test-only credentials. Do not commit live secrets or biometric samples.
+- Install test dependencies from `requirements-dev.txt` and run `python -m pytest -q` from this directory. The behavioral tests use an isolated database and stub model engines.
+- Follow this directory's README for local service setup and database commands; do not apply the root Maven build instructions to this service.

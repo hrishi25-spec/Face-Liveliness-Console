@@ -1,0 +1,54 @@
+# Low-resource profile — 2 cores, 2 GB RAM, no GPU (Windows / macOS / Linux).
+#
+# Opt-in, never a default. Activate it with `./start.sh --lowmem`,
+# `start.bat --lowmem`, or `--spring.profiles.active=dev,lowmem` alongside
+# whichever database profile you run (dev = H2, default = PostgreSQL). With no
+# profile argument nothing here is read, so the shipped behaviour is unchanged.
+#
+# ---------------------------------------------------------------------------
+# This file deliberately sets no property.
+#
+# It is the profile half of the `--lowmem` mode, and every Spring-side candidate
+# for it was measured on 2 pinned cores with cold boots (alternating baseline and
+# tuned, five boots per side unless noted) and then left out because it did not
+# pay for itself. The measured win is the JVM half — a capped heap, Serial GC and
+# a class-data-sharing archive, all of which are JVM flags and cannot be expressed
+# in YAML. `--lowmem` applies both halves; the numbers are in
+# docs/configuration.md § "Running on 2 cores / 2 GB".
+#
+#   * springdoc.api-docs.enabled / swagger-ui.enabled: false — measured flat:
+#     22.3 s -> 22.2 s of boot and 318 MB -> 323 MB of RSS over 14 paired boots
+#     (6 wins, 5 losses, 3 ties). SpringDoc builds the OpenAPI document on the
+#     first request to /v3/api-docs, not during startup, so disabling it removes
+#     an on-demand cost no registration client ever asks for rather than boot
+#     work. It stays enabled so the API explorer keeps working on every host.
+#
+#   * server.tomcat.threads.max: 50 -> 20 together with
+#     spring.datasource.hikari.maximum-pool-size: 5 -> 2 — boot unchanged
+#     (+0.1 s) and 329.3 MB -> 323.3 MB of RSS (−1.8 %), inside the ±5 % spread
+#     of both sides' samples. Tomcat creates request threads on demand and the
+#     pool already starts at minimum-idle: 1, so lowering the ceilings only
+#     changes what a burst could allocate — which is not what a low-memory host
+#     runs out of. Screened separately as well: 295.1 MB (threads) and 308.1 MB
+#     (pool) against a 325.4 MB control, the same spread.
+#
+#   * -Xss512k — no saving to justify it: 325.4 MB -> 327.9 MB of RSS and no
+#     boot change. Thread stacks are committed lazily, and at 38 threads the
+#     stack reservation is not what a 2 GB box is short of.
+#
+#   * logging.level.root: WARN plus spring.jpa.show-sql: false — 22.2 s -> 22.4 s
+#     of boot and 318.3 MB -> 323.1 MB of RSS. Log volume is not a measurable
+#     cost at this scale, and the quieter profile would have hidden startup
+#     diagnostics the launchers and the cold-boot gate read.
+#
+#   * spring.main.lazy-initialization: true — the fastest candidate and rejected
+#     anyway: it moves work (the dispatcher servlet, the entity manager and the
+#     schema step) from boot to the first request instead of removing it, so a
+#     deployment would answer /health before its schema was migrated and a
+#     configuration error would surface as a failed first frame. See the same
+#     section of docs/configuration.md.
+#
+# Keeping the file (rather than deleting it) is the point: it is where a
+# property belongs if a future measurement earns one, and deployments that pass
+# profiles by hand — Docker, Kubernetes, systemd — can name the mode instead of
+# encoding a flag set in a manifest.

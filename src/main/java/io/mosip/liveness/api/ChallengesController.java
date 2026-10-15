@@ -45,7 +45,12 @@ public class ChallengesController {
         LivenessSession session = sessionRepo.findById(sessionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
 
-        if (session.getStatus() != SessionStatus.ACTIVE) {
+        // The status guard cannot run before the challenge lookup any more: a
+        // manually requested extra check is validated on a session that already
+        // PASSED (see ActiveLivenessController), so the challenge's own `manual`
+        // flag decides whether a non-ACTIVE session is acceptable.
+        if (session.getStatus() != SessionStatus.ACTIVE
+                && session.getStatus() != SessionStatus.PASSED) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Session is not active (status=" + session.getStatus() + ")");
         }
@@ -62,6 +67,11 @@ public class ChallengesController {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Challenge is not awaiting validation (status=" + challenge.getStatus() + ")");
         }
+        if (session.getStatus() == SessionStatus.PASSED
+                && !Boolean.TRUE.equals(challenge.getManual())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Session is not active (status=" + session.getStatus() + ")");
+        }
 
         List<Mat> frames = new ArrayList<>();
         try {
@@ -74,15 +84,23 @@ public class ChallengesController {
             challengeRepo.save(challenge);
             sessionRepo.save(session);
 
+            // A retry_challenge verdict issues a brand-new challenge. Return that
+            // one so the client can immediately validate against it, instead of the
+            // challenge that was just resolved (which is now PASSED or FAILED).
+            Object newlyIssued = result.get("challenge");
+            ChallengeEntity responseChallenge =
+                    newlyIssued instanceof ChallengeEntity issued ? issued : challenge;
+
             ChallengeResponse challengeResp = ChallengeResponse.builder()
-                    .id(challenge.getId())
+                    .id(responseChallenge.getId())
                     .sessionId(sessionId)
-                    .challengeType(challenge.getChallengeType())
-                    .status(challenge.getStatus())
-                    .attemptNumber(challenge.getAttemptNumber())
-                    .timeoutMs(challenge.getTimeoutMs())
-                    .issuedAt(challenge.getIssuedAt())
-                    .completedAt(challenge.getCompletedAt())
+                    .challengeType(responseChallenge.getChallengeType())
+                    .status(responseChallenge.getStatus())
+                    .attemptNumber(responseChallenge.getAttemptNumber())
+                    .timeoutMs(responseChallenge.getTimeoutMs())
+                    .manual(responseChallenge.getManual())
+                    .issuedAt(responseChallenge.getIssuedAt())
+                    .completedAt(responseChallenge.getCompletedAt())
                     .build();
 
             return ChallengeValidationResult.builder()
@@ -90,6 +108,7 @@ public class ChallengesController {
                     .challenge(challengeResp)
                     .passed((Boolean) result.get("passed"))
                     .action((String) result.get("action"))
+                    .mayRetrySession((Boolean) result.get("mayRetrySession"))
                     .message((String) result.get("message"))
                     .build();
         } finally {

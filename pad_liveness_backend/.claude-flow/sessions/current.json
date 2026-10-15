@@ -1,0 +1,13 @@
+{
+  "id": "session-1791722618342",
+  "startedAt": "2026-10-11T12:43:38.342Z",
+  "cwd": "/home/hriishiibanerjee/Documents/MOSSIP-Vibe-Coded/pad_liveness_backend",
+  "context": {},
+  "metrics": {
+    "edits": 20,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "restoredAt": "2026-10-11T13:38:12.119Z"
+}

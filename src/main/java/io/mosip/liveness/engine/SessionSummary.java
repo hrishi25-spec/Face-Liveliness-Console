@@ -22,6 +22,7 @@ public record SessionSummary(
 ) {
 
     /** @deprecated Use the full constructor with challengeProgressEvents. */
+    @Deprecated
     public SessionSummary(String sessionId, WorkflowType workflow, Outcome outcome,
                           boolean escalatedToActive, double finalMedianScore,
                           PadAttackType padAttackType, int challengesIssued,

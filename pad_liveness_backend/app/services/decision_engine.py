@@ -10,7 +10,9 @@ the spec:
   4. Passive score < threshold -> escalate to ACTIVE stage, issue a
      dynamically selected challenge.
   5. Active challenge validated -> proceed (PASSED). Failed/timeout ->
-     retry (new challenge) up to max_retry_count, then FAILED.
+     retry (new challenge) up to max_retry_count, then the terminal action
+     the session's on_repeated_failure policy selects (`locked` / `failed` /
+     `escalate_to_operator`, matching the Spring service).
 
 This module is transport-agnostic: it takes decoded frames/DB session and
 returns plain result objects; the API layer turns those into HTTP responses.
@@ -29,6 +31,24 @@ from app.models.liveness_session import LivenessSession
 from app.services.challenge_selector import select_challenge
 from app.services.liveness_engine import get_liveness_engine
 from app.services.pad_engine import get_pad_engine
+from app.shared.definitions.repeated_failure_action import (
+    ESCALATE_TO_OPERATOR,
+    FALLBACK,
+    LOCK_OUT,
+)
+
+# The policy -> terminal-outcome table. The outcomes themselves live in
+# app/shared/definitions/repeated_failure_action.py, which is the single source
+# of truth shared with the Spring service
+# (io.mosip.liveness.shared.definitions) and with docs/configuration.md's
+# failure table — this module only decides which of them a workflow's
+# on_repeated_failure selects, so the user-facing strings cannot drift between
+# the two backends or from the documentation.
+POLICY_OUTCOMES = {
+    FailurePolicy.LOCK: LOCK_OUT,
+    FailurePolicy.ESCALATE: ESCALATE_TO_OPERATOR,
+    FailurePolicy.ALLOW_RETRY: FALLBACK,
+}
 
 
 @dataclass
@@ -51,8 +71,13 @@ class FrameDecision:
 @dataclass
 class ChallengeDecision:
     passed: bool
-    action: str  # proceed | retry_challenge | reject
+    action: str  # proceed | retry_challenge | reject | locked |
+                 # escalate_to_operator | failed
     message: str
+    # Set only on a terminal budget-exhausted verdict: True when the frozen
+    # policy lets the client open a fresh session (ALLOW_RETRY), False for
+    # LOCK/ESCALATE. None on every non-terminal verdict.
+    may_retry_session: bool | None = None
 
 
 def _finalize(db: DBSession, sess: LivenessSession, passed: bool, reason: str | None = None) -> None:
@@ -239,15 +264,16 @@ def process_challenge_validation(
     db.commit()
 
     if sess.retry_count >= policy.max_retry_count:
-        reason = "max_retries_exceeded"
-        if policy.on_repeated_failure == FailurePolicy.LOCK:
-            reason = "max_retries_exceeded_locked"
-        elif policy.on_repeated_failure == FailurePolicy.ESCALATE:
-            reason = "max_retries_exceeded_escalated"
-        _finalize(db, sess, False, reason)
+        # The policy, not this branch, decides what the client is told: LOCK
+        # locks the session out, ESCALATE flags it for an operator, and
+        # ALLOW_RETRY is the only one that may open a fresh session. Reporting
+        # all three as `reject` made a per-workflow on_repeated_failure stored
+        # config rather than behaviour (the Spring service had the same gap).
+        outcome = POLICY_OUTCOMES[policy.on_repeated_failure]
+        _finalize(db, sess, False, outcome.failure_reason)
         return ChallengeDecision(
-            passed=False, action="reject",
-            message="We could not verify face liveness. Please try again.",
+            passed=False, action=outcome.action, message=outcome.message,
+            may_retry_session=outcome.may_retry_session,
         )
 
     return ChallengeDecision(

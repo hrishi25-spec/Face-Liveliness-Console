@@ -1,3 +1,25 @@
+server:
+  # Matches the Dockerfile EXPOSE / docker-compose port mapping and the README examples.
+  port: ${SERVER_PORT:8000}
+
+  # Never leak stack traces or exception messages to clients; the
+  # GlobalExceptionHandler already returns structured, safe error bodies.
+  error:
+    include-stacktrace: never
+    include-message: never
+
+  # Gzip JSON/HTML — lower bandwidth for thin client connections.
+  compression:
+    enabled: true
+    mime-types: application/json,text/html,text/css,application/javascript
+    min-response-size: 1024
+
+  tomcat:
+    # The service is I/O-light (frames arrive at a few Hz per session), so a
+    # small thread pool is plenty and saves native memory on low-end hosts.
+    threads:
+      max: ${TOMCAT_THREADS_MAX:50}
+
 spring:
   application:
     name: pad-liveness-backend
@@ -5,12 +27,14 @@ spring:
   # ---- PostgreSQL ----
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:pad_liveness}
-    username: ${POSTGRES_USER:mosip}
-    password: ${POSTGRES_PASSWORD:change_me}
+    username: ${POSTGRES_APP_USER:pad_runtime}
+    password: ${POSTGRES_APP_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
+      # 5 connections are ample for the few writes per frame/challenge and
+      # keep PostgreSQL-side memory small on low-end hosts.
+      maximum-pool-size: ${DB_POOL_SIZE:5}
+      minimum-idle: 1
       idle-timeout: 300000
 
   # ---- JPA / Hibernate ----
@@ -21,13 +45,24 @@ spring:
     properties:
       hibernate:
         format_sql: true
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+        # NOTE: the dialect is intentionally not pinned here. Pinning
+        # PostgreSQLDialect while the dev profile runs H2 made Hibernate read
+        # OffsetDateTime columns back through the JVM's zone, so every persisted
+        # instant shifted by the local offset (a row written at 20:26:54Z read back
+        # as 14:56:54Z on a +05:30 machine). Letting Hibernate pick the dialect from
+        # the actual JDBC connection keeps instants exact on both H2 and PostgreSQL.
 
   # ---- Flyway (replaces Alembic) ----
   flyway:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    # Separate datasource for Flyway migrations - uses pad_migrate role which owns
+    # the public schema and has DDL permissions. The main datasource uses pad_runtime
+    # which has only DML permissions (cannot ALTER TABLE ... DISABLE TRIGGER).
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:pad_liveness}
+    user: ${POSTGRES_MIGRATE_USER:pad_migrate}
+    password: ${POSTGRES_PASSWORD}
 
   # ---- Jackson ----
   jackson:
@@ -37,14 +72,138 @@ spring:
 
 # ---- MOSIP Liveness Engine ----
 mosip:
+  security:
+    # ---- Authentication (accounts + sessions) ----
+    # The privileged surface (PUT /api/v1/config/*, the calibration sweep and
+    # user management) is reached with a username and password, not a shared
+    # key: see auth-users/auth-tokens (V12__auth_users_and_tokens.sql).
+    auth:
+      # How long a session lives. Short by design — this is the value that
+      # bounds a stolen token, and a supervisor can always sign in again.
+      token-ttl-seconds: ${MOSIP_AUTH_TOKEN_TTL_SECONDS:3600}
+      # Consecutive failed sign-ins before the account locks. The lock is a
+      # stored timestamp, so it survives a restart and ends by itself.
+      max-failed-attempts: ${MOSIP_AUTH_MAX_FAILED_ATTEMPTS:5}
+      lockout-seconds: ${MOSIP_AUTH_LOCKOUT_SECONDS:900}
+      # BCrypt cost (log2 of the work per verification). 12 is ~300 ms on the
+      # 2-core target. Lowering it makes every stored password cheaper to crack
+      # offline, so anything below 10 is refused at startup outside dev — the
+      # test suite runs at 4 and would be refused anywhere else.
+      bcrypt-cost: ${MOSIP_AUTH_BCRYPT_COST:12}
+      # First-supervisor bootstrap. Both or neither; startup fails on one alone.
+      # Runs ONLY when no account exists at all, so leaving these set cannot
+      # re-create an account or reset a password on a later boot. The created
+      # account must change its password at first sign-in. Unset them once you
+      # have signed in.
+      bootstrap-username: ${MOSIP_AUTH_BOOTSTRAP_USERNAME:}
+      bootstrap-password: ${MOSIP_AUTH_BOOTSTRAP_PASSWORD:}
+      # Whether the session cookie carries Secure. Leave false for the shipped
+      # loopback HTTP deployment (a browser drops a Secure cookie over http, so
+      # the sign-in would appear to succeed and silently not); set true behind
+      # TLS.
+      cookie-secure: ${MOSIP_AUTH_COOKIE_SECURE:false}
+    # Operator key, presented as X-Operator-API-Key on operator routes
+    # (GET /api/v1/auth/role and the two read-only feeds). It proves OPERATOR
+    # only: it is never accepted on a privileged route, so a leaked key reads
+    # feeds and cannot write a policy or an account. Blank closes key-based
+    # access to those routes — nobody is answered OPERATOR by a key — while a
+    # signed-in account still reaches them. Minimum 16 characters when set;
+    # startup fails on anything shorter.
+    operator-api-key: ${MOSIP_OPERATOR_API_KEY:}
+    # Secret that keys the audit chain's hashes (HMAC-SHA-256) so an attacker
+    # with database write access cannot recompute the chain — the secret lives
+    # on the app server, not in the database. Minimum 16 characters; startup
+    # fails on anything shorter. Blank falls back to plain SHA-256 over the
+    # same canonical form (tamper-detecting, not tamper-proof) and
+    # GET /api/v1/config/audit/verify reports hmac: false so the weaker mode
+    # is visible rather than assumed. Keep it stable: verification uses the
+    # same key as writing, so rotating it without the previous secret flags
+    # historical entries as broken.
+    audit-hmac-secret: ${MOSIP_AUDIT_HMAC_SECRET:}
+    # Previous secret accepted by verification alongside the current secret;
+    # app writes always use the current secret. rotationWindowOpen reports
+    # whether this is set, and retiredKeyHashes reports whether any rows need it.
+    # audit_logs rows are immutable, so keep this configured while historical
+    # hashes need it: this app has no re-key/archive operation yet. Must differ
+    # from the current secret and is rejected when set alone.
+    audit-hmac-previous-secret: ${MOSIP_AUDIT_HMAC_PREVIOUS_SECRET:}
+    # Reject POST/PUT requests whose Content-Length exceeds this (24 MB).
+    max-request-body-bytes: ${MAX_REQUEST_BODY_BYTES:25165824}
+    # Flood protection (RateLimitFilter): fixed windows, in-memory.
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      # POST /api/v1/sessions per client IP
+      session-create-limit: ${SESSION_CREATE_LIMIT:30}
+      session-create-window-ms: 60000
+      # POST frames + challenges/validate per session id (shared budget)
+      frame-limit: ${FRAME_LIMIT:60}
+      frame-window-ms: 10000
+      # Peers whose X-Forwarded-For / X-Real-IP may be believed, as a
+      # comma-separated list of IPs or CIDR blocks (empty = trust nobody, and
+      # the per-IP budget then keys on the socket address). Set this to the
+      # reverse proxy or Docker gateway that fronts the service, e.g.
+      # "172.16.0.0/12,127.0.0.1". Never use a range that includes untrusted
+      # addresses — a client can send these headers itself.
+      trusted-proxies: ${TRUSTED_PROXIES:}
   liveness:
+    # Passive liveness scorer — ONE key drives both wirings: the HTTP
+    # scoring service and the LivenessBackend SPI bean (interop report F5):
+    #   auto               - MiniFASNet-V2 (ONNX, bundled in resources/models)
+    #                        when it loads; the OpenCV quality heuristic
+    #                        otherwise (SPI bean: the scripted mock)
+    #   heuristic          - force the OpenCV quality heuristic (model-less
+    #                        CI/debug; SPI bean: the scripted mock)
+    #   mock               - both paths: the scripted MockLivenessBackend
+    #   onnx-minifasnet-v2 - both paths: that backend by its audit id;
+    #   mediapipe-facemesh    explicit ids NEVER silently fall back to a
+    #   tflite-minifasnet     different scorer — unavailable means a coded,
+    #                        fail-closed error at startup or first use
+    backend: auto
+    # Optional filesystem override of the bundled model (blank = classpath)
+    model-path: ""
+    # Log-odds temperature applied to the model's live-class probability above
+    # the default threshold (ProbabilityCalibration). The raw MiniFASNet score
+    # pins at ~1.0 on a genuine face, so the number carries no information;
+    # the temperature spreads that tail without moving the operating point.
+    # 1 = report the raw model confidence, larger = more spread.
+    score-temperature: 4.0
+    # Threads one ONNX inference may use. 0/blank derives it from the core
+    # count as max(1, cores/2) — one thread on the 2-core target hardware,
+    # where the other core belongs to the next frame's decode and detection.
+    # Set a positive value only on a wider machine running one capture at a
+    # time. A negative value stops startup with a message naming this key, and
+    # a non-integer stops the boot at Spring's binding — neither silently
+    # derives a default behind the operator's back.
+    onnx-intra-op-threads: 0
+    # Single source of truth shared with LivenessConfig and config_policies
+    # (V2 migration). Calibrate via GET /api/v1/eval/threshold-sweep — see
+    # docs/configuration.md.
     passive-threshold: 0.80
     min-face-quality: 0.50
+    # Long-edge cap applied to every decoded frame before face detection,
+    # quality scoring and PAD (ImageUtils). A cost bound, not a safety bound:
+    # the 6 MB payload, 8192px dimension and 40M-pixel caps are fixed and are
+    # still applied first. 1280 lets a 1080p camera cost what a 640x480 one
+    # does; the console already captures at 640px (CAPTURE_MAX_EDGE in
+    # static/console.js), so this cap only bites for other clients. Values
+    # below 64 are refused at startup rather than clamped.
+    analysis-max-dimension: 1280
     passive-min-frames: 5
     passive-window-frames: 7
     min-challenge-count: 2
-    challenge-timeout-ms: 10000
+    challenge-timeout-ms: 15000
+    # Floor that a per-workflow challengeTimeoutMs is raised to (hard minimum
+    # 1000ms). 15s keeps a person who needed a moment from failing an attempt;
+    # raising it only ever makes the flow more patient.
+    min-challenge-window-ms: ${MIN_CHALLENGE_WINDOW_MS:15000}
     max-retries: 2
+    # Diagnostic mode (opt-in, local — orchestration spec §10): retains raw
+    # per-frame scores, timings, FPS and the scorer delegate for the local-only
+    # debug panel at GET /api/v1/diagnostics. Off by default. The endpoint
+    # answers only loopback callers, and only while this is true — otherwise
+    # it returns the same 404 a remote caller gets, so the mode never leaks
+    # its own existence. No pixels are ever retained.
+    diagnostics-enabled: ${LIVENESS_DIAGNOSTICS_ENABLED:false}
 
 # ---- Logging ----
 logging:

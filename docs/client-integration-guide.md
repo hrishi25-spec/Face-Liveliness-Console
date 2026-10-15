@@ -39,7 +39,7 @@ POST   /api/v1/sessions/{id}/challenges/validate → Validate challenge frames
 ```
 GET    /api/v1/config/{workflowType}         → Get config policy
 GET    /api/v1/config/{workflowType}/effective → Get computed effective policy
-PUT    /api/v1/config/{workflowType}         → Update config policy
+PUT    /api/v1/config/{workflowType}         → Update config policy (SUPERVISOR session required)
 ```
 
 ### Monitoring
@@ -226,32 +226,106 @@ if (livenessConfig.isLivenessEnabled("OPERATOR")) {
 return authService.authValidator(biometrics);
 ```
 
-### 3.6 New JavaFX FXML Files
+### 3.6 Liveness Challenge Overlay (shipped with this repo)
 
-**`LivenessChallengeOverlay.fxml`:**
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<?import javafx.scene.layout.StackPane?>
-<?import javafx.scene.control.Label?>
-<?import javafx.scene.control.ProgressIndicator?>
-<?import javafx.scene.effect.DropShadow?>
+The overlay is a complete implementation of `docs/ui-ux-design.md` — there is
+no stub left to copy:
 
-<StackPane fx:id="challengeOverlay" styleClass="liveness-overlay"
-           visible="false" managed="false">
-    <StackPane alignment="CENTER" styleClass="challenge-card">
-        < DropShadow/>
-        <Label fx:id="challengePrompt" styleClass="challenge-prompt"
-               text="Please blink" wrapText="true"/>
-        <ProgressIndicator fx:id="challengeProgress" maxWidth="60" maxHeight="60"/>
-        <Label fx:id="challengeStatus" styleClass="challenge-status"
-               text="Action detected" visible="false"/>
-    </StackPane>
-</StackPane>
+| Piece | Path |
+|---|---|
+| FXML: preview slot, oval guide, status/challenge/failure cards, Retry/Cancel | `src/main/resources/fxml/LivenessChallengeOverlay.fxml` |
+| Stylesheet (cards, oval + PASSED accent, actions) | `src/main/resources/fxml/liveness-overlay.css` |
+| Overlay component (`StackPane` + `@FXML` controller) | `src/main/java/io/mosip/liveness/client/LivenessChallengeOverlay.java` |
+| State→view mapping + i18n message catalogue | `src/main/java/io/mosip/liveness/client/LivenessOverlayPresenter.java` |
+
+Wiring (on the JavaFX Application Thread, over the capture screen):
+
+```java
+LivenessChallengeOverlay overlay = new LivenessChallengeOverlay();
+captureStack.getChildren().add(overlay);   // full-size; unmanaged while hidden
+
+// One state machine drives the surface (design §6): feed it orchestrator events.
+orchestrator.setListener(overlay.asListener());  // onState → applyState, onFinal → applyFinal
+
+overlay.setOnRetry(orchestrator::startFreshAttempt); // Retry only appears where design §4 allows
+overlay.setOnCancel(orchestrator::cancel);           // cancel → applyFinal(ABORTED)
+overlay.setPreviewImage(webcamFrame);                // host-supplied JavaFX Image (ImageView path)
 ```
+
+Messages resolve through i18n keys: `LivenessOverlayPresenter.DEFAULT_MESSAGES`
+mirrors the Flutter `LivenessView.defaultMessages` catalogue string-for-string
+(a test parses the Dart source so the two cannot drift), and deployments swap
+in their own with `overlay.setMessageLookup(...)`. The FXML deliberately
+carries no `fx:controller`: the overlay loads itself as both root and
+controller (`FXMLLoader.setRoot(this)` + `setController(this)`). That only
+works because the document's root element is an `<fx:root>` element whose
+`type` names `javafx.scene.layout.StackPane`
+— with a concrete root element `FXMLLoader` insists on building the root
+itself and rejects the instance handed to `setRoot`. JavaFX is a `provided`
+dependency and is excluded from the service jar — the overlay runs inside the
+Registration Client host, never in the backend.
+
+The overlay is covered by a headless render test
+(`LivenessChallengeOverlaySmokeTest`) that instantiates the real FXML on
+Monocle's headless glass platform and asserts the card each orchestrator state
+renders, so its wiring can be checked without a display, a camera or a JavaFX
+host.
+
+### 3.7 The overlay without the in-process orchestrator
+
+The overlay is not tied to the on-device orchestrator: the REST path emits the
+same `LivenessStateEvent` / `LivenessFinalResult` pair, so the same overlay
+renders whether the gate runs in-process or through this service.
+
+```java
+DesktopLivenessAdapter adapter = new DesktopLivenessAdapter(
+    () -> livenessConfig.getClient(), () -> "RESIDENT", () -> currentDeviceId);
+
+LivenessChallengeOverlay overlay = new LivenessChallengeOverlay();
+captureStack.getChildren().add(overlay);
+adapter.setListener(overlay.asListener());   // REST responses → the same states
+overlay.setOnRetry(adapter::startSession);   // retry restarts the gate: a fresh session
+overlay.setOnCancel(adapter::stopSession);   // cancel renders the ABORTED outcome
+
+adapter.startSession();                      // renders the warm-up, then frames:
+streamer.setFrameListener(adapter::onFrame);
+```
+
+`ServiceLivenessEventMapper` is the whole translation, and it is a pure
+function of one response plus the session's frozen policy, so the mapping is
+tested without a server. Four things are worth knowing when reading its table:
+
+- The client renders **catalogue keys**, never the service's `message` text —
+the English prose in the responses is for logs and audit.
+- The challenge counter (`Challenge 1 / N`) and the attempt budget come from the
+policy the service froze on the session at creation and returns from
+`POST /api/v1/sessions`; without it (a legacy session) the counter is simply
+not drawn rather than guessed.
+- Re-served challenges do not advance the counter: while a challenge is open
+the service answers every frame with the same `escalate_to_active`, and only a
+new challenge id means a new step.
+- A `reject` is retryable — Retry restarts the gate with a fresh session, which
+is exactly what the design's retry rule says. Recovery guidance (no retry)
+comes from the budget-exhausted vocabulary (`locked` / `escalate_to_operator` /
+`failed`), or from a `reject` whose closed session reports
+`max_retries_exceeded`.
+
+Transport failures do not have one answer: `startSession` propagates
+`LivenessClientException` (the host has not shown a capture screen yet and the
+error table in section 6 applies), while `onFrame` / `submitChallenge` translate
+it into the recoverable `DEVICE_ERROR` state and leave the session open for the
+next frame.
 
 ---
 
 ## 4. Android (Flutter) Integration
+
+> **Orchestrator layer.** The on-device liveness gate (state machine,
+> per-role policy + security floor, challenge selection, signed evidence,
+> gate-validity binding) now lives in `io.mosip.liveness.android` — see
+> `android_client/README.md` for the Pigeon/Flutter/Android-embedding
+> integration tree. The REST sequence below remains valid for the
+> service-mediated (Option B) integration model.
 
 ### 4.1 Add dependency to `clientmanager/build.gradle`
 
@@ -499,9 +573,22 @@ INSERT INTO reg_global_param (name, val, is_active, lang_code) VALUES
 
 ### 5.2 Per-workflow config via API
 
+`PUT` requires a session whose account holds `SUPERVISOR`: sign in at
+`POST /api/v1/auth/login` and send the session cookie (or the same token as
+`Authorization: Bearer <token>`) on the write. It is fail-closed — no session is
+`401`, an `OPERATOR` session is `403` — and reads (`GET`) need nothing at all.
+See [configuration.md](configuration.md#who-may-do-what-accounts-roles-and-the-operator-key)
+for creating the first supervisor and for the account-management routes.
+
 ```bash
+# Sign in once; the session cookie lands in the jar.
+curl -s -c jar.txt -X POST localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"supervisor","password":"<the account password>"}'
+
 # Make supervisor auth stricter:
 curl -X PUT localhost:8000/api/v1/config/SUPERVISOR \
+  -b jar.txt \
   -H "Content-Type: application/json" \
   -d '{
     "passiveThreshold": 0.92,
@@ -512,12 +599,100 @@ curl -X PUT localhost:8000/api/v1/config/SUPERVISOR \
 
 # Disable active liveness for operators:
 curl -X PUT localhost:8000/api/v1/config/OPERATOR \
+  -b jar.txt \
   -H "Content-Type: application/json" \
   -d '{
     "activeLivenessEnabled": false,
     "passiveThreshold": 0.85
   }'
 ```
+
+### 5.3 The user type is chosen at session start, and the policy is frozen
+
+Send the user type once, in the create-session call. The response carries the
+**resolved policy that will govern the whole session** (threshold, challenge pool,
+window, retry budget, repeated-failure action). Do not assume the defaults are the
+same across user types — they are not, and they can be edited at runtime.
+
+```jsonc
+POST /api/v1/sessions  { "workflowType": "SUPERVISOR", "deviceId": "L1-CAM-01" }
+// 201 →
+{
+  "id": "…", "workflowType": "SUPERVISOR", "status": "ACTIVE",
+  "policy": {
+    "passiveThreshold": 0.85, "minChallengeCount": 2,
+    "challengeTimeoutMs": 15000, "maxRetries": 1,
+    "allowedChallenges": ["BLINK","SMILE","TURN_HEAD_LEFT","TURN_HEAD_RIGHT"],
+    "onRepeatedFailure": "LOCK_OUT", "livenessEnabled": true
+  }
+}
+```
+
+The policy is frozen on the session at creation: a later `PUT /api/v1/config/{wf}`
+affects only **new** sessions, never one already running. Surface the user type and
+(optionally) the resolved policy in the UI so the operator knows which flow is active.
+
+### 5.4 Terminal outcomes and `mayRetrySession`
+
+When a session ends, read `action`:
+
+| `action` | Meaning | Client action |
+|----------|---------|---------------|
+| `proceed` | Liveness verified | Continue the capture/auth |
+| `reject` | PAD attack or liveness failed | Show the generic failure message |
+| `locked` | Retry budget exhausted, `LOCK_OUT` | Stop; direct to support |
+| `escalate_to_operator` | Retry budget exhausted, `ESCALATE_TO_OPERATOR` | Route the subject to an operator |
+| `failed` | Retry budget exhausted, `ALLOW_RETRY` | May start a **new** session (`mayRetrySession: true`) |
+
+`mayRetrySession` is `false`/absent for `locked` and `escalate_to_operator`. A
+failure action **never** issues another challenge in the same session.
+
+### 5.5 Session ownership and `X-Subject-Ref`
+
+If you create a session **with** `subjectRef` (the resident/operator/supervisor
+reference you already have), that session is owned: every session-scoped call —
+`GET /api/v1/sessions/{id}`, `POST …/close`, `POST …/frames`,
+`POST …/challenges/validate`, `POST …/active-liveness`,
+`GET …/audit` — must then repeat the same value in the `X-Subject-Ref` header.
+
+```bash
+# Owned: the header must match the subjectRef the session was created with.
+curl -s -X POST localhost:8000/api/v1/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"workflowType":"RESIDENT","deviceId":"L1-CAM-01","subjectRef":"resident-42"}'
+curl -s localhost:8000/api/v1/sessions/$SESSION_ID -H 'X-Subject-Ref: resident-42'
+```
+
+A missing or different header answers **403** (`FORBIDDEN`), and a refusal leaves
+the session untouched — no frame is scored and no challenge is consumed. A session
+created **without** `subjectRef` is anonymous and needs no header, which is what
+this repository's own console does.
+
+The shipped `LivenessHttpClient` does the header work for you: create the session
+with the three-argument form and it remembers the owner and repeats it on every
+session-scoped call it makes for that session. The two-argument form is the
+anonymous session and is unchanged.
+
+```java
+LivenessClient client = new LivenessHttpClient("http://localhost:8000");
+
+// Owned: the 3-arg create claims the reference, and every later call this client
+// makes for the session carries X-Subject-Ref: resident-42.
+LivenessClient.SessionInfo session =
+        client.createSession("RESIDENT", "L1-CAM-01", "resident-42");
+client.submitFrame(session.id(), frameJpeg);
+client.validateChallenge(session.id(), challengeId, frames);
+client.closeSession(session.id());
+```
+
+An HTTP refusal is a `LivenessClientException` whose message carries the status and
+the service's own explanation — a 403 reads as a refusal, not as a broken response.
+
+This isolates honest clients from each other; it is not authentication. There is no
+identity provider behind it, a subject reference is not a secret, and MOSIP subject
+ids are predictable — so keep the service bound to loopback (`SERVER_ADDRESS`, the
+default) or behind the host's own authenticated transport, and treat this header as
+the claim it is.
 
 ---
 
@@ -528,6 +703,7 @@ curl -X PUT localhost:8000/api/v1/config/OPERATOR \
 | HTTP Status | Error Code | Meaning | Client Action |
 |-------------|------------|---------|---------------|
 | 404 | NOT_FOUND | Session/challenge not found | Create new session |
+| 403 | FORBIDDEN | This session belongs to a subject reference (missing or mismatched `X-Subject-Ref`) | Create the session with its `subjectRef` (the client then sends the header), or send it yourself |
 | 409 | CONFLICT | Session not active / challenge not pending | Refresh state |
 | 422 | INVALID_FRAME | Frame couldn't be decoded | Re-capture frame |
 | 400 | VALIDATION_ERROR | Bad request body | Fix request |

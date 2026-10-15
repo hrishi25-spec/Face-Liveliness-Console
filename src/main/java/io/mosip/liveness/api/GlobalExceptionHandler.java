@@ -9,7 +9,9 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
@@ -65,6 +67,19 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * A request for a path that matches no controller and no static resource.
+     *
+     * <p>Without this, {@code NoResourceFoundException} fell through to the
+     * catch-all below and produced a logged ERROR plus a 500 for every missing
+     * asset — browsers request {@code /favicon.ico} on each page load, so the log
+     * filled with spurious failures. A missing resource is a 404.</p>
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException ex) {
+        return build(HttpStatus.NOT_FOUND, "NOT_FOUND", "Resource not found.");
+    }
+
+    /**
      * Malformed JSON / unreadable request body (400).
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
@@ -84,12 +99,38 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * A path or query parameter failed type conversion (e.g. a non-UUID
+     * sessionId). Without this, it fell through to the catch-all below and
+     * produced a 500 + logged ERROR for what is a client mistake (400).
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return build(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR",
+                "Invalid value for parameter '" + ex.getName() + "'.");
+    }
+
+    /**
      * Generic illegal-argument / illegal-state from any layer (400 / 500).
      */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
         log.warn("Illegal argument: {}", ex.getMessage());
         return build(HttpStatus.BAD_REQUEST, "BAD_REQUEST", safeMessage(ex.getMessage()));
+    }
+
+    /**
+     * The OpenCV native library failed to load, so frame decoding and image
+     * analysis are unavailable. Reported as 503 rather than an opaque 500 so
+     * clients can distinguish "try again later" from a genuine bug.
+     *
+     * <p>Spring wraps Errors thrown from a handler in a {@code ServletException};
+     * the cause chain is matched here.</p>
+     */
+    @ExceptionHandler(LinkageError.class)
+    public ResponseEntity<Map<String, Object>> handleMissingNativeLibrary(LinkageError ex) {
+        log.error("Native library unavailable during frame processing", ex);
+        return build(HttpStatus.SERVICE_UNAVAILABLE, "ENGINE_UNAVAILABLE",
+                "Face liveness engine is temporarily unavailable. Please retry.");
     }
 
     // ------------------------------------------------------------------ 5xx server errors

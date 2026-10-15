@@ -1,0 +1,14 @@
+{
+  "id": "session-1791138698470",
+  "startedAt": "2026-10-04T18:31:38.470Z",
+  "cwd": "/home/hriishiibanerjee/Documents/MOSSIP-Vibe-Coded",
+  "context": {},
+  "metrics": {
+    "edits": 0,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "endedAt": "2026-10-04T18:39:48.418Z",
+  "duration": 490093
+}

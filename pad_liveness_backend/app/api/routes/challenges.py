@@ -23,7 +23,10 @@ def validate_challenge(
     Submit the frame stream captured while an active-liveness challenge was
     displayed (e.g. the frames captured during "please blink"). Returns
     whether the requested facial action was detected and the next action
-    the client should take (proceed / retry with a new challenge / reject).
+    the client should take: `proceed`, `retry_challenge` (a new challenge was
+    issued), or the terminal action the session's repeated-failure policy
+    selects — `locked`, `escalate_to_operator` or `failed` (with
+    `may_retry_session` saying whether a fresh session is allowed).
     """
     challenge = session_crud.get_challenge(db, req.challenge_id)
     if challenge is None or challenge.session_id != sess.id:
@@ -47,5 +50,6 @@ def validate_challenge(
         challenge=ChallengeResponse.model_validate(challenge),
         passed=result.passed,
         action=result.action,
+        may_retry_session=result.may_retry_session,
         message=result.message,
     )

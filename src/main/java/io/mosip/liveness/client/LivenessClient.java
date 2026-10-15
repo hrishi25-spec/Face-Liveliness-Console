@@ -29,13 +29,34 @@ public interface LivenessClient {
     // ---- Session lifecycle ----
 
     /**
-     * Start a new liveness verification session.
+     * Start a new liveness verification session owned by {@code subjectRef}.
+     *
+     * <p>An owned session may only be acted on by a caller presenting the same
+     * reference in the {@code X-Subject-Ref} header — see
+     * {@code docs/client-integration-guide.md} §5.5 — so the session flow after
+     * this call (frames, challenge validation, close) is the owning subject's
+     * alone. An implementation that talks to the service is expected to carry the
+     * reference on those calls itself rather than make every caller repeat it.
+     *
+     * @param workflowType one of "RESIDENT", "OPERATOR", "SUPERVISOR"
+     * @param deviceId     identifier of the capture device (e.g. "L1-CAM-01")
+     * @param subjectRef   the resident/operator/supervisor this session belongs to,
+     *                     or {@code null} for an anonymous session (no header, no
+     *                     ownership check — the pre-existing behaviour)
+     * @return session response with the new session ID
+     */
+    SessionInfo createSession(String workflowType, String deviceId, String subjectRef);
+
+    /**
+     * Start an anonymous liveness verification session (no owner).
      *
      * @param workflowType one of "RESIDENT", "OPERATOR", "SUPERVISOR"
      * @param deviceId     identifier of the capture device (e.g. "L1-CAM-01")
      * @return session response with the new session ID
      */
-    SessionInfo createSession(String workflowType, String deviceId);
+    default SessionInfo createSession(String workflowType, String deviceId) {
+        return createSession(workflowType, deviceId, null);
+    }
 
     /**
      * Close a session and get the audit summary.
@@ -77,7 +98,32 @@ public interface LivenessClient {
     record SessionInfo(
             UUID id,
             String workflowType,
-            String status
+            String status,
+            Policy policy           // null on sessions created before the policy was frozen
+    ) {}
+
+    /**
+     * The policy the service froze on the session at creation. The client reads it
+     * for the two things it cannot infer from the responses — how many challenges
+     * the session needs (the overlay's "Challenge 1 / N" counter) and how large the
+     * retry budget is — plus the repeated-failure action that decides the terminal
+     * outcome. Fields are 0/absent when the service did not signal them.
+     *
+     * @param onRepeatedFailure LOCK_OUT | FALLBACK | ESCALATE_TO_OPERATOR
+     */
+    record Policy(
+            int minChallengeCount,
+            int maxRetries,
+            long challengeTimeoutMs,
+            String onRepeatedFailure
+    ) {}
+
+    /** A challenge the service issued, as carried by frame and validation responses. */
+    record Challenge(
+            String challengeId,
+            String challengeType,   // BLINK | SMILE | TURN_HEAD_LEFT | TURN_HEAD_RIGHT | LOOK_DIRECTION
+            Integer timeoutMs,
+            Integer attemptNumber
     ) {}
 
     record FrameResult(
@@ -90,19 +136,17 @@ public interface LivenessClient {
             boolean padFlag,
             String padAttackType,
             String action,          // proceed | escalate_to_active | reject | retry_passive
-            String challengeId,     // non-null when action == escalate_to_active
-            String challengeType,   // BLINK | SMILE | TURN_LEFT | TURN_RIGHT | LOOK_DIRECTION
-            Integer timeoutMs,
-            Integer attemptNumber,
+                                    // | locked | escalate_to_operator | failed
+            Challenge challenge,    // non-null when action == escalate_to_active
             String message
     ) {}
 
     record ChallengeResult(
             UUID sessionId,
-            String challengeId,
             boolean passed,
-            String action,          // proceed | retry_challenge | reject
-            String message
+            String action,          // proceed | retry_challenge | continue | reject
+            String message,
+            Challenge challenge     // the next challenge when the service issued one, else null
     ) {}
 
     record SessionSummary(

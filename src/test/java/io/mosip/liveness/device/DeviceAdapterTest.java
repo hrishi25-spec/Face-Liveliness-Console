@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Timeout;
 
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -65,7 +64,11 @@ class DeviceAdapterTest {
         assertTrue(latch.await(5, TimeUnit.SECONDS));
         device.stopCapture();
         assertFalse(device.isCapturing());
-        assertEquals(5, frames.size());
+        // Capture runs until stopCapture(), so a frame delivered between the
+        // latch opening and the stop can race in — assert the guaranteed
+        // lower bound, not an exact count (exact counts flaked under load).
+        assertTrue(frames.size() >= 5,
+                "latch guarantees at least 5 frames, got " + frames.size());
 
         // Frame metadata validation
         Frame first = frames.get(0);
@@ -129,7 +132,12 @@ class DeviceAdapterTest {
         assertTrue(frameLatch.await(5, TimeUnit.SECONDS));
         assertTrue(errorLatch.await(5, TimeUnit.SECONDS));
         device.stopCapture();
-        assertEquals(2, errors.size());
+        // corruptEveryNthFrame keeps firing while capture runs, so more errors
+        // can land between the latches opening and stopCapture() — the latch
+        // guarantees at least two, and the first is always the first corrupt
+        // frame (an exact count here flaked under load).
+        assertTrue(errors.size() >= 2,
+                "latch guarantees at least 2 errors, got " + errors.size());
         assertEquals(LivenessErrorCode.INVALID_FRAME_DATA, errors.get(0).errorCode());
     }
 

@@ -2,6 +2,7 @@ package io.mosip.liveness.services;
 
 import io.mosip.liveness.core.PadAttackType;
 import io.mosip.liveness.core.PadVerdict;
+import io.mosip.liveness.metrics.PipelineTimers;
 import org.opencv.core.*;
 import org.opencv.imgproc.Imgproc;
 import org.springframework.stereotype.Service;
@@ -21,35 +22,44 @@ public class PadEngineService {
      * Analyse a single frame and return a presentation-attack verdict.
      */
     public PadVerdict detect(Mat frame, ImageUtils imageUtils) {
+        return PipelineTimers.timed(PipelineTimers.PAD_HEURISTIC, () -> detectInternal(frame, imageUtils));
+    }
+
+    private PadVerdict detectInternal(Mat frame, ImageUtils imageUtils) {
         Mat gray = new Mat();
-        Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
         Mat grayFloat = new Mat();
-        gray.convertTo(grayFloat, CvType.CV_32F);
-
-        // Screen-replay / moire proxy via high-frequency FFT energy
         Mat fft = new Mat();
-        Core.dft(grayFloat, fft);
         Mat magnitude = new Mat();
-        Core.magnitude(fft, fft, magnitude);
-
-        // Print-attack proxy via local texture variance
         Mat laplacian = new Mat();
-        Imgproc.Laplacian(gray, laplacian, CvType.CV_64F);
         MatOfDouble mean = new MatOfDouble();
         MatOfDouble stddev = new MatOfDouble();
-        Core.meanStdDev(laplacian, mean, stddev);
-        double textureVariance = stddev.get(0, 0)[0] * stddev.get(0, 0)[0];
+        double textureVariance;
+        double brightness;
+        try {
+            Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
+            gray.convertTo(grayFloat, CvType.CV_32F);
 
-        // Brightness check
-        double brightness = imageUtils.brightnessScore(frame);
+            // Screen-replay / moire proxy via high-frequency FFT energy
+            Core.dft(grayFloat, fft);
+            Core.magnitude(fft, fft, magnitude);
 
-        gray.release();
-        grayFloat.release();
-        fft.release();
-        magnitude.release();
-        laplacian.release();
-        mean.release();
-        stddev.release();
+            // Print-attack proxy via local texture variance
+            Imgproc.Laplacian(gray, laplacian, CvType.CV_64F);
+            Core.meanStdDev(laplacian, mean, stddev);
+            textureVariance = stddev.get(0, 0)[0] * stddev.get(0, 0)[0];
+
+            // Brightness check
+            brightness = imageUtils.brightnessScore(frame);
+        } finally {
+            // Six native buffers per frame; a throw here must not leave them behind.
+            gray.release();
+            grayFloat.release();
+            fft.release();
+            magnitude.release();
+            laplacian.release();
+            mean.release();
+            stddev.release();
+        }
 
         // Evaluate thresholds
         // For FFT-based detection, use a simplified energy ratio

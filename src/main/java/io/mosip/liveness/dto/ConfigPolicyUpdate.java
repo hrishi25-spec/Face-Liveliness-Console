@@ -1,5 +1,7 @@
 package io.mosip.liveness.dto;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
@@ -21,7 +23,8 @@ public class ConfigPolicyUpdate {
 
     private Boolean livenessEnabled;
 
-    @Min(0) @Max(1)
+    // (0,1]: a threshold of exactly 0 would accept every frame.
+    @DecimalMin(value = "0.0", inclusive = false) @DecimalMax("1.0")
     private Double passiveThreshold;
 
     private Boolean activeLivenessEnabled;
@@ -31,6 +34,10 @@ public class ConfigPolicyUpdate {
 
     private List<String> challengeTypes;
 
+    // The absolute floor is the engine's 1s clamp; the operating floor is
+    // mosip.liveness.min-challenge-window-ms (default 15s), enforced by the
+    // config API and again by EffectivePolicyValidator when a session freezes
+    // its snapshot — a shorter window reliably times out honest users.
     @Min(1000) @Max(60000)
     private Integer challengeTimeoutMs;
 

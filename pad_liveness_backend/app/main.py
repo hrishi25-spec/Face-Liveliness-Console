@@ -30,15 +30,51 @@ app = FastAPI(
     ),
 )
 
-# Registration Clients (Desktop / Android) are the only expected callers;
-# tighten allow_origins for production deployments.
+# Registration Clients (Desktop / Android) are the only expected callers.
+# Origins are an explicit allow-list (settings.CORS_ORIGINS) — the previous
+# wildcard + allow_credentials combination would let any site call the API.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Admin-API-Key"],
 )
+
+# Strict CSP for our own pages; FastAPI's /docs and /redoc ship inline
+# bootstrap scripts, so they are exempt from CSP only (all other headers still
+# apply). API JSON responses don't execute anything either way.
+_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
+@app.middleware("http")
+async def harden_requests(request: Request, call_next):
+    """Security headers on every response + reject oversized bodies early."""
+    if request.method in ("POST", "PUT"):
+        try:
+            content_length = int(request.headers.get("content-length", "0") or 0)
+        except ValueError:
+            content_length = -1
+        if content_length > settings.MAX_REQUEST_BODY_BYTES:
+            return JSONResponse(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                content={"error": "PAYLOAD_TOO_LARGE",
+                         "message": "Request body exceeds the configured limit.",
+                         "status": 413},
+            )
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
+    if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+        response.headers["Content-Security-Policy"] = _CSP
+    return response
 
 
 @app.exception_handler(InvalidFrameError)

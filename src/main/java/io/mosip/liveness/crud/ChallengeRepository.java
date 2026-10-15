@@ -17,5 +17,8 @@ public interface ChallengeRepository extends JpaRepository<ChallengeEntity, UUID
 
     List<ChallengeEntity> findBySessionIdOrderByIssuedAtDesc(UUID sessionId);
 
+    /** Most recent challenge of the session in the given status, or null. */
+    ChallengeEntity findFirstBySessionIdAndStatusOrderByIssuedAtDesc(UUID sessionId, ChallengeStatus status);
+
     long countByStatus(ChallengeStatus status);
 }

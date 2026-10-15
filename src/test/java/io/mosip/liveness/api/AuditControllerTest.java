@@ -5,6 +5,7 @@ import io.mosip.liveness.models.entity.LivenessSession;
 import io.mosip.liveness.models.enums.SessionStatus;
 import io.mosip.liveness.models.enums.WorkflowType;
 import io.mosip.liveness.crud.AuditLogRepository;
+import io.mosip.liveness.crud.LivenessSessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,7 @@ class AuditControllerTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private AuditLogRepository auditLogRepo;
+    @Autowired private LivenessSessionRepository sessionRepo;
 
     private UUID sessionId;
     private LivenessSession session;
@@ -35,6 +37,28 @@ class AuditControllerTest {
         session = LivenessSession.builder()
                 .id(sessionId).workflowType(WorkflowType.RESIDENT)
                 .deviceId("L1-CAM-01").status(SessionStatus.ACTIVE).build();
+    }
+
+    /**
+     * The trail is the session's own history — scores, challenge outcomes, PAD
+     * hits — so an owned session answers only its owner. An unknown id keeps
+     * answering an empty trail, as it always has.
+     */
+    @Test
+    void anOwnedSessionsTrailRequiresItsSubjectRef() throws Exception {
+        session.setSubjectRef("resident-42");
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+        when(auditLogRepo.findBySessionIdOrderByCreatedAtAsc(sessionId))
+                .thenReturn(Collections.emptyList());
+
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId + "/audit"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId + "/audit")
+                        .header("X-Subject-Ref", "resident-43"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId + "/audit")
+                        .header("X-Subject-Ref", "resident-42"))
+                .andExpect(status().isOk());
     }
 
     @Test
