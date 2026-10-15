@@ -26,7 +26,10 @@ exit /b 0
 :start
 REM Find JDK 17+
 set "JAVA_BIN="
-if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+if defined JAVA_HOME (
+  if "%JAVA_HOME:~-1%"=="\" set "JAVA_HOME=%JAVA_HOME:~0,-1%"
+  if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+)
 if not defined JAVA_BIN for %%i in (java.exe) do if not "%%~$PATH:i"=="" set "JAVA_BIN=%%~$PATH:i"
 
 REM Last resort: the usual install folders. The wildcard has to be the final path

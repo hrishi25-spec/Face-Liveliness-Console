@@ -67,10 +67,20 @@ if not exist "target" mkdir "target"
 
 rem ------------------------------------------------------------------ 1. find JDK
 echo [.] Looking for a JDK 17 or newer...
-if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+if defined JAVA_HOME (
+  if "%JAVA_HOME:~-1%"=="\" set "JAVA_HOME=%JAVA_HOME:~0,-1%"
+  if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+)
 if not defined JAVA_BIN (
   for %%i in (java.exe) do if not "%%~$PATH:i"=="" set "JAVA_BIN=%%~$PATH:i"
 )
+if not defined JAVA_BIN for /d %%d in ("%ProgramFiles%\Eclipse Adoptium\jdk*") do (
+  if not defined JAVA_BIN if exist "%%~fd\bin\java.exe" set "JAVA_BIN=%%~fd\bin\java.exe"
+)
+if not defined JAVA_BIN for /d %%d in ("%ProgramFiles%\Java\jdk*") do (
+  if not defined JAVA_BIN if exist "%%~fd\bin\java.exe" set "JAVA_BIN=%%~fd\bin\java.exe"
+)
+if not defined JAVA_BIN if exist "C:\openjdk\bin\java.exe" set "JAVA_BIN=C:\openjdk\bin\java.exe"
 
 if not defined JAVA_BIN (
   echo [X] No Java found on PATH and JAVA_HOME is not set.
@@ -84,7 +94,7 @@ rem a pipe inside for /f: cmd.exe strips the quotes around the executable when a
 rem for /f command contains a pipe, so a JDK under "C:\Program Files" is read as
 rem the path "C:\Program" and the version cannot be determined.
 set "JVER="
-set "JVERFILE=target\java-version.txt"
+set "JVERFILE=%TEMP%\mossip-start-java-version.txt"
 "%JAVA_BIN%" -version > "%JVERFILE%" 2>&1
 for /f "tokens=3" %%v in ('findstr /i "version" "%JVERFILE%"') do if not defined JVER set "JVER=%%v"
 del "%JVERFILE%" >nul 2>&1

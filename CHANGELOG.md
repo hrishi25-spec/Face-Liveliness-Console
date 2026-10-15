@@ -126,7 +126,7 @@ All notable changes to this project will be documented in this file.
 - `BackendPerFrameLatencyTest` now measures two workloads (`repeated-frame`,
   `distinct-frames`) and labels them in the results line, because a memoized
   backend makes a repeated input measure nothing.
-=======
+
 ### Added — Windows launcher boot gate
 
 - Every gate in this repository ran on Linux, so the two things a Windows user
@@ -161,7 +161,6 @@ All notable changes to this project will be documented in this file.
   full jar with the same Maven command the packaging job runs, and boots it
   through the launcher. The README gate table lists the new job and the PRD
   moved to 14 jobs; the *Project boundaries* gate checks both sides.
->>>>>>> Stashed changes
 
 ### Changed — Session ownership moved into a filter, and a new session route cannot skip it
 
