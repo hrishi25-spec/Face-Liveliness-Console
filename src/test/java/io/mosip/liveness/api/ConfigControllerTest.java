@@ -2,6 +2,8 @@ package io.mosip.liveness.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.mosip.liveness.audit.AuditChainKey;
+import io.mosip.liveness.auth.AuthService;
+import io.mosip.liveness.testing.AuthTestFixture;
 import io.mosip.liveness.audit.AuditEventType;
 import io.mosip.liveness.dto.ConfigPolicyUpdate;
 import io.mosip.liveness.models.entity.AuditLog;
@@ -19,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -44,13 +47,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(ConfigController.class)
 @Import(TestConfig.class)
 @TestPropertySource(properties = {
-        "mosip.security.admin-api-key=" + ConfigControllerTest.ADMIN_KEY,
         // Trusted so the forwarded-client test can name a real client; the
         // resolver ignores these headers when nothing is trusted.
         "mosip.security.rate-limit.trusted-proxies=10.0.0.0/8"})
 class ConfigControllerTest {
 
-    static final String ADMIN_KEY = "test-admin-key";
+    /**
+     * The session a policy write is authorized with. A bearer token the stubbed
+     * service resolves to a supervisor, rather than the shared admin key this
+     * used to carry — the key is gone, and the audit trail now records the
+     * account name behind the edit.
+     */
+    private static final String SUPERVISOR_AUTH = "Bearer " + AuthTestFixture.SUPERVISOR_TOKEN;
 
     /**
      * The key the controller hashes with: this slice leaves the secret unset,
@@ -65,12 +73,14 @@ class ConfigControllerTest {
     @Autowired private ConfigPolicyRepository configRepo;
     @Autowired private AuditLogRepository auditLogRepo;
     @Autowired private ConfigService configService;
+    @Autowired private AuthService authService;
 
     private ConfigPolicy policy;
 
     @BeforeEach
     void setUp() {
         reset(configRepo, auditLogRepo, configService);
+        AuthTestFixture.stub(authService);
         // ConfigController delegates enum conversion and effective-policy mapping
         // to ConfigService; run the real (dependency-free) methods so lazily-seeded
         // defaults and the merged-policy validation behave as in production.
@@ -119,7 +129,7 @@ class ConfigControllerTest {
         when(configRepo.findByWorkflowType(WorkflowType.RESIDENT)).thenReturn(Optional.of(policy));
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(ConfigPolicyUpdate.builder().passiveThreshold(0.85).build())))
                 .andExpect(status().isOk())
@@ -131,7 +141,7 @@ class ConfigControllerTest {
         when(configRepo.findByWorkflowType(WorkflowType.SUPERVISOR)).thenReturn(Optional.of(policy));
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         mockMvc.perform(put("/api/v1/config/SUPERVISOR")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 ConfigPolicyUpdate.builder().challengeTypes(List.of("blink","turn_left")).maxRetryCount(5).build())))
@@ -145,7 +155,7 @@ class ConfigControllerTest {
         when(configRepo.findByWorkflowType(WorkflowType.RESIDENT)).thenReturn(Optional.of(policy));
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(ConfigPolicyUpdate.builder().onRepeatedFailure("ESCALATE").build())))
                 .andExpect(status().isOk())
@@ -157,7 +167,7 @@ class ConfigControllerTest {
         when(configRepo.findByWorkflowType(WorkflowType.RESIDENT)).thenReturn(Optional.of(policy));
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(ConfigPolicyUpdate.builder().livenessEnabled(false).build())))
                 .andExpect(status().isOk())
@@ -165,29 +175,34 @@ class ConfigControllerTest {
     }
 
     @Test
-    void setPolicy_missingAdminKey_returns403() throws Exception {
+    void setPolicy_noSession_returns401() throws Exception {
+        // A caller that has not signed in is unauthenticated, not forbidden: 401
+        // is what a client retries with credentials.
         mockMvc.perform(put("/api/v1/config/RESIDENT")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 ConfigPolicyUpdate.builder().passiveThreshold(0.0).build())))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("FORBIDDEN"));
-    }
-
-    @Test
-    void setPolicy_wrongAdminKey_returns403() throws Exception {
-        mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, "wrong-key")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                ConfigPolicyUpdate.builder().passiveThreshold(0.0).build())))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("FORBIDDEN"));
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("UNAUTHORIZED"));
         verify(configRepo, never()).save(any());
     }
 
     @Test
-    void getPolicy_stillOpenWithoutAdminKey() throws Exception {
+    void setPolicy_unknownSession_returns401() throws Exception {
+        // An expired or revoked token is refused exactly like an absent one, with
+        // the same body: a caller learns only that it is not authenticated.
+        mockMvc.perform(put("/api/v1/config/RESIDENT")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer wrong-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                ConfigPolicyUpdate.builder().passiveThreshold(0.0).build())))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("UNAUTHORIZED"));
+        verify(configRepo, never()).save(any());
+    }
+
+    @Test
+    void getPolicy_stillOpenWithoutSession() throws Exception {
         when(configRepo.findByWorkflowType(WorkflowType.RESIDENT)).thenReturn(Optional.of(policy));
         mockMvc.perform(get("/api/v1/config/RESIDENT"))
                 .andExpect(status().isOk());
@@ -201,7 +216,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .remoteAddress("203.0.113.10")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(ConfigPolicyUpdate.builder()
@@ -229,14 +244,13 @@ class ConfigControllerTest {
         assertEquals(3, changes.get("maxRetryCount").get("from"));
         assertEquals(1, changes.get("maxRetryCount").get("to"));
 
-        // The actor is a fingerprint: enough to correlate edits by the same
-        // key, never the key itself.
-        String actor = String.valueOf(details.get("actor"));
-        assertTrue(actor.startsWith("key:") && actor.length() == 4 + 12, actor);
-        assertFalse(actor.contains(ADMIN_KEY));
+        // The actor is the accountable account name. This used to be a
+        // fingerprint of a shared key, which answered "someone holding that key"
+        // and could not distinguish a contractor who left from a leaked .env.
+        assertEquals(AuthTestFixture.SUPERVISOR_USERNAME, details.get("actor"));
 
-        // …and the address it came from. A key fingerprint says "whoever holds
-        // this key"; the source IP is what narrows that to a host.
+        // …and the address it came from. The name says who; the source IP is what
+        // narrows that to a host.
         assertEquals("203.0.113.10", details.get("sourceIp"));
     }
 
@@ -248,7 +262,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(ConfigPolicyUpdate.builder()
                                 .passiveThreshold(0.55).build())))
@@ -272,7 +286,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(ConfigPolicyUpdate.builder()
                                 .activeLivenessEnabled(false).build())))
@@ -293,7 +307,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(ConfigPolicyUpdate.builder()
                                 .livenessEnabled(false).build())))
@@ -314,7 +328,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         // Raised threshold, fewer retries: stricter than
                         // the loaded policy, so nothing weakened.
@@ -337,7 +351,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)        // The socket peer (10.0.0.7) is a trusted proxy; the
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)        // The socket peer (10.0.0.7) is a trusted proxy; the
         // caller sits at the right end of the forwarded chain.
                         .remoteAddress("10.0.0.7")
                         .header("X-Forwarded-For", "198.51.100.23, 10.0.0.9")
@@ -360,7 +374,7 @@ class ConfigControllerTest {
         // the forwarded headers are untrusted and the raw socket address
         // is recorded instead of the caller-supplied text.
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .remoteAddress("10.0.0.7")
                         .header("X-Forwarded-For", "\" onload=alert(1) x=\"")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -377,13 +391,13 @@ class ConfigControllerTest {
     void aRejectedEditRecordsNoAddressAndLeavesThePolicyAlone() throws Exception {
         when(configRepo.findByWorkflowType(WorkflowType.RESIDENT)).thenReturn(Optional.of(policy));
 
-        // No admin key: the caller is refused, so there is no edit to attribute
-        // — and the address must not become a way to probe who calls.
+        // No session at all: the caller is refused, so there is no edit to
+        // attribute — and the address must not become a way to probe who calls.
         mockMvc.perform(put("/api/v1/config/RESIDENT")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(ConfigPolicyUpdate.builder()
                                 .passiveThreshold(0.10).build())))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
 
         verify(auditLogRepo, never()).save(any());
         verify(configRepo, never()).save(any());
@@ -455,7 +469,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 ConfigPolicyUpdate.builder().passiveThreshold(0.62).build())))
@@ -482,7 +496,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/SUPERVISOR")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 ConfigPolicyUpdate.builder().passiveThreshold(0.55).build())))
@@ -499,7 +513,7 @@ class ConfigControllerTest {
         when(configRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 ConfigPolicyUpdate.builder().passiveThreshold(0.75).build())))
@@ -520,7 +534,7 @@ class ConfigControllerTest {
         });
 
         mockMvc.perform(put("/api/v1/config/SUPERVISOR")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 ConfigPolicyUpdate.builder().passiveThreshold(0.5).build())))
@@ -539,7 +553,7 @@ class ConfigControllerTest {
         // passiveThreshold 5.0 fails the controller's own range check — which
         // runs only after the admin key is accepted.
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"passiveThreshold\":5.0}"))
                 .andExpect(status().isBadRequest());
@@ -553,7 +567,7 @@ class ConfigControllerTest {
         // floor (mosip.liveness.min-challenge-window-ms, 15s by default), so
         // accepting it would save a policy no session could ever freeze.
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .header(HttpHeaders.AUTHORIZATION, SUPERVISOR_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"challengeTimeoutMs\":1000}"))
                 .andExpect(status().isBadRequest());
@@ -562,13 +576,13 @@ class ConfigControllerTest {
     }
 
     @Test
-    void setPolicy_wrongAdminKey_writesNoAuditEntry() throws Exception {
+    void setPolicy_unknownSession_writesNoAuditEntry() throws Exception {
         mockMvc.perform(put("/api/v1/config/RESIDENT")
-                        .header(ConfigController.ADMIN_API_KEY_HEADER, "wrong-key")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer wrong-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 ConfigPolicyUpdate.builder().passiveThreshold(0.0).build())))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
 
         verify(auditLogRepo, never()).save(any());
     }

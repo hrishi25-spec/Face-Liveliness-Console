@@ -73,15 +73,42 @@ spring:
 # ---- MOSIP Liveness Engine ----
 mosip:
   security:
-    # Admin key required by PUT /api/v1/config/* — fail-closed: when blank,
-    # config updates are refused (see README, Security section).
-    admin-api-key: ${MOSIP_ADMIN_API_KEY:}
+    # ---- Authentication (accounts + sessions) ----
+    # The privileged surface (PUT /api/v1/config/*, the calibration sweep and
+    # user management) is reached with a username and password, not a shared
+    # key: see auth-users/auth-tokens (V12__auth_users_and_tokens.sql).
+    auth:
+      # How long a session lives. Short by design — this is the value that
+      # bounds a stolen token, and a supervisor can always sign in again.
+      token-ttl-seconds: ${MOSIP_AUTH_TOKEN_TTL_SECONDS:3600}
+      # Consecutive failed sign-ins before the account locks. The lock is a
+      # stored timestamp, so it survives a restart and ends by itself.
+      max-failed-attempts: ${MOSIP_AUTH_MAX_FAILED_ATTEMPTS:5}
+      lockout-seconds: ${MOSIP_AUTH_LOCKOUT_SECONDS:900}
+      # BCrypt cost (log2 of the work per verification). 12 is ~300 ms on the
+      # 2-core target. Lowering it makes every stored password cheaper to crack
+      # offline, so anything below 10 is refused at startup outside dev — the
+      # test suite runs at 4 and would be refused anywhere else.
+      bcrypt-cost: ${MOSIP_AUTH_BCRYPT_COST:12}
+      # First-supervisor bootstrap. Both or neither; startup fails on one alone.
+      # Runs ONLY when no account exists at all, so leaving these set cannot
+      # re-create an account or reset a password on a later boot. The created
+      # account must change its password at first sign-in. Unset them once you
+      # have signed in.
+      bootstrap-username: ${MOSIP_AUTH_BOOTSTRAP_USERNAME:}
+      bootstrap-password: ${MOSIP_AUTH_BOOTSTRAP_PASSWORD:}
+      # Whether the session cookie carries Secure. Leave false for the shipped
+      # loopback HTTP deployment (a browser drops a Secure cookie over http, so
+      # the sign-in would appear to succeed and silently not); set true behind
+      # TLS.
+      cookie-secure: ${MOSIP_AUTH_COOKIE_SECURE:false}
     # Operator key, presented as X-Operator-API-Key on operator routes
-    # (GET /api/v1/auth/role today). The admin key is accepted there too — a
-    # supervisor can do everything an operator can — so this key grants the
-    # smaller role. Blank closes the operator surface: nobody is answered
-    # OPERATOR, rather than everyone. Minimum 16 characters when set, and it
-    # must differ from the admin key; startup fails on either.
+    # (GET /api/v1/auth/role and the two read-only feeds). It proves OPERATOR
+    # only: it is never accepted on a privileged route, so a leaked key reads
+    # feeds and cannot write a policy or an account. Blank closes key-based
+    # access to those routes — nobody is answered OPERATOR by a key — while a
+    # signed-in account still reaches them. Minimum 16 characters when set;
+    # startup fails on anything shorter.
     operator-api-key: ${MOSIP_OPERATOR_API_KEY:}
     # Secret that keys the audit chain's hashes (HMAC-SHA-256) so an attacker
     # with database write access cannot recompute the chain — the secret lives

@@ -74,7 +74,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("dev")
 @TestPropertySource(properties = {
-        "mosip.security.admin-api-key=" + LivenessPipelineIntegrationTest.ADMIN_KEY,
         // Keys the audit chain, the way MOSIP_AUDIT_HMAC_SECRET would in a
         // deployment: set here so the real boot path runs keyed rather than in
         // the fallback, and the verify endpoint can be seen reporting the mode.
@@ -115,12 +114,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class LivenessPipelineIntegrationTest extends RawHttpSupport {
 
-    /** At least 32 characters: SecurityValidator rejects a shorter admin key on boot. */
-    static final String ADMIN_KEY = "e2e-admin-api-key-0123456789abcdef";
+    /**
+     * The supervisor account this class signs in as.
+     *
+     * <p>The policy write and the calibration sweep are supervisor-only routes
+     * reachable with a session; the shared admin key they used to present is gone.
+     * The helper below creates this account, replaces its initial password (so the
+     * owed-password-change confinement does not apply) and mints a token.</p>
+     */
+    static final String SUPERVISOR_USERNAME = "e2e-integration-supervisor";
     /** Long enough to satisfy the key's minimum; the value itself is irrelevant. */
     static final String AUDIT_SECRET = "integration-test-audit-hmac-secret";
-    /** Same header name as ConfigController.ADMIN_API_KEY_HEADER (package-private there). */
-    static final String ADMIN_HEADER = "X-Admin-API-Key";
 
     /**
      * Challenge window the timeout test configures — and the deployment's floor
@@ -137,6 +141,60 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
     private static final long INSIDE_WINDOW_PROBE_MS = 1_300L;
     /** Slack over {@link #WINDOW_MS} before asserting the window has elapsed. */
     private static final long ELAPSED_MARGIN_MS = 700L;
+
+    /**
+     * Accounts and sessions, so this class can obtain the supervisor session the
+     * privileged routes now require. The real service, against the real migrated
+     * schema — the point of this class is that it runs the shipped code.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.mosip.liveness.auth.AuthService authService;
+
+    /**
+     * The memoised bearer value; one sign-in per class, not one per request.
+     *
+     * <p>{@code static} because the field is per test <em>instance</em> otherwise,
+     * and Spring builds a fresh instance for every method against the one cached
+     * context. Each instance would therefore re-run the creation below against an
+     * account the class already made, which the service correctly refuses
+     * ("that username is already taken") — the account has to be created once for
+     * the class, so the memo has to be the class's.</p>
+     */
+    private static String supervisorToken;
+
+    /**
+     * A supervisor session, created once and reused.
+     *
+     * <p>Walks the real flow rather than reaching past it: create the account, sign
+     * in with the initial password, replace it, and use the token that replacement
+     * mints. The change is not incidental — a freshly created account has
+     * {@code mustChangePassword = true}, and the session that owes a password change
+     * is confined to {@code /auth/me}, {@code /auth/change-password} and
+     * {@code /auth/logout}. Every policy write in this class would be refused 403
+     * until that flag is cleared, which is exactly the behaviour that confinement
+     * exists to produce.</p>
+     *
+     * <p>Synchronised because a few tests share this class's single context and the
+     * account must be created once, not once per caller.</p>
+     */
+    private String supervisorAuth() {
+        synchronized (LivenessPipelineIntegrationTest.class) {
+            if (supervisorToken != null) {
+                return supervisorToken;
+            }
+            String initial = "e2e-initial-password-1";
+            authService.createUser(SUPERVISOR_USERNAME, "SUPERVISOR", initial);
+            var firstLogin = authService.login(SUPERVISOR_USERNAME, initial)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "the account just created must be able to sign in"));
+            var ready = authService
+                    .changePassword(firstLogin.principal(), initial, "e2e-final-password-12")
+                    .orElseThrow(() -> new IllegalStateException(
+                            "the initial password must verify for the change to succeed"));
+            supervisorToken = "Bearer " + ready.token();
+            return supervisorToken;
+        }
+    }
 
     private static final Set<String> CHALLENGE_TYPES =
             Set.of("BLINK", "SMILE", "TURN_LEFT", "TURN_RIGHT");
@@ -506,10 +564,12 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
         assertEquals("UPDATED", entry.get("details").get("action").asText());
         assertNotNull(entry.get("createdAt"), "an audit entry without a timestamp is not traceable");
 
-        // The key itself must never be stored — only a stable fingerprint.
+        // The actor is the accountable account name. This used to be a fingerprint
+        // of a shared key, which could not tell a departed contractor from a leaked
+        // environment file.
         String actor = entry.get("details").get("actor").asText();
-        assertTrue(actor.startsWith("key:"), "expected a key fingerprint, got: " + actor);
-        assertFalse(actor.contains(ADMIN_KEY));
+        assertEquals(SUPERVISOR_USERNAME, actor,
+                "the audit trail must name the account behind the edit, got: " + actor);
 
         JsonNode changes = entry.get("details").get("changes");
         assertEquals(Set.of("passiveThreshold", "maxRetryCount"), fieldNames(changes),
@@ -572,29 +632,31 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
     // ------------------------------------------------------------------ 8. browser-style config PUT
 
     @Test
-    void browserStyleConfigPut_isAcceptedWithTheAdminKey() throws Exception {
+    void browserStyleConfigPut_isAcceptedWithASupervisorSession() throws Exception {
         String sameOrigin = "http://localhost:" + port;
         String devServerOrigin = "http://localhost:5173";  // a console on another dev port
 
-        // A browser can only send the admin key cross-origin after a preflight
-        // that advertises the header — if that fails, the console silently can't
-        // save. (allowedOriginPatterns http://localhost:*, credentials off.)
+        // A browser can only send the Authorization header cross-origin after a
+        // preflight that advertises it — if that fails, the console silently can't
+        // save. (allowedOriginPatterns http://localhost:*, credentials off, so a
+        // cross-origin caller presents a bearer token rather than the HttpOnly
+        // session cookie.)
         HttpHeaders preflight = browserHeaders(devServerOrigin);
         preflight.set(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "PUT");
-        preflight.set(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type, x-admin-api-key");
+        preflight.set(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type, authorization");
         RawResponse options = send(HttpMethod.OPTIONS, RESIDENT_CONFIG, null, preflight);
         assertEquals(200, options.status(), "preflight must be allowed");
         assertEquals(devServerOrigin, options.header(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
         String allowHeaders = options.header(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS);
         assertNotNull(allowHeaders, "preflight must allow the requested headers");
-        assertTrue(allowHeaders.toLowerCase().contains("x-admin-api-key"), allowHeaders);
+        assertTrue(allowHeaders.toLowerCase().contains("authorization"), allowHeaders);
 
         // The console's own call: browser headers + admin key. The value must
         // differ from the RESIDENT default V4 seeds (20s): a PUT that resubmits
         // the current policy is audited but records no field movement, and this
         // test asserts the movement.
         HttpHeaders save = browserHeaders(sameOrigin);
-        save.add(ADMIN_HEADER, ADMIN_KEY);
+        save.add(HttpHeaders.AUTHORIZATION, supervisorAuth());
         RawResponse saved = send(HttpMethod.PUT, RESIDENT_CONFIG,
                 "{\"challengeTimeoutMs\":25000}", save);
         assertEquals(200, saved.status(), saved.body());
@@ -611,21 +673,21 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
         assertEquals(25000, entry.get("details").get("changes")
                 .get("challengeTimeoutMs").get("to").asInt());
 
-        // Browser headers are not a bypass: the same request without the key is
-        // still refused, and writes nothing.
+        // Browser headers are not a bypass: the same request with no session at all
+        // is still refused, and writes nothing.
         RawResponse noKey = send(HttpMethod.PUT, RESIDENT_CONFIG,
                 "{\"challengeTimeoutMs\":30000}", browserHeaders(sameOrigin));
-        assertEquals(403, noKey.status(), noKey.body());
-        assertEquals("FORBIDDEN", mapper.readTree(noKey.body()).get("error").asText());
+        assertEquals(401, noKey.status(), noKey.body());
+        assertEquals("UNAUTHORIZED", mapper.readTree(noKey.body()).get("error").asText());
         JsonNode after = expect(HttpStatus.OK,
                 exchange(HttpMethod.GET, "/api/v1/config/RESIDENT", null, false));
         assertEquals(25000, after.get("challengeTimeoutMs").asInt(),
                 "a rejected PUT must not change the policy");
 
-        // A foreign origin is refused by the CORS processor before the key is
+        // A foreign origin is refused by the CORS processor before the session is
         // even considered.
         HttpHeaders foreign = browserHeaders("https://evil.example");
-        foreign.add(ADMIN_HEADER, ADMIN_KEY);
+        foreign.add(HttpHeaders.AUTHORIZATION, supervisorAuth());
         RawResponse evil = send(HttpMethod.PUT, RESIDENT_CONFIG,
                 "{\"challengeTimeoutMs\":30000}", foreign);
         assertEquals(403, evil.status(), evil.body());
@@ -660,7 +722,7 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
                 {"POST", "/api/v1/sessions/" + sessionId + "/frames", "content-type"},
                 {"POST", "/api/v1/sessions/" + sessionId + "/challenges/validate", "content-type"},
                 {"POST", "/api/v1/sessions/" + sessionId + "/close", "content-type"},
-                {"PUT", RESIDENT_CONFIG, "content-type, x-admin-api-key"},
+                {"PUT", RESIDENT_CONFIG, "content-type, authorization"},
         };
         for (String[] call : preflighted) {
             HttpHeaders preflight = browserHeaders(devServerOrigin);
@@ -687,15 +749,15 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
         }
     }
 
-    // ------------------------------------------------------------------ 8c. cross-origin write without the key
+    // ------------------------------------------------------------------ 8c. cross-origin write without a session
 
     @Test
-    void crossOriginPutWithoutAdminKey_isRefusedAndCredentialsNeverEchoed() throws Exception {
+    void crossOriginPutWithoutASession_isRefusedAndCredentialsNeverEchoed() throws Exception {
         String devServerOrigin = "http://localhost:5173";  // allowed by pattern, not this server
 
         // Stage a known policy so "unchanged" is a real assertion.
         HttpHeaders save = browserHeaders(devServerOrigin);
-        save.add(ADMIN_HEADER, ADMIN_KEY);
+        save.add(HttpHeaders.AUTHORIZATION, supervisorAuth());
         RawResponse saved = send(HttpMethod.PUT, RESIDENT_CONFIG,
                 "{\"challengeTimeoutMs\":26000}", save);
         assertEquals(200, saved.status(), saved.body());
@@ -703,9 +765,10 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
         // The attacker's position is worse than "wrong origin": a page
         // on an origin the CORS processor *allows* still cannot write.
         // The origin allow-list is routing policy for the console, not
-        // authorization — the admin key is. The keyless preflight even
+        // authorization — the session is. The sessionless preflight even
         // succeeds, so a browser would let the attacker page *read* the
-        // refusal; only the key check stands between it and the policy.
+        // refusal; only the authorization check stands between it and the
+        // policy.
         HttpHeaders attackerPreflight = browserHeaders(devServerOrigin);
         attackerPreflight.set(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "PUT");
         attackerPreflight.set(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type");
@@ -716,20 +779,21 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
         RawResponse attacker = send(HttpMethod.PUT, RESIDENT_CONFIG,
                 "{\"challengeTimeoutMs\":30000,\"passiveThreshold\":0.5}",
                 browserHeaders(devServerOrigin));
-        assertEquals(403, attacker.status(), attacker.body());
-        assertEquals("FORBIDDEN", mapper.readTree(attacker.body()).get("error").asText());
+        assertEquals(401, attacker.status(), attacker.body());
+        assertEquals("UNAUTHORIZED", mapper.readTree(attacker.body()).get("error").asText());
         JsonNode after = expect(HttpStatus.OK,
                 exchange(HttpMethod.GET, "/api/v1/config/RESIDENT", null, false));
         assertEquals(26000, after.get("challengeTimeoutMs").asInt(),
-                "a keyless cross-origin PUT must not change the policy");
+                "a sessionless cross-origin PUT must not change the policy");
 
-        // Credentials are never echoed. The console authenticates with
-        // the X-Admin-API-Key header and the app sets no cookies, so
-        // credentialed CORS must stay off on every response — preflight,
-        // success and refusal alike — and the allow-origin header must
-        // stay the specific requesting origin rather than a wildcard
-        // (the wildcard is only safe *because* credentials are off;
-        // pinning both keeps them from drifting apart).
+        // Credentials are never echoed. A cross-origin caller presents the
+        // session as an Authorization header — the cookie is not sent, because
+        // credentialed CORS is off — and a policy PUT mints nothing, so no
+        // Set-Cookie may appear on any of these responses. Credentialed CORS
+        // must stay off on every response — preflight, success and refusal
+        // alike — and the allow-origin header must stay the specific requesting
+        // origin rather than a wildcard (the wildcard is only safe *because*
+        // credentials are off; pinning both keeps them from drifting apart).
         assertNull(attackerOptions.header(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS),
                 "a preflight must never advertise credentialed CORS");
         assertNull(saved.header(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS),
@@ -740,8 +804,10 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
                 "the allowed origin must be echoed specifically, never as a wildcard");
         assertEquals(devServerOrigin, attacker.header(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN),
                 "a refusal must still name the allowed origin specifically");
-        assertNull(saved.header("Set-Cookie"), "no cookie is ever set, so none may leak cross-origin");
-        assertNull(attacker.header("Set-Cookie"), "no cookie is ever set, so none may leak cross-origin");
+        assertNull(saved.header("Set-Cookie"),
+                "a policy PUT mints no session, so it must set no cookie");
+        assertNull(attacker.header("Set-Cookie"),
+                "a refused PUT must set no cookie either");
     }
 
     // ------------------------------------------------------------------ 9. published rate-limit budget
@@ -888,10 +954,10 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
      * error responses as ResponseEntity) and one that throws on 4xx/5xx.
      */
     private ResponseEntity<String> exchange(HttpMethod method, String path,
-                                            String body, boolean adminKey) {
+                                            String body, boolean asSupervisor) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        if (adminKey) headers.add(ADMIN_HEADER, ADMIN_KEY);
+        if (asSupervisor) headers.add(HttpHeaders.AUTHORIZATION, supervisorAuth());
         HttpEntity<String> entity = new HttpEntity<>(body, headers);
         try {
             return rest.exchange(url(path), method, entity, String.class);

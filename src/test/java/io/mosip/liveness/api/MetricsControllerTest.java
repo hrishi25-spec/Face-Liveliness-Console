@@ -43,7 +43,7 @@ class MetricsControllerTest {
         when(sessionRepo.sumRetryCount()).thenReturn(0L);
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -66,7 +66,7 @@ class MetricsControllerTest {
         when(sessionRepo.sumRetryCount()).thenReturn(25L);
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -92,7 +92,7 @@ class MetricsControllerTest {
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
         // 3 allowed, 2 refused on session creation; 1 allowed, 4 refused on frames.
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(3, 2, 1, 4, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(3, 2, 1, 4, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -119,7 +119,7 @@ class MetricsControllerTest {
         when(sessionRepo.sumRetryCount()).thenReturn(0L);
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -157,7 +157,7 @@ class MetricsControllerTest {
         when(frameEventRepo.count()).thenReturn(0L);
         when(challengeRepo.count()).thenReturn(0L);
         when(sessionRepo.sumRetryCount()).thenReturn(0L);
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 0, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 
@@ -188,7 +188,7 @@ class MetricsControllerTest {
         when(metricsCollector.snapshot()).thenReturn(new MetricsSnapshot(
                 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0));
         // Nothing on the other two rules; five refused key attempts.
-        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 5));
+        when(rateLimitCounters.snapshot()).thenReturn(new RateLimitCounters.Counts(0, 0, 0, 0, 0, 5, 0, 0));
         try (MockedStatic<PipelineTimers> mockedPipelineTimers = Mockito.mockStatic(PipelineTimers.class)) {
             mockedPipelineTimers.when(PipelineTimers::snapshot).thenReturn(java.util.Map.of());
 

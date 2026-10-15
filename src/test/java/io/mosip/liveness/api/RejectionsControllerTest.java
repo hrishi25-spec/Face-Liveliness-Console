@@ -1,5 +1,6 @@
 package io.mosip.liveness.api;
 
+import io.mosip.liveness.testing.AuthTestFixture;
 import io.mosip.liveness.crud.AuditLogRepository;
 import io.mosip.liveness.crud.LivenessSessionRepository;
 import io.mosip.liveness.models.entity.AuditLog;
@@ -50,14 +51,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(TestConfig.class)
 @TestPropertySource(properties = {
         "mosip.security.operator-api-key=" + RejectionsControllerTest.OPERATOR_KEY,
-        "mosip.security.admin-api-key=" + RejectionsControllerTest.ADMIN_KEY,
         "mosip.security.rate-limit.session-create-limit=1000"
 })
 class RejectionsControllerTest {
 
-    /** Synthetic; long enough for the startup rules (operator ≥16, admin ≥32). */
+    /** Synthetic; long enough to satisfy the startup floor (operator ≥16). */
     static final String OPERATOR_KEY = "synthetic-operator-key-0001";
-    static final String ADMIN_KEY = "synthetic-admin-key-0000000000000000001";
 
     private static final UUID SESSION_ID =
             UUID.fromString("5c8f1c9e-0000-4000-8000-000000000001");
@@ -67,10 +66,12 @@ class RejectionsControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private LivenessSessionRepository sessionRepo;
     @Autowired private AuditLogRepository auditLogRepo;
+    @Autowired private io.mosip.liveness.auth.AuthService authService;
 
     @BeforeEach
     void setUp() {
         reset(sessionRepo, auditLogRepo);
+        AuthTestFixture.stub(authService);
     }
 
     @Test
@@ -105,12 +106,16 @@ class RejectionsControllerTest {
                 .andExpect(jsonPath("$.events[0].createdAt").exists());
     }
 
+    /**
+     * The gate accepts a session as well as the key, and a supervisor session reads
+     * the feed: what replaced "the admin key reads the feed too".
+     */
     @Test
-    void theAdminKeyReadsTheFeedToo() throws Exception {
+    void aSupervisorSessionReadsTheFeed() throws Exception {
         when(sessionRepo.findRecent(any(), any(), any())).thenReturn(List.of());
         when(auditLogRepo.findRecentByEventTypes(any(), any())).thenReturn(List.of());
 
-        mockMvc.perform(get("/api/v1/rejections").header(AdminKeyGuard.HEADER, ADMIN_KEY))
+        mockMvc.perform(get("/api/v1/rejections").with(AuthTestFixture.asSupervisor()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sessions.length()").value(0))
                 .andExpect(jsonPath("$.events.length()").value(0));

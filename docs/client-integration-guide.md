@@ -39,7 +39,7 @@ POST   /api/v1/sessions/{id}/challenges/validate → Validate challenge frames
 ```
 GET    /api/v1/config/{workflowType}         → Get config policy
 GET    /api/v1/config/{workflowType}/effective → Get computed effective policy
-PUT    /api/v1/config/{workflowType}         → Update config policy (X-Admin-API-Key required)
+PUT    /api/v1/config/{workflowType}         → Update config policy (SUPERVISOR session required)
 ```
 
 ### Monitoring
@@ -573,15 +573,23 @@ INSERT INTO reg_global_param (name, val, is_active, lang_code) VALUES
 
 ### 5.2 Per-workflow config via API
 
-`PUT` requires the `X-Admin-API-Key` header matching the service's
-`MOSIP_ADMIN_API_KEY` (fail-closed: updates are refused when the key is not
-configured). Reads (`GET`) need no key.
+`PUT` requires a session whose account holds `SUPERVISOR`: sign in at
+`POST /api/v1/auth/login` and send the session cookie (or the same token as
+`Authorization: Bearer <token>`) on the write. It is fail-closed — no session is
+`401`, an `OPERATOR` session is `403` — and reads (`GET`) need nothing at all.
+See [configuration.md](configuration.md#who-may-do-what-accounts-roles-and-the-operator-key)
+for creating the first supervisor and for the account-management routes.
 
 ```bash
+# Sign in once; the session cookie lands in the jar.
+curl -s -c jar.txt -X POST localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"supervisor","password":"<the account password>"}'
+
 # Make supervisor auth stricter:
 curl -X PUT localhost:8000/api/v1/config/SUPERVISOR \
+  -b jar.txt \
   -H "Content-Type: application/json" \
-  -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY" \
   -d '{
     "passiveThreshold": 0.92,
     "minChallengeCount": 3,
@@ -591,8 +599,8 @@ curl -X PUT localhost:8000/api/v1/config/SUPERVISOR \
 
 # Disable active liveness for operators:
 curl -X PUT localhost:8000/api/v1/config/OPERATOR \
+  -b jar.txt \
   -H "Content-Type: application/json" \
-  -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY" \
   -d '{
     "activeLivenessEnabled": false,
     "passiveThreshold": 0.85

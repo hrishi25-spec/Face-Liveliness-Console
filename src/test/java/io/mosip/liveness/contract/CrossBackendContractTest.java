@@ -83,7 +83,6 @@ import static org.junit.jupiter.api.Assertions.fail;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("dev")
 @TestPropertySource(properties = {
-        "mosip.security.admin-api-key=" + CrossBackendContractTest.ADMIN_KEY,
         "mosip.security.audit-hmac-secret=" + CrossBackendContractTest.AUDIT_SECRET,
         "mosip.liveness.min-challenge-window-ms=" + CrossBackendContractTest.WINDOW_MS,
         // The scenario creates a session and posts frames from 127.0.0.1 like
@@ -95,11 +94,13 @@ import static org.junit.jupiter.api.Assertions.fail;
 })
 class CrossBackendContractTest extends RawHttpSupport {
 
-    /** At least 32 characters: SecurityValidator rejects a shorter key on boot. */
-    static final String ADMIN_KEY = "cross-backend-admin-key-0123456789abcdef";
+    /**
+     * The supervisor account this class signs in as; see
+     * {@code LivenessPipelineIntegrationTest} for the flow. The policy write needs a
+     * supervisor session now that the shared admin key is gone.
+     */
+    static final String SUPERVISOR_USERNAME = "cross-backend-supervisor";
     static final String AUDIT_SECRET = "cross-backend-audit-hmac-secret";
-    /** Same header name as {@code ConfigController.ADMIN_API_KEY_HEADER}. */
-    private static final String ADMIN_HEADER = "X-Admin-API-Key";
 
     /**
      * One challenge window, and the deployment floor for it: 3s keeps the two
@@ -396,10 +397,45 @@ class CrossBackendContractTest extends RawHttpSupport {
         return headers;
     }
 
-    private static HttpHeaders adminHeaders() {
+    /**
+     * Headers a policy write is authorized with.
+     *
+     * <p>{@code Authorization: Bearer} rather than the {@code X-Admin-API-Key} this
+     * used to set: the privileged routes are supervisor-only and the shared key is
+     * gone. Signed in through the real flow, so the session is one the service
+     * actually issued and can revoke.</p>
+     */
+    private HttpHeaders adminHeaders() {
         HttpHeaders headers = jsonHeaders();
-        headers.set(ADMIN_HEADER, ADMIN_KEY);
+        headers.set(HttpHeaders.AUTHORIZATION, supervisorAuth());
         return headers;
+    }
+
+    /** Memoised supervisor bearer value; one sign-in per class. */
+    private String supervisorToken;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.mosip.liveness.auth.AuthService authService;
+
+    /**
+     * A supervisor session whose password has already been replaced, so the
+     * owed-password-change confinement does not apply — a fresh account starts
+     * flagged and would be refused 403 on the policy write.
+     */
+    private synchronized String supervisorAuth() {
+        if (supervisorToken == null) {
+            String initial = "cross-backend-initial-1";
+            authService.createUser(SUPERVISOR_USERNAME, "SUPERVISOR", initial);
+            var firstLogin = authService.login(SUPERVISOR_USERNAME, initial)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "the account just created must be able to sign in"));
+            var ready = authService
+                    .changePassword(firstLogin.principal(), initial, "cross-backend-final-12")
+                    .orElseThrow(() -> new IllegalStateException(
+                            "the initial password must verify for the change to succeed"));
+            supervisorToken = "Bearer " + ready.token();
+        }
+        return supervisorToken;
     }
 
     private JsonNode expect(HttpStatus expected, RawResponse response) throws IOException {

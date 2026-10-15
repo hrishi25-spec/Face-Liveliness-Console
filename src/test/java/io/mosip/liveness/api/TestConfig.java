@@ -2,6 +2,7 @@ package io.mosip.liveness.api;
 
 import io.mosip.liveness.audit.AuditChainKey;
 import io.mosip.liveness.audit.MetricsCollector;
+import io.mosip.liveness.auth.AuthService;
 import io.mosip.liveness.crud.AuditLogRepository;
 import io.mosip.liveness.crud.ChallengeRepository;
 import io.mosip.liveness.crud.ConfigPolicyRepository;
@@ -34,6 +35,20 @@ public class TestConfig {
     @Bean @Primary
     public LivenessSessionRepository sessionRepo() {
         return Mockito.mock(LivenessSessionRepository.class);
+    }
+
+    /**
+     * Accounts and sessions, mocked like the services. A slice has no database, so
+     * the real service cannot resolve a token; the filters that need it
+     * ({@code AuthContextFilter}, {@code OperatorKeyFilter}) are {@code Filter}
+     * beans and therefore always part of a slice, which is why this must exist
+     * rather than being left out. Tests resolve the fixture tokens with
+     * {@code AuthTestFixture.stub}. Default answers refuse everything, so a test
+     * that forgets to stub is refused rather than silently admitted.
+     */
+    @Bean @Primary
+    public AuthService authService() {
+        return Mockito.mock(AuthService.class);
     }
 
     @Bean @Primary

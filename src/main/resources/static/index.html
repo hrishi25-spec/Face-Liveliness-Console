@@ -33,9 +33,16 @@
       <span class="pill" id="pill-chain">chain…</span>
       <span class="pill" id="pill-session">no session</span>
     </div>
-    <div class="topbar-role">
-      <span class="pill" id="pill-role">no role</span>
-      <button id="btn-switch-role" hidden>Switch role</button>
+    <div class="topbar-status">
+      <span class="pill" id="pill-health">checking…</span>
+      <span class="pill" id="pill-engine">engine…</span>
+      <span class="pill" id="pill-chain">chain…</span>
+      <span class="pill" id="pill-session">no session</span>
+      <span class="pill" id="pill-user">no user</span>
+    </div>
+    <div class="topbar-auth">
+      <button id="btn-sign-in" class="secondary">Sign in</button>
+      <button id="btn-sign-out" class="danger" hidden>Sign out</button>
     </div>
   </div>
 </header>
@@ -45,24 +52,7 @@
      placeholders until their capture/auth screens land (one interaction model,
      three roles — docs/ui-ux-design.md §1). The picker routes the UI only: it is
      not an authorization boundary, and the service still enforces its own rules. -->
-<div id="role-picker" class="view">
-  <section>
-    <h2>Select role</h2>
-    <div class="body">
-      <div class="row">
-        <button id="btn-role-resident" class="primary role-btn">Resident</button>
-        <button id="btn-role-operator" class="primary role-btn">Operator</button>
-        <button id="btn-role-supervisor" class="primary role-btn">Supervisor</button>
-      </div>
-      <p class="hint">
-        <b>Switch role</b> (in the header) comes back here: it stops the camera, closes any
-        open session and clears the run state before you pick again.
-      </p>
-    </div>
-  </section>
-</div>
-
-<div id="role-resident" class="view" hidden>
+<!-- Role-based access is enforced server-side; the UI shows Resident capture or Staff login. --><div id="role-resident" class="view" hidden>
   <section>
     <h2>Resident — face capture</h2>
     <div class="body">
@@ -86,33 +76,17 @@
       </div>
 
       <p class="hint">
-        The preview is <b>mirrored</b> (like a selfie) so it matches the instruction — turn
-        your head to <em>your own</em> left when asked to turn left. The frames sent to the
-        engine stay raw and un-mirrored.
+        The preview is <b>mirrored</b> (like a selfie) so it matches the instruction — turn        your head to <em>your own</em> left when asked to turn left. The frames sent to the        engine stay raw and un-mirrored.
       </p>
       <p class="hint">
-        A <b>PASSED</b> session can still be asked for one extra challenge with
-        <b>Run active liveness</b>; that check is recorded on its own challenge row and never
-        changes the session verdict. <b>Stop</b> closes the session and releases the camera.
+        A <b>PASSED</b> session can still be asked for one extra challenge with        <b>Run active liveness</b>; that check is recorded on its own challenge row and never        changes the session verdict. <b>Stop</b> closes the session and releases the camera.
       </p>
 
       <p class="hint mt12">
-        <b>Instructions</b> — the messages this screen renders come from the shared message
-        keys (the desktop catalogue, byte-for-byte the Flutter
-        <code>LivenessView.defaultMessages</code>). Only generic text ever reaches this panel:
-        scores, PAD detail and model internals stay in the audit trail and diagnostics.
+        <b>Instructions</b> — the messages this screen renders come from the shared message        keys (the desktop catalogue, byte-for-byte the Flutter
+        <code>LivenessView.defaultMessages</code>). Only generic text ever reaches this panel:        scores, PAD detail and model internals stay in the audit trail and diagnostics.
       </p>
       <dl class="kv" id="res-guide"><dt>—</dt><dd>—</dd></dl>
-    </div>
-  </section>
-</div>
-
-<div id="role-operator" class="view" hidden>
-  <section>
-    <h2>Operator</h2>
-    <div class="body">
-      <p class="hint"><b>Placeholder.</b> The operator liveness-authentication screen is not
-        wired into this console yet — the Supervisor role carries the full test console for now.</p>
     </div>
   </section>
 </div>
@@ -361,15 +335,16 @@
           <button id="btn-cfg-load">Load policy</button>
           <button id="btn-cfg-save" class="primary">Save policy</button>
           <button id="btn-cfg-discard">Discard edits</button>
-          <button id="btn-cfg-forget-key">Forget key</button>
+          <button id="btn-cfg-sign-out">Sign out</button>
         </div>
         <div id="cfg-status" class="cfg-status"></div>
-        <p class="hint">Saving issues a <code>PUT</code> with the admin key
-          (<code>X-Admin-API-Key</code>); loading is an open <code>GET</code>. The console
-          asks for the key in a <b>prompt</b> when a save needs one, holds it in this page's
-          memory only — never in storage and never in the DOM, so there is no field to
-          screenshot or screen-share — and drops it on <b>Switch role</b>, on <b>Forget
-          key</b>, and when the service refuses it.</p>
+        <p class="hint">Saving issues a <code>PUT</code> that the server authorises from
+          your signed-in session; loading is an open <code>GET</code>. The console asks for a
+          username and password in a <b>prompt</b> when a save needs them — never in the DOM,
+          so there is no field to screenshot or screen-share, and never in storage — and the
+          session it receives is held by the browser in an <code>HttpOnly</code> cookie that
+          this page cannot read. <b>Sign out</b> ends the session, and so does <b>Switch
+          role</b>, which hands the workstation to the next person.</p>
       </div>
     </section>
 
@@ -389,14 +364,26 @@
         <pre id="cfg-audit">No policy changes recorded yet.</pre>
         <p class="hint">Every <code>PUT</code> to <code>/api/v1/config/{workflow}</code> is
           recorded with the fields that moved, their previous and new values, and a
-          fingerprint of the admin key that made the change, shown next to
-          each entry so it is clear at a glance which key did the edit.
+          username that made the change, shown next to
+          each entry so it is clear at a glance which account did the edit.
           Edits that lower the passive threshold or switch liveness off are
           marked <code>[risk: HIGH]</code>, with the reason. The history
           loads with the page, so the most recent edit is visible without
           clicking refresh.</p>
       </div>
     </section>
+    </div>
+
+    <div class="tabpanel" id="panel-users" hidden>
+    <section>
+      <h2>Users</h2>
+      <div class="body">
+        <p class="hint">Supervisor-only: create, disable, reset password, change role.
+        Confirm dialog on destructive actions. Never display hashes.
+      </p>
+      <p class="hint">(User management is server-enforced; this panel is read-only
+       until the supervisor-sign-in flow is implemented on the backend.)</p>
+    </div>
     </div>
 
     <div class="tabpanel" id="panel-chain" hidden>

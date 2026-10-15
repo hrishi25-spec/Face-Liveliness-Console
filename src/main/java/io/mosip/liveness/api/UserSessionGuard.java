@@ -44,7 +44,7 @@ import java.security.MessageDigest;
  * turned into a way to strip ownership off somebody else's session.</p>
  *
  * <p><b>Constant time.</b> {@link MessageDigest#isEqual} rather than
- * {@code String.equals}, matching {@link AdminKeyGuard}: {@code equals}
+ * {@code String.equals}, matching {@link OperatorKeyGuard}: {@code equals}
  * short-circuits on the first differing character, so it leaks how much of a
  * subject reference a guess got right. (Both compares still return immediately
  * when the lengths differ, so a guess reveals length and nothing more.)</p>

@@ -27,6 +27,7 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 │   │   ├── PadLivenessApplication.java     # Spring Boot entry point
 │   │   ├── app/config/AppConfig.java       # Bean wiring, OpenCV init, CORS
 │   │   ├── api/                            # REST controllers (HTTP endpoints)
+│   │   ├── auth/                           # Accounts, sessions, password hashing
 │   │   ├── dto/                            # Request/response DTOs
 │   │   ├── services/                       # Business logic layer
 │   │   ├── crud/                           # JPA repositories (DB access)
@@ -225,7 +226,7 @@ PASSED and consumes no retry budget. Refusals are fail-closed 409s: a session th
 has not passed, a workflow with `activeLivenessEnabled: false`, or a workflow with
 no challenge types. While a manual challenge is still `ISSUED`, a repeat call
 returns that same challenge instead of issuing a second one. The route is
-client-facing (no admin key) and shares the per-session rate-limit budget with
+client-facing (no session) and shares the per-session rate-limit budget with
 frame and challenge submissions.
 
 ### Frame Submission
@@ -319,36 +320,97 @@ should keep polling `/challenges/validate` with the same `challengeId` while the
 response is `continue`, and stop the moment it changes — `static/console.js`
 (loaded by `static/index.html`) is a reference implementation of exactly that loop.
 
+### Authentication (`/api/v1/auth/*`)
+```
+POST /api/v1/auth/login
+  Body:   { "username": "...", "password": "..." }
+  → 200:  { username, role, mustChangePassword, disabled, createdAt, passwordChangedAt }
+          Set-Cookie: MOSIP_SESSION=<token>; Path=/; Max-Age=...; HttpOnly; SameSite=Lax
+  → 400:  { error, message, status, timestamp }   (a missing or malformed field)
+  → 401:  { error, message, status, timestamp }   (every credential failure, one sentence)
+
+POST /api/v1/auth/logout
+  → 204, and a Set-Cookie that clears the session cookie   (idempotent)
+
+GET  /api/v1/auth/me      → 200: the account, as above     (401 without a session)
+POST /api/v1/auth/change-password
+  Body:   { "currentPassword": "...", "newPassword": "..." }
+  → 200:  the account, and a replacement Set-Cookie (every other session revoked)
+  → 401:  a wrong current password — holding a session is not proof of knowing it
+```
+
+Accounts and sessions replace the shared admin API key. The privileged surface
+(`PUT /api/v1/config/*`, `GET /api/v1/eval/threshold-sweep`, everything under
+`/api/v1/users`) now needs an account whose session proves `SUPERVISOR`; the
+operator API key remains for the read-only feeds and the role probe.
+
+**Why the key had to go:** a shared secret names nobody in the audit trail,
+cannot be revoked for one holder without rotating it for everyone, and — having no
+expiry — stays good forever once a `.env` leaks. A policy write is the
+highest-consequence call here (`passiveThreshold` decides who passes), so it is the
+last route that should be reachable by a value sitting in a file.
+
+**The token is never in a body.** It is 256 bits of CSPRNG output, returned exactly
+once in an `HttpOnly` `Set-Cookie` header, stored server-side only as a SHA-256
+digest, and accepted afterwards either as that cookie or as `Authorization: Bearer
+<token>` (a cookie jar for a browser, a header for a command line). The short
+digest — rather than BCrypt — is deliberate: the token is not a guessable human
+secret, so a slow hash would defend nothing while turning every request's lookup
+into a table scan.
+
+**Machinery.** `PasswordHasher` is BCrypt (`at.favre.lib:bcrypt`, cost 12 ≈ 300 ms
+on the 2-core target, refused below 10 outside `dev`). `AuthService` is the only
+place a password is checked and the only place a session begins or ends;
+`SessionCookie` is the only place the cookie's name and flags are written;
+`AuthContextFilter` resolves the token once per request and parks the
+`AuthPrincipal` on the request (`AuthGate` reads it back); `AuthUserBootstrap`
+creates the first supervisor at startup; `SupervisorGateFilter` refuses
+the supervisor-only routes. Tables `auth_users` and `auth_tokens` come from
+`V12__auth_users_and_tokens.sql`.
+
+**Rows.** A failed sign-in is counted on the account and locks it for
+`MOSIP_AUTH_LOCKOUT_SECONDS` after `MOSIP_AUTH_MAX_FAILED_ATTEMPTS`; the lock is a
+stored timestamp, so it ends by itself and a restart cannot clear it, and a
+success clears it. Every refusal — unknown username, disabled account, locked
+account, wrong password — is one `401` with one sentence, and an unknown username
+still pays a full BCrypt verification, so the endpoint is neither a username nor a
+timing oracle. A newly created account (and any password a supervisor resets)
+owes a change: until it is made, that session reaches `GET /auth/me`,
+`POST /auth/change-password` and `POST /auth/logout` and is refused `403`
+elsewhere, including the client-facing routes. A change revokes every session the
+account held, including the one that made it, and mints a replacement.
+
 ### Roles (`GET /api/v1/auth/role`)
 ```
 GET /api/v1/auth/role
-  Headers: X-Admin-API-Key: <MOSIP_ADMIN_API_KEY>, X-Operator-API-Key: <MOSIP_OPERATOR_API_KEY>
+  Headers: X-Operator-API-Key: <MOSIP_OPERATOR_API_KEY>   (or a session cookie / Bearer token)
   → 200: { "role": "SUPERVISOR" | "OPERATOR" }
-  → 401: { error, message, status, timestamp }   (no key, or a key that matches nothing)
+  → 401: { error, message, status, timestamp }   (nothing presented, or something that matches nothing)
 ```
 
-Which role a caller's headers prove, for a console that has to pick its surface.
-The admin key is answered `SUPERVISOR` (a supervisor can do everything an operator
-can) and the operator key `OPERATOR`; both are compared in constant time by
-`OperatorKeyGuard`, and the response is the role name alone — never the key, and
-not a fingerprint of it. The gate is **fail-closed**: blank
-`MOSIP_OPERATOR_API_KEY` means no caller is answered `OPERATOR` (an empty header
-matches nothing), while a blank pair refuses everyone; the admin key still works
-with the operator key unset, so a deployment that never configured one keeps its
-supervisor. `MOSIP_OPERATOR_API_KEY` must be at least 16 characters and differ
-from the admin key, both enforced at startup (`SecurityValidator`).
+Which role the caller proved, for a console that has to pick its surface. A
+session for a `SUPERVISOR` account is answered `SUPERVISOR`, one for an `OPERATOR`
+account `OPERATOR`, and the operator API key `OPERATOR` — a key can never be
+answered `SUPERVISOR`. Every comparison is constant time, and the response is the
+role name alone: never a credential, and not a fingerprint of one. The gate is
+**fail-closed**: a blank `MOSIP_OPERATOR_API_KEY` means no caller is answered
+`OPERATOR` by a key (an empty header matches nothing), and with no session and no
+usable key the probe refuses everyone. `MOSIP_OPERATOR_API_KEY` must be at least
+16 characters when set, enforced at startup by `SecurityValidator`.
 
-The route is listed in `RouteInventory.OPERATOR_KEYED` and enforced by
-`OperatorKeyFilter` like every other keyed route, and `RateLimitFilter` meters its
-requests per client IP on the existing per-IP budget (`SESSION_CREATE_LIMIT`), so
-an unauthenticated caller guessing the key is throttled and the refusal is
-counted as `rateLimitedOperatorKey` rather than as a refused session creation.
-The same list, filter and budget apply to the two operator feeds below.
+The route is listed in `RouteInventory.OPERATOR_KEYED`, and `RateLimitFilter`
+meters its requests per client IP on the existing per-IP budget
+(`SESSION_CREATE_LIMIT`), so an unauthenticated caller guessing the key is
+throttled and the refusal is counted as `rateLimitedOperatorKey` rather than as a
+refused session creation. Sign-in attempts are metered on that same budget under
+their own `auth-login` bucket and counters, because a password guess and a key
+guess are different incidents. The same list, filter and budget apply to the two
+operator feeds below.
 
 ### Operator feeds (`GET /api/v1/sessions`, `GET /api/v1/rejections`)
 ```
 GET /api/v1/sessions?workflowType=RESIDENT&status=FAILED&limit=50
-  Headers: X-Operator-API-Key: <MOSIP_OPERATOR_API_KEY>   (X-Admin-API-Key is accepted too)
+  Headers: X-Operator-API-Key: <MOSIP_OPERATOR_API_KEY>   (or a session cookie / Bearer token)
   → 200: [ { id, workflowType, deviceId, status, currentStage, retryCount,
              finalResult, failureReason, createdAt, closedAt }, ... ]
   → 400: limit outside 1..200, or an unknown workflowType/status
@@ -406,8 +468,11 @@ GET /api/v1/config/{workflowType}/effective
   → EffectivePolicy (computed merge of DB config + engine defaults)
 
 PUT /api/v1/config/{workflowType}
+  Headers: session cookie (or Authorization: Bearer <token>) for a SUPERVISOR account
   Body: { "passiveThreshold": 0.85, "maxRetryCount": 3, ... }
   → ConfigPolicyResponse (updated)
+  → 401: no session; 403: a session that is not a supervisor's (or still owes a
+         password change). Reads above are open GETs; only writes need an account.
 ```
 
 **Config fields:**
@@ -426,13 +491,14 @@ GET /api/v1/metrics
   → OperationalMetrics { totalSessions, passedSessions, failedSessions, activeSessions, passRate, avgPassiveToActiveEscalationRate,
       avgFramesPerSession, avgChallengesPerSession, livenessRetryRate, livenessFailureRate, padRejectionRate,
       rateLimitAllowedRequests, rateLimitedRequests, rateLimitedSessionCreate, rateLimitedFrames, rateLimitedOperatorKey,
-      rateLimitRejectionRate }
+      rateLimitedAuthLogin, rateLimitRejectionRate }
 ```
 
 The `rateLimit*` fields come from `RateLimitCounters`, **not** from the
 database: they count what the limiter has admitted and refused per rule
-(`session-create` per IP, `frames` per session, `operator-key` per IP) since
-process start, so they reset on restart while the session counters do not.
+(`session-create` per IP, `frames` per session, `operator-key` per IP, `auth-login`
+per IP for sign-in attempts) since process start, so they reset on restart while
+the session counters do not.
 `rateLimitRejectionRate` is `rejected / (allowed + rejected)` over the limited
 routes, and is `0.0` (never `NaN`) when there has been no traffic.
 
@@ -469,7 +535,8 @@ GET /api/v1/config/audit?limit=50&workflowType=RESIDENT   # same, narrowed in SQ
 operator-level event — currently only `CONFIG_CHANGED`, written in the same
 transaction as the policy `PUT`. A policy edit decides who passes liveness, so it
 is recorded like any decision: the fields that actually moved with their old and
-new values, and a truncated SHA-256 fingerprint of the admin key (never the key).
+new values, and the username of the signed-in supervisor who made the edit (never
+a credential).
 Session trails query by session id, so they can never pick one up. See
 `docs/configuration.md` for the payload and the open-read rationale.
 

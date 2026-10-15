@@ -36,6 +36,11 @@ import java.util.regex.Pattern;
  *       key should spend the flood budget that already exists rather than get
  *       unlimited constant-time comparisons. No second limiter is involved — the
  *       same fixed-window machinery with one more rule.</li>
+ *   <li>{@code POST /api/v1/auth/login} — keyed by <b>client IP</b>, on that same
+ *       per-IP budget again. A password guess is the most valuable attempt anyone
+ *       can make against this service, so it is bounded by the budget that
+ *       already exists rather than left to run at full speed; a legitimate client
+ *       that signs in a normal number of times never approaches it.</li>
  * </ul>
  *
  * <p>Runs after {@link SecurityHeadersFilter}, so the 429 response carries the
@@ -45,7 +50,7 @@ import java.util.regex.Pattern;
  *
  * <p><b>Order.</b> Late, but twenty below {@code LOWEST_PRECEDENCE} rather than
  * at it, so the filters that must not run ahead of it have room to be later than
- * it: {@link AdminKeyFilter} and {@link OperatorKeyFilter} answer a keyed
+ * it: {@link SupervisorGateFilter} and {@link OperatorKeyFilter} answer a keyed
  * request, and an over-budget request must be refused as a flood *before* one of
  * them spends a comparison on it — and, for the operator gate, before it refuses
  * the request at all, since a filter that stops the chain is a request the budget
@@ -76,12 +81,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final String SESSION_CREATE = "/api/v1/sessions";
 
     /**
+     * The sign-in path. Metered here rather than in the handler so a refused
+     * attempt never reaches BCrypt — the limiter is what stops password guessing
+     * from also being a CPU-exhaustion vector, since a verification deliberately
+     * costs ~300 ms.
+     */
+    private static final String AUTH_LOGIN = "/api/v1/auth/login";
+
+    /**
      * Budget names, echoed in {@code X-RateLimit-Bucket} so a client can tell
-     * the two independent budgets apart.
+     * the independent budgets apart.
      */
     static final String BUCKET_SESSION_CREATE = "session-create";
     static final String BUCKET_FRAMES = "frames";
     static final String BUCKET_OPERATOR_KEY = "operator-key";
+    static final String BUCKET_AUTH_LOGIN = "auth-login";
     static final String H_BUCKET = "X-RateLimit-Bucket";
     static final String H_LIMIT = "X-RateLimit-Limit";
     static final String H_REMAINING = "X-RateLimit-Remaining";
@@ -185,6 +199,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
             bucket = BUCKET_OPERATOR_KEY;
             message = "Too many API key attempts from this address. Try again later.";
             rule = Rule.OPERATOR_KEY;
+        } else if (AUTH_LOGIN.equals(path)) {
+            // The same per-IP budget as session creation and key attempts: one
+            // number to tune, and no new limiter to reason about. Every request
+            // here is a credential attempt, so counting the attempts bounds
+            // guessing without inspecting the outcome — the filter never sees a
+            // password and never needs to.
+            key = "login:" + clientIpResolver.resolve(request);
+            limit = sessionCreateLimit;
+            windowMs = sessionCreateWindowMs;
+            bucket = BUCKET_AUTH_LOGIN;
+            message = "Too many sign-in attempts from this address. Try again later.";
+            rule = Rule.AUTH_LOGIN;
         } else if (!"POST".equals(method)) {
             // Everything else that is not POST is out of scope: only the operator
             // routes above are metered on a GET.
@@ -255,7 +281,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
         /** Frame and challenge writes, keyed by session id. */
         FRAMES,
         /** Operator routes, keyed by client IP. */
-        OPERATOR_KEY
+        OPERATOR_KEY,
+        /** {@code POST /api/v1/auth/login}, keyed by client IP. */
+        AUTH_LOGIN
     }
 
     private void record(Rule rule, boolean allowed) {
@@ -263,6 +291,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             case SESSION_CREATE -> counters.recordSessionCreate(allowed);
             case FRAMES -> counters.recordFrames(allowed);
             case OPERATOR_KEY -> counters.recordOperatorKey(allowed);
+            case AUTH_LOGIN -> counters.recordAuthLogin(allowed);
         }
     }
 

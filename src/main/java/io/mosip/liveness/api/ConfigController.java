@@ -1,5 +1,6 @@
 package io.mosip.liveness.api;
 
+import io.mosip.liveness.auth.AuthPrincipal;
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.config.EffectivePolicyValidator;
 import io.mosip.liveness.config.LivenessConfig;
@@ -12,6 +13,7 @@ import io.mosip.liveness.dto.ConfigPolicyResponse;
 import io.mosip.liveness.dto.ConfigPolicyUpdate;
 import io.mosip.liveness.models.entity.AuditLog;
 import io.mosip.liveness.models.entity.ConfigPolicy;
+import io.mosip.liveness.models.enums.AuthRole;
 import io.mosip.liveness.models.enums.FailurePolicy;
 import io.mosip.liveness.models.enums.WorkflowType;
 import io.mosip.liveness.crud.AuditLogRepository;
@@ -26,9 +28,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.regex.Pattern;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,16 +57,6 @@ public class ConfigController {
     private final AuditChainKey auditChainKey;
 
     /**
-     * Admin key required to mutate policy — fail-closed: when the key is not
-     * configured (blank), config updates are refused rather than left open.
-     * Set via MOSIP_ADMIN_API_KEY (see README, Security section).
-     */
-    @Value("${mosip.security.admin-api-key:}")
-    private String adminApiKey;
-
-    static final String ADMIN_API_KEY_HEADER = "X-Admin-API-Key";
-
-    /**
      * Shortest challenge window this deployment lets a policy configure — the
      * same knob the engine clamps to and the snapshot validator enforces
      * (default 15s). A policy below it cannot run as written, so the update is
@@ -94,16 +83,18 @@ public class ConfigController {
     @PutMapping("/{workflowType}")
     @Transactional
     public ConfigPolicyResponse setPolicy(
-            @PathVariable WorkflowType workflowType,            @RequestBody ConfigPolicyUpdate update,
-
-            @RequestHeader(value = ADMIN_API_KEY_HEADER, required = false) String adminKeyHeader,
+            @PathVariable WorkflowType workflowType,
+            @RequestBody ConfigPolicyUpdate update,
             HttpServletRequest request) {
-        // Authentication first, deliberately: the admin key is checked before the
-        // body is even looked at, so a refused caller learns nothing about which
-        // values are acceptable (and the field checks below stay in one place,
-        // in this controller, rather than split across bean-validation
-        // annotations that run before the key is verified).
-        requireAdmin(adminKeyHeader);
+        // Authorization first, deliberately: the caller's role is checked before
+        // the body is even looked at, so a refused caller learns nothing about
+        // which values are acceptable (and the field checks below stay in one
+        // place, in this controller, rather than split across bean-validation
+        // annotations that run before the role is verified). The gate above this
+        // handler has already refused a stranger; this call is what makes the
+        // handler safe on its own, in a slice or any embedding without the filter
+        // chain.
+        AuthPrincipal actor = AuthGate.requireRole(request, AuthRole.SUPERVISOR);
 
         // A policy row missing entirely is created here (same as the GET path);
         // knowing which happened is part of the audit story.
@@ -113,7 +104,7 @@ public class ConfigController {
 
         // Validate before applying — a rejected update must change nothing, and
         // must not leave an audit entry for an edit that never happened.
-        validate(update);
+        validate(update, policy);
 
         Map<String, Object> before = snapshot(policy);
 
@@ -136,7 +127,7 @@ public class ConfigController {
         configRepo.save(policy);
         // Same transaction as the update: a rollback must not leave a phantom
         // "policy was changed" entry, and a saved policy must never be silent.
-        auditPolicyChange(workflowType, created, before, policy, adminKeyHeader, request);
+        auditPolicyChange(workflowType, created, before, policy, actor, request);
         return toResponse(policy);
     }
 
@@ -182,13 +173,13 @@ public class ConfigController {
      * touched the config" — a threshold move from 0.80 to 0.00 and a no-op PUT
      * must not look alike.
      *
-     * <p>The actor is recorded as <em>both</em> a key fingerprint and a source
-     * IP, read from {@link ClientIpResolver#ATTRIBUTE}. A fingerprint alone says
-     * "someone holding this key did it", which is what an insider or a leaked
-     * key looks like; the address is what narrows it to a host. Neither is an
-     * authentication input — the address is read after {@code requireAdmin} has
-     * already decided the caller is allowed — so the open GET paths are
-     * untouched.</p>
+     * <p>The actor is recorded as an account name and a source IP, read from
+     * {@link ClientIpResolver#ATTRIBUTE}. The name is the whole reason the shared
+     * admin key was retired: this field used to hold a fingerprint of a value
+     * anybody could hold, and it now names the person the policy edit belongs to.
+     * The address narrows it to a host. Neither is an authentication input — the
+     * address is read after the role check has already decided the caller is
+     * allowed — so the open GET paths are untouched.</p>
      *
      * <p>Each entry also carries a {@link #classifyRisk(Map) risk}
      * classification, so the trail answers "should this worry me" without
@@ -196,7 +187,7 @@ public class ConfigController {
      */
     private void auditPolicyChange(WorkflowType workflowType, boolean created,
                                    Map<String, Object> before, ConfigPolicy after,
-                                   String adminKeyHeader, HttpServletRequest request) {
+                                   AuthPrincipal actor, HttpServletRequest request) {
         Map<String, Object> changes = new LinkedHashMap<>();
         Map<String, Object> afterValues = snapshot(after);
         before.forEach((field, from) -> {
@@ -212,7 +203,7 @@ public class ConfigController {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("workflowType", workflowType.name());
         details.put("action", created ? "CREATED" : "UPDATED");
-        details.put("actor", actorKeyId(adminKeyHeader));
+        details.put("actor", actorName(actor));
         details.put("sourceIp", sourceIp(request));
         details.put("changes", changes);
         // Computed over the diff and sealed inside the same details map
@@ -407,46 +398,24 @@ public class ConfigController {
     private static final Pattern ADDRESS_TEXT = Pattern.compile("^[0-9a-fA-F.:]{1,45}$");
 
     /**
-     * Stable, non-reversible fingerprint of the presented admin key, so two
-     * edits made with the same key correlate into one actor without the secret
-     * (or anything that could be used as one) ever reaching the database.
+     * The named account this policy edit belongs to.
+     *
+     * <p>An account name rather than the key fingerprint this used to store. The
+     * fingerprint answered "someone holding that key did it" — which is exactly
+     * what an insider, a contractor who has left, and a leaked environment file
+     * all look like. The name is the accountable party, and it comes from a
+     * session the service issued and can revoke.</p>
+     *
+     * <p>The fallback is not reachable on this route — the role check above
+     * requires {@code SUPERVISOR}, which the account-less operator key can never
+     * prove — but an audit field that could be written as {@code null} would make
+     * a later reader wonder whether the value was missing or the actor unknown.</p>
      */
-    static String actorKeyId(String adminKey) {
-        if (adminKey == null || adminKey.isBlank()) {
-            return "unknown";
-        }
-        byte[] digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256")
-                    .digest(adminKey.getBytes(StandardCharsets.UTF_8));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);  // required by the JLS
-        }
-        StringBuilder sb = new StringBuilder("key:");
-        for (int i = 0; i < 6; i++) {
-            sb.append(String.format("%02x", digest[i]));
-        }
-        return sb.toString();
+    private static String actorName(AuthPrincipal actor) {
+        return actor != null && actor.username() != null ? actor.username() : "unknown";
     }
 
-    /**
-     * Policy updates decide whether liveness checks pass or fail, so an
-     * unauthenticated caller could set passiveThreshold=0 and defeat PAD for
-     * every session. Denied unless the configured key matches (constant-time).
-     */
-    private void requireAdmin(String provided) {
-        if (adminApiKey == null || adminApiKey.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "Config updates are disabled: configure MOSIP_ADMIN_API_KEY on the service to enable them.");
-        }
-        byte[] expected = adminApiKey.getBytes(StandardCharsets.UTF_8);
-        byte[] actual = provided == null ? new byte[0] : provided.getBytes(StandardCharsets.UTF_8);
-        if (!MessageDigest.isEqual(expected, actual)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid admin API key.");
-        }
-    }
-
-    private void validate(ConfigPolicyUpdate update) {
+    private void validate(ConfigPolicyUpdate update, ConfigPolicy currentPolicy) {
         if (update.getPassiveThreshold() != null &&
                 (update.getPassiveThreshold() <= 0.0 || update.getPassiveThreshold() > 1.0)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -474,7 +443,12 @@ public class ConfigController {
                         "onRepeatedFailure must be one of: LOCK, ESCALATE, ALLOW_RETRY");
             }
         }
-        if (update.getChallengeTypes() != null && update.getChallengeTypes().isEmpty()) {
+        // challengeTypes must not be empty when active liveness is enabled
+        boolean activeLivenessEnabled = currentPolicy.getActiveLivenessEnabled();
+        if (update.getActiveLivenessEnabled() != null) {
+            activeLivenessEnabled = update.getActiveLivenessEnabled();
+        }
+        if (update.getChallengeTypes() != null && update.getChallengeTypes().isEmpty() && activeLivenessEnabled) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "challengeTypes must not be empty when activeLiveness is enabled");
         }

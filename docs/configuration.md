@@ -44,7 +44,7 @@ snapshot must be valid before it is persisted) and on every
 Every `PUT /api/v1/config/{workflowType}` writes one `CONFIG_CHANGED` entry to
 `audit_logs` **in the same transaction as the update**, so a saved policy can
 never be silent and a rolled-back update can never leave a phantom entry. A
-rejected request (no/invalid admin key, invalid value) writes nothing at all.
+rejected request (no session, a role that may not write, invalid value) writes nothing at all.
 
 ```
 GET /api/v1/config/audit?limit=50     # newest first, 1–500
@@ -142,9 +142,10 @@ plus `prev_hash` already binds an entry uniquely.
   `changes` object — a real move and a no-op must not read alike.
 - **`action`** is `CREATED` when the `PUT` was the one that first created the
   `config_policies` row, otherwise `UPDATED`.
-- **`actor`** is a truncated SHA-256 fingerprint of the presented admin key.
-  The key itself is never stored, logged or echoed; the fingerprint only
-  correlates edits made with the same key.
+- **`actor`** is the username of the signed-in supervisor whose session made
+  the write. No credential is stored, logged or echoed; the name is what makes
+  an edit attributable to a person rather than to a shared secret, which is the
+  reason the admin key was removed.
 - **`risk`** classifies how much the edit weakens the checks: `HIGH` when it
   lowers `passiveThreshold` or switches `livenessEnabled` or
   `activeLivenessEnabled` off — the moves that silently defeat liveness — and
@@ -156,7 +157,8 @@ plus `prev_hash` already binds an entry uniquely.
 - Config events have **no session**, so they never appear in a session's
   `audit` trail, and that trail can never pick one up (`session_id IS NULL`).
 - The feed is an open read, like `GET /api/v1/config/{workflowType}` (which
-  already publishes the current policy). Only writes require the admin key.
+  already publishes the current policy). Only writes require a session, and only
+  a supervisor's session at that.
 
 ponytail: the feed is a bounded, newest-first read of one table with no
 per-workflow server-side filter — the workflow type lives inside the JSON
@@ -220,10 +222,15 @@ that, no recommendation.
 curl 'http://localhost:8000/api/v1/eval/threshold-sweep?targetBpcer=0.02'
 
 # apply the recommended value per workflow (DB row wins at runtime)
-# PUT requires the admin API key (fail-closed: set MOSIP_ADMIN_API_KEY first)
-curl -X PUT http://localhost:8000/api/v1/config/RESIDENT \
+# PUT requires a signed-in SUPERVISOR session (fail-closed: no session = 401,
+# an operator session = 403). The session arrives as an HttpOnly cookie, so a
+# cookie jar is all a command line needs:
+curl -s -c jar.txt -X POST http://localhost:8000/api/v1/auth/login \
      -H 'Content-Type: application/json' \
-     -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY" \
+     -d '{"username":"$MOSIP_AUTH_BOOTSTRAP_USERNAME","password":"$MOSIP_AUTH_BOOTSTRAP_PASSWORD"}'
+curl -X PUT http://localhost:8000/api/v1/config/RESIDENT \
+     -b jar.txt \
+     -H 'Content-Type: application/json' \
      -d '{"passiveThreshold": 0.90}'
 ```
 
@@ -458,8 +465,14 @@ The application reads several environment variables for configuration. Secret va
 | `POSTGRES_DB` | no (defaults to `pad_liveness`) | no | PostgreSQL database name |
 | `POSTGRES_HOST` | no (defaults to `localhost`) | no | PostgreSQL host |
 | `POSTGRES_PORT` | no (defaults to `5432`) | no | PostgreSQL port |
-| `MOSIP_ADMIN_API_KEY` | **yes** (for config updates via `PUT /api/v1/config/*`) | **yes** | Admin API key; generate with `openssl rand -hex 32`. Also the `SUPERVISOR` role on operator routes. |
-| `MOSIP_OPERATOR_API_KEY` | no (operator routes refuse everyone while it is blank) | **yes** | Operator API key (`X-Operator-API-Key`) for operator routes such as `GET /api/v1/auth/role`; minimum 16 characters when set and it must differ from the admin key, or startup fails |
+| `MOSIP_AUTH_BOOTSTRAP_USERNAME` | no (only on a database with no accounts) | no | First-supervisor bootstrap: the username to create. Must be 3–64 characters of letters, digits, dot, underscore or hyphen. Set with the password below or not at all — startup fails on one alone. |
+| `MOSIP_AUTH_BOOTSTRAP_PASSWORD` | no (only on a database with no accounts) | **yes** | Password for that first supervisor, at least 12 characters. The account must change it at first sign-in. |
+| `MOSIP_AUTH_TOKEN_TTL_SECONDS` | no (defaults to `3600`) | no | Session lifetime. Bounds how long a stolen token is usable. |
+| `MOSIP_AUTH_MAX_FAILED_ATTEMPTS` | no (defaults to `5`) | no | Consecutive failed sign-ins before the account locks. |
+| `MOSIP_AUTH_LOCKOUT_SECONDS` | no (defaults to `900`) | no | How long a lock lasts, stored as a timestamp so it expires by itself and a restart cannot clear it. |
+| `MOSIP_AUTH_BCRYPT_COST` | no (defaults to `12`) | no | BCrypt cost (`log2` of the work per verification; `12` is ~300 ms on the 2-core target). Values below `10` are refused outside the `dev` profile. |
+| `MOSIP_AUTH_COOKIE_SECURE` | no (defaults to `false`) | no | Send the session cookie only over HTTPS. Set `true` when TLS terminates in front of this service — a `Secure` cookie is dropped over plain HTTP, where the sign-in would appear to succeed and silently not. |
+| `MOSIP_OPERATOR_API_KEY` | no (operator routes refuse everyone while it is blank) | **yes** | Operator API key (`X-Operator-API-Key`), which proves the `OPERATOR` role on the read-only operator feeds and on `GET /api/v1/auth/role`. Minimum 16 characters when set. It is never accepted on a privileged route: a leaked key can read feeds and cannot write a policy or an account. |
 | `MOSIP_AUDIT_HMAC_SECRET` | **yes** (recommended for tamper‑evident audit chain) | **yes** | Secret for HMAC‑SHA‑256 audit chain; minimum 16 characters |
 | `MOSIP_AUDIT_HMAC_PREVIOUS_SECRET` | no | **yes** | Previous audit HMAC secret for key rotation; must differ from current |
 | `SERVER_PORT` | no (defaults to `8000`) | no | HTTP server port |
@@ -467,7 +480,7 @@ The application reads several environment variables for configuration. Secret va
 | `DB_POOL_SIZE` | no (defaults to `5`) | no | HikariCP maximum pool size |
 | `MAX_REQUEST_BODY_BYTES` | no (defaults to `25165824` = 24 MB) | no | Maximum HTTP request body size |
 | `RATE_LIMIT_ENABLED` | no (defaults to `true`) | no | Enable rate‑limiting filter |
-| `SESSION_CREATE_LIMIT` | no (defaults to `30`) | no | Session creations **and operator‑route key attempts** per IP per minute (both use the per‑IP budget) |
+| `SESSION_CREATE_LIMIT` | no (defaults to `30`) | no | Session creations, **sign‑in attempts** (`auth-login`) **and operator‑route key attempts** per IP per minute (all use the per‑IP budget) |
 | `FRAME_LIMIT` | no (defaults to `60`) | no | Frames + challenge validations per session per 10 s |
 | `TRUSTED_PROXIES` | no (defaults to empty) | no | Comma‑separated list of trusted proxies for rate‑limiting |
 | `MIN_CHALLENGE_WINDOW_MS` | no (defaults to `15000`) | no | Floor for per‑workflow challenge timeout (hard minimum 1000 ms) |
@@ -475,30 +488,91 @@ The application reads several environment variables for configuration. Secret va
 
 See `.env.example` in the repository root for a template.
 
-### The two API keys and the roles they prove
+### Who may do what (accounts, roles and the operator key)
 
-`GET /api/v1/auth/role` is how a client asks which role its key proves, so a
-console can pick the supervisor or the operator surface from the service's answer
-rather than from which box someone typed into:
+The shared admin API key is gone. The privileged surface — `PUT
+/api/v1/config/*`, `GET /api/v1/eval/threshold-sweep` and every route under
+`/api/v1/users` — is reachable only by an account whose session proves the
+`SUPERVISOR` role. The read-only operator feeds and the role probe still accept
+the operator API key as well, so an existing read-only console keeps working.
+
+**Getting the first supervisor.** On a database with no accounts, set
+`MOSIP_AUTH_BOOTSTRAP_USERNAME` and `MOSIP_AUTH_BOOTSTRAP_PASSWORD` and start the
+service: it creates one `SUPERVISOR` account that must change its password at
+first sign-in. Both variables or neither — startup fails on one alone. Leaving
+them set is a no-op from then on (the bootstrap does nothing when any account
+exists), so it can never re-create an account, reset a password or grant a
+privilege on a later boot. Two other states are checked at startup: a password
+below the length floor and a username of the wrong shape are both refused, and a
+deployment with no accounts and no bootstrap pair logs a warning that user
+management is unreachable.
 
 ```bash
+# sign in (the session comes back as an HttpOnly cookie, never in the body)
+curl -s -c jar.txt -X POST localhost:8000/api/v1/auth/login \
+     -H 'Content-Type: application/json' \
+     -d '{"username":"first-supervisor","password":"the-bootstrap-password"}' \
+     | tee /dev/stderr
+# → {"username":"first-supervisor","role":"SUPERVISOR","mustChangePassword":true,...}
+
+# replace the bootstrap password (this revokes the session that did it and
+# issues a replacement cookie in the same response)
+curl -s -b jar.txt -c jar.txt -X POST localhost:8000/api/v1/auth/change-password \
+     -H 'Content-Type: application/json' \
+     -d '{"currentPassword":"the-bootstrap-password","newPassword":"a-longer-replacement"}'
+
+# who am I, and which role did I prove
+curl -s -b jar.txt localhost:8000/api/v1/auth/me
+curl -s -b jar.txt localhost:8000/api/v1/auth/role
+# → {"role":"SUPERVISOR"}
+
+# the operator key answers the same probe, with the smaller role
 curl -s localhost:8000/api/v1/auth/role -H "X-Operator-API-Key: $MOSIP_OPERATOR_API_KEY"
 # → {"role":"OPERATOR"}
 
-curl -s localhost:8000/api/v1/auth/role -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY"
-# → {"role":"SUPERVISOR"}
+# sign out (idempotent, and clears the cookie)
+curl -s -b jar.txt -X POST localhost:8000/api/v1/auth/logout
 ```
 
-Both keys are compared in constant time and **fail closed**: with
-`MOSIP_OPERATOR_API_KEY` blank no caller is ever answered `OPERATOR` (an empty
-header does not match a blank key), and with both keys blank the probe refuses
-everyone (401). The admin key is deliberately still accepted when the operator key
-is blank, so a deployment that sets only `MOSIP_ADMIN_API_KEY` keeps working.
-The response carries the role and nothing else — no key, and not even a
-fingerprint of one — and a wrong key is indistinguishable from a missing one.
-Key attempts on operator routes are metered per client IP by the existing
-`RateLimitFilter` budget (`SESSION_CREATE_LIMIT`), so guessing is throttled by the
-flood protection that was already there.
+A non-browser client can carry the same session in `Authorization: Bearer
+<token>` instead of the cookie; the token is the value from the `Set-Cookie`
+header's `MOSIP_SESSION` cookie, and nothing else changes.
+
+**Accounts.** A supervisor creates accounts with `POST /api/v1/users`, naming a
+role of `SUPERVISOR` or `OPERATOR` and an initial password; the new account owes a
+password change, so the value handed over out of band cannot become its permanent
+password by inaction. Until that change is made, the session reaches
+`GET /auth/me`, `POST /auth/change-password` and `POST /auth/logout` and is
+refused with `403` everywhere else. `PUT /api/v1/users/{username}` changes a role,
+disables or re-enables an account, or sets a new initial password (which revokes
+the sessions the account holds — a reset that left the previous holder signed in
+would not be a reset), and `DELETE /api/v1/users/{username}` removes one. A
+change that would leave no enabled supervisor — a demotion, a disable or a delete
+— is refused with `409`, because nobody would be left who may grant it back.
+
+**Failures are one answer.** Every sign-in failure is the same `401` with the
+same sentence, whether the username is unknown, the password wrong, the account
+disabled or the account locked, so the endpoint is not a username oracle. An
+unknown username still pays a full BCrypt verification, so it is not a timing
+oracle either. The account locks for `MOSIP_AUTH_LOCKOUT_SECONDS` after
+`MOSIP_AUTH_MAX_FAILED_ATTEMPTS` consecutive failures, and a success clears both
+halves of the lock.
+
+**Tokens.** 256 bits of CSPRNG output, handed over once in a `Set-Cookie` header
+and stored only as a SHA-256 digest, so a database snapshot is not a set of usable
+sessions. Signing out revokes; a password change revokes every other session and
+mints a replacement; expiry is a column, not a job.
+
+The operator key and every session token are compared in constant time and **fail
+closed**: with `MOSIP_OPERATOR_API_KEY` blank no caller is ever answered
+`OPERATOR` (an empty header does not match a blank key), and with no session and
+no usable key the probe refuses everyone (`401`). The response carries the role
+and nothing else — no credential, and not even a fingerprint of one — and a wrong
+key is indistinguishable from a missing one. Key attempts on operator routes are
+metered per client IP by the existing `RateLimitFilter` budget
+(`SESSION_CREATE_LIMIT`), and sign-in attempts are metered on that same per-IP
+budget, reported as the `auth-login` bucket, so guessing is throttled in both
+cases.
 
 ## Audit logging security
 
@@ -521,18 +595,22 @@ services:
     # ...
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
-      MOSIP_ADMIN_API_KEY_FILE: /run/secrets/admin-api-key
+      MOSIP_AUTH_BOOTSTRAP_PASSWORD_FILE: /run/secrets/bootstrap-password
       MOSIP_AUDIT_HMAC_SECRET_FILE: /run/secrets/audit-hmac-secret
     secrets:
       - postgres-password
-      - admin-api-key
+      - bootstrap-password
       - audit-hmac-secret
 
 secrets:
   postgres-password:
     file: ./secrets/postgres-password.txt
-  admin-api-key:
-    file: ./secrets/admin-api-key.txt
+  # Only needed on the first boot against an empty database; unset it (and the
+  # username beside it) once the supervisor has signed in and replaced the
+  # password. Leaving it set is a no-op rather than a backdoor, because the
+  # bootstrap does nothing when any account already exists.
+  bootstrap-password:
+    file: ./secrets/bootstrap-password.txt
   audit-hmac-secret:
     file: ./secrets/audit-hmac-secret.txt
 ```
@@ -550,7 +628,8 @@ kubectl create secret generic db-credentials \
   --from-literal=POSTGRES_PORT=5432
 
 kubectl create secret generic mosip-secrets \
-  --from-literal=MOSIP_ADMIN_API_KEY=<admin-key> \
+  --from-literal=MOSIP_AUTH_BOOTSTRAP_USERNAME=<first-supervisor> \
+  --from-literal=MOSIP_AUTH_BOOTSTRAP_PASSWORD=<first-supervisor-password> \
   --from-literal=MOSIP_AUDIT_HMAC_SECRET=<audit-secret> \
   --from-literal=MOSIP_AUDIT_HMAC_PREVIOUS_SECRET=<previous-audit-secret>
 ```
@@ -564,11 +643,16 @@ env:
       secretKeyRef:
         name: db-credentials
         key: POSTGRES_PASSWORD
-  - name: MOSIP_ADMIN_API_KEY
+  - name: MOSIP_AUTH_BOOTSTRAP_USERNAME
     valueFrom:
       secretKeyRef:
         name: mosip-secrets
-        key: MOSIP_ADMIN_API_KEY
+        key: MOSIP_AUTH_BOOTSTRAP_USERNAME
+  - name: MOSIP_AUTH_BOOTSTRAP_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: mosip-secrets
+        key: MOSIP_AUTH_BOOTSTRAP_PASSWORD
   - name: MOSIP_AUDIT_HMAC_SECRET
     valueFrom:
       secretKeyRef:

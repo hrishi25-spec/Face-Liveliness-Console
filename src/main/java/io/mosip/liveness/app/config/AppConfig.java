@@ -345,17 +345,27 @@ public class AppConfig {
                 // allowedOriginPatterns (not allowedOrigins) because only
                 // patterns support wildcard ports — allowedOrigins("http://localhost:*")
                 // never matches any real origin, so cross-origin dev servers were
-                // silently rejected. Credentials stay off: nothing here uses cookies.
+                // silently rejected.
+                //
+                // Credentials stay off, and that is now a deliberate statement
+                // rather than an accident: the session cookie is HttpOnly and
+                // SameSite=Lax, so it is sent only to this service's own origin,
+                // where the console is served from this same application. A
+                // cross-origin caller cannot carry a session at all — which is
+                // what keeps cookie authentication from turning every route into
+                // a CSRF target — and reaches an authenticated route instead with
+                // Authorization: Bearer, listed below and no more vulnerable for
+                // being explicit. X-Admin-API-Key is gone with the admin key.
                 registry.addMapping("/**")
                         .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
-                        .allowedMethods("GET", "POST", "PUT", "OPTIONS")
+                        .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                         // X-Subject-Ref is the ownership claim for a session-scoped
                         // call (UserSessionGuard); a browser client that creates a
                         // session with a subjectRef must be able to send it.
                         // X-Operator-API-Key is the smaller role's key, checked by
                         // OperatorKeyFilter on the operator routes; without it here a
                         // browser console could not present it at all.
-                        .allowedHeaders("Content-Type", "Authorization", "X-Admin-API-Key",
+                        .allowedHeaders("Content-Type", "Authorization",
                                 "X-Subject-Ref", "X-Operator-API-Key")
                         // So a console on another dev port can read the limiter's
                         // budget headers (a browser hides unlisted headers).

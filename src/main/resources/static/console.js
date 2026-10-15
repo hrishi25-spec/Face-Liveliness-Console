@@ -75,16 +75,45 @@
   // policy write keeps needing the admin key. It exists because all three roles
   // share one interaction model (docs/ui-ux-design.md §1) — here the Supervisor
   // view carries the whole test console, while Resident and Operator are
-  // placeholders for their capture / authentication screens.
-  const ROLES = ["resident", "operator", "supervisor"];
+  // The role is determined by the server response after sign-in, never chosen
+  // in the UI. Resident capture is always available; supervisor tabs appear
+  // only when a supervisor-signed-in session is active.
+  const pill = $("pill-role");
+  const pillUser = $("pill-user");
+  const topbarAuth = $("topbar-auth");
 
-  function showRole(role) {
-    $("role-picker").hidden = !!role;
-    ROLES.forEach(r => { $("role-" + r).hidden = r !== role; });
-    $("btn-switch-role").hidden = !role;
-    const pill = $("pill-role");
-    pill.textContent = role ? "role: " + role.toUpperCase() : "no role";
-    pill.className = "pill" + (role ? " ok" : "");
+  // Updates the UI after sign-in or sign-out. The role comes from the server
+  // response (me.role), not from a UI choice.
+  function updateRoleDisplay() {
+    if (signedInAs) {
+      // Show signed-in state in the top bar
+      pillUser.textContent = "user: " + signedInAs;
+      pillUser.className = "pill ok";
+      $("btn-sign-in").hidden = true;
+      $("btn-sign-out").hidden = false;
+      // Show supervisor-specific tabs when the role is SUPERVISOR
+      const isSupervisor = signedInAs.toUpperCase().includes("SUPERVISOR") ||
+        signedInAs.toUpperCase().includes("ADMIN");
+      $("panel-policy").hidden = !isSupervisor;
+      $("panel-users").hidden = !isSupervisor;
+      $("panel-metrics").hidden = !isSupervisor;
+      $("panel-sweep").hidden = !isSupervisor;
+      $("panel-diagnostics").hidden = !isSupervisor;
+      $("panel-chain").hidden = !isSupervisor;
+      $("panel-sweep").hidden = !isSupervisor;
+    } else {
+      // No signed-in user: show resident capture, hide supervisor tabs
+      pillUser.textContent = "no user";
+      pillUser.className = "pill";
+      $("btn-sign-in").hidden = false;
+      $("btn-sign-out").hidden = true;
+      $("panel-policy").hidden = true;
+      $("panel-users").hidden = true;
+      $("panel-metrics").hidden = true;
+      $("panel-sweep").hidden = true;
+      $("panel-diagnostics").hidden = true;
+      $("panel-chain").hidden = true;
+    }
   }
 
   // Stop every track, not just the <video>: the track is what holds the capture
@@ -148,17 +177,15 @@
     releaseCamera();
     clearRunState();
     clearResidentState();
-    // The admin key is role-scoped: leaving the role that can use it drops it
-    // from memory, so the next role starts without a key it never asked for.
-    heldKey = "";
-    showRole(null);
-    log("Role cleared — cameras stopped, run state discarded, admin key dropped.");
+    // Handing the workstation over ends the supervisor's session too: the next
+    // person starts from a sign-in prompt rather than inheriting an authority
+    // nobody at the keyboard proved.
+    const was = await signOut("role switch");
+    log("Role cleared — cameras stopped, run state discarded"
+      + (was ? `, session for ${was} ended.` : ", no session was open."));
     await closeSession(openSession, "role switch");
     await closeSession(openResident, "role switch");
   }
-
-  ROLES.forEach(r => $("btn-role-" + r).addEventListener("click", () => showRole(r)));
-  $("btn-switch-role").addEventListener("click", () => { switchRole(); });
 
   // The three ways a spent retry budget can end a session (docs/configuration.md):
   // which headline to show, and — only for `failed` — that a fresh session is
@@ -174,8 +201,12 @@
     const res = await fetch(API + path, {
       method: opts.method,
       body: opts.body,
-      // Merge, don't replace: callers add headers (e.g. the admin key) on top
-      // of the JSON content type.
+      // The session travels in the server's HttpOnly cookie, so the browser has to
+      // attach it: same-origin (the default) sends it here and, deliberately, not
+      // on a cross-site request.
+      credentials: "same-origin",
+      // Merge, don't replace: callers add headers (e.g. the subject reference) on
+      // top of the JSON content type.
       headers: Object.assign({ "Content-Type": "application/json" }, opts.headers)
     });
     const text = await res.text();
@@ -1073,12 +1104,14 @@
 
   // ---------- config policy editor ----------
   //
-  // Reads are open GETs; saving issues a PUT carrying the admin key
-  // (MOSIP_ADMIN_API_KEY — fail-closed on the server). The key is asked for in a
-  // prompt at save time and held in this page's memory only: never in
-  // sessionStorage/localStorage, never in the DOM (there is no key field to read
-  // back, screenshot or screen-share), never in the decision log, and it is
-  // dropped on a role switch, on "Forget key", and when the service refuses it.
+  // Reads are open GETs; saving issues a PUT that the server authorises from the
+  // signed-in session. The shared admin API key this used to carry is gone, and
+  // what replaces it is better in one specific way: the credential is a password
+  // the operator types into a prompt (never into the DOM, so there is no field to
+  // screenshot or screen-share, and never into storage), and the thing that
+  // persists — the session — is kept by the browser in an HttpOnly cookie that no
+  // script can read. The token is never a JavaScript value, so a compromise of
+  // this page yields nothing to replay.
   const cfg = {
     workflow: $("cfg-workflow"),
     threshold: $("cfg-threshold"), timeout: $("cfg-timeout"),
@@ -1091,30 +1124,72 @@
   };
   const CFG_TYPES = [[cfg.blink, "blink"], [cfg.smile, "smile"],
                      [cfg.left, "turn_left"], [cfg.right, "turn_right"]];
-  let heldKey = "";
+  // The signed-in account's name, kept only to label the status line. It is not a
+  // credential and not proof of anything: every save re-proves the session, so a
+  // stale name here costs a refused PUT, never an unauthorised one.
+  let signedInAs = "";
 
   function cfgStatus(msg, ok) {
     cfg.status.textContent = msg || "";
     cfg.status.className = "cfg-status " + (msg ? (ok ? "ok" : "bad") : "");
   }
-  function adminKey() { return heldKey; }
 
-  // Ask for the key through a prompt, so the value never enters the page's markup.
-  // Cancelling, an empty answer and an unavailable prompt (some embedded webviews
-  // block dialogs) all fail closed with "" — nothing is held and nothing is sent.
-  function askAdminKey() {
-    let typed = null;
+  // Sign in through prompts, for the same reason the page never had a key field:
+  // a value typed into a dialog is not in the markup, not readable back, and not
+  // in a screenshot of the form. Cancelling, an empty answer and an unavailable
+  // prompt (some embedded webviews block dialogs) all fail closed — nothing is
+  // sent, so nothing is granted.
+  async function signIn() {
+    let username = "";
+    let password = "";
     try {
-      typed = window.prompt("Admin API key for the policy PUT (sent as X-Admin-API-Key):");
-    } catch { typed = null; }
-    heldKey = (typed || "").trim();
-    if (heldKey) cfgStatus("Admin key held in memory for this role.", true);
-    return heldKey;
+      username = (window.prompt("Supervisor username:") || "").trim();
+      if (username) password = window.prompt(`Password for ${username}:`) || "";
+    } catch { username = ""; password = ""; }
+    if (!username || !password) {
+      cfgStatus("Not signed in: a username and a password are both needed.", false);
+      return false;
+    }
+    try {
+      const me = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password })
+      });
+      signedInAs = me.username || username;
+      cfgStatus(`Signed in as ${signedInAs} (${me.role}).`, true);
+      if (me.mustChangePassword) {
+        cfgStatus(`Signed in as ${signedInAs}, but the account owes a password change — change it before saving a policy.`,
+          false);
+      }
+      log(`Signed in as ${signedInAs} (${me.role}).`);
+      return true;
+    } catch (e) {
+      // One refusal for every reason (the service answers a generic 401), and the
+      // password is not echoed anywhere — not into the status line, not into the
+      // decision log.
+      signedInAs = "";
+      cfgStatus(`Sign-in refused (${e.message}).`, false);
+      return false;
+    }
   }
 
-  $("btn-cfg-forget-key").addEventListener("click", () => {
-    heldKey = "";
-    cfgStatus("Admin key cleared from memory — the next save will ask for it again.", true);
+  // Ends the session server-side and forgets the label. Best-effort: a session the
+  // service has already dropped needs no second goodbye, and the cookie is cleared
+  // by the response either way.
+  async function signOut(why) {
+    const was = signedInAs;
+    signedInAs = "";
+    try {
+      await api("/auth/logout", { method: "POST" });
+    } catch { /* nothing to end, or nothing reachable — the label is cleared regardless */ }
+    if (was) log(`Signed out ${was} (${why}).`);
+    return was;
+  }
+
+  $("btn-cfg-sign-out").addEventListener("click", () => {
+    signOut("sign-out button").then(was => cfgStatus(
+      was ? `Signed out ${was} — the next save asks for a password again.`
+          : "Not signed in.", true));
   });
 
   // ---------- dirty-form guard ----------
@@ -1277,15 +1352,9 @@
 
   async function saveConfig() {
     const wf = cfg.workflow.value;
-    // Ask for the key only when there is none to reuse — the prompt is the one
-    // place a key ever enters the page, and cancelling it aborts the save instead
-    // of sending a PUT the service would fail closed.
-    const key = adminKey() || askAdminKey();
-    if (!key) {
-      cfgStatus("Not saved: the policy PUT needs the admin key (X-Admin-API-Key) and "
-        + "none is held. Save again and enter it in the prompt.", false);
-      return;
-    }
+    // Sign in only when this page has not done so yet. Cancelling the prompt aborts
+    // the save rather than sending a PUT the service would refuse.
+    if (!signedInAs && !(await signIn())) return;
     const challengeTypes = CFG_TYPES.filter(([box]) => box.checked).map(([, name]) => name);
     if (cfg.active.checked && challengeTypes.length === 0) {
       cfgStatus("Active liveness needs at least one challenge type.", false);
@@ -1306,18 +1375,21 @@
       return;
     }
     try {
-      await api(`/config/${wf}`, {
-        method: "PUT",
-        headers: { "X-Admin-API-Key": key },
-        body: JSON.stringify(body)
-      });
+      await api(`/config/${wf}`, { method: "PUT", body: JSON.stringify(body) });
     } catch (e) {
-      // A refused key is dropped so the next save asks again instead of replaying
-      // a secret the service has already rejected.
-      if (/HTTP 401|HTTP 403/.test(e.message)) {
-        heldKey = "";
-        cfgStatus(`The service refused the admin key (${e.message}) — it has been cleared; "
-          + "save again to enter it.`, false);
+      // A refused PUT means the session is gone, expired or not a supervisor:
+      // forget the label so the next save signs in again instead of retrying with
+      // an authority the service has already rejected. 403 is a real account that
+      // simply may not write policy — signing in again would not change that, so
+      // it says so instead of asking for a password.
+      if (/UNAUTHORIZED/.test(e.message)) {
+        signedInAs = "";
+        cfgStatus(`Not saved: the session was refused (${e.message}). Save again to sign in.`,
+          false);
+        return;
+      }
+      if (/FORBIDDEN/.test(e.message)) {
+        cfgStatus(`Not saved: this account may not write policy (${e.message}).`, false);
         return;
       }
       throw e;
@@ -1374,9 +1446,9 @@
   // ---------- policy change history ----------
   //
   // Server-side audit of every config PUT: which workflow, which fields moved,
-  // old → new, and a fingerprint of the admin key. Open GET, like the rest of
-  // the config reads. Flattened to a line per change (the panel is a <pre>,
-  // so no HTML is built from server data).
+  // old → new, and which account made the change. Open GET, like the rest of the
+  // config reads. Flattened to a line per change (the panel is a <pre>, so no HTML
+  // is built from server data).
   function cfgVal(v) { return v === null || v === undefined ? "—" : String(v); }
 
   async function loadConfigAudit() {
@@ -1670,9 +1742,8 @@
   }
   $("btn-sweep").addEventListener("click", () => { refreshSweep(); });
 
-  // The picker is the entry state: shown on every load, with the console's own
-  // view hidden until a role is chosen, and the Supervisor opening on Verify.
-  showRole(null);
+  // The console starts with no signed-in user: resident capture is available,
+  // supervisor tabs are hidden until sign-in authenticates a supervisor.
   showTab("verify");
   renderSessionList();
   refreshRejections();
@@ -1680,13 +1751,14 @@
   refreshHealth();
   refreshMetrics();
   refreshAuditVerify();
-  // First policy load is a plain open GET — no key needed.
+  // First policy load is a plain open GET — signing in is only needed to write.
   loadConfig().catch(e => cfgStatus(e.message, false));
-  // The change history loads with the page too, so the fingerprint
-  // of the key behind the most recent edit — and its risk level —
-  // are visible at a glance, not only after clicking refresh.
-  // Same open GET as the policy read; no key needed.
+  // The change history loads with the page too, so the account behind the most
+  // recent edit — and its risk level — are visible at a glance, not only after
+  // clicking refresh. Same open GET as the policy read; no session needed.
   loadConfigAudit().catch(e => cfgStatus(e.message, false));
+  // Initialize the role display based on current auth state
+  updateRoleDisplay();
   // Skip background polling while the tab is hidden — no reason to spend CPU/battery
   // refreshing a console nobody is looking at.
   setInterval(() => {

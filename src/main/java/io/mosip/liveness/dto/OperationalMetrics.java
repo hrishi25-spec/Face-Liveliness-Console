@@ -65,5 +65,14 @@ public class OperationalMetrics {
     private Integer rateLimitedSessionCreate;
     private Integer rateLimitedFrames;
     private Integer rateLimitedOperatorKey;
+    /**
+     * Sign-in attempts refused by the limiter, on the same per-IP budget as
+     * session creation and operator-route key attempts. A non-zero value is the
+     * signal that password guessing is happening; keeping it separate from
+     * {@code rateLimitedOperatorKey} matters because the two answer different
+     * questions ("someone is guessing passwords" versus "someone is guessing the
+     * operator key") and an operator acts on them differently.
+     */
+    private Integer rateLimitedAuthLogin;
     private Double rateLimitRejectionRate;
 }

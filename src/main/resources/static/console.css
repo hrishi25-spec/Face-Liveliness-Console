@@ -147,6 +147,7 @@ body{
   font-size:var(--font-size-caption);font-weight:600;letter-spacing:.08em;
   text-transform:uppercase;color:var(--color-text-muted)}
 .topbar-status{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.topbar-auth{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
 .topbar-role{margin-left:auto;display:flex;align-items:center;gap:var(--space-2)}
 /* Narrow screens: the role cluster gets its own full-width row instead of
    wrapping to a line where `margin-left:auto` leaves it floating awkwardly. */

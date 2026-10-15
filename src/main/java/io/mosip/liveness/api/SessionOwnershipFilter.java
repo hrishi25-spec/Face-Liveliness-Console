@@ -23,7 +23,7 @@ import java.util.UUID;
  * {@link UserSessionGuard#HEADER}; the decision itself is
  * {@link UserSessionGuard#refusal}. The check used to live inside each handler as
  * a call to {@code UserSessionGuard.require}, and that shape had the same failure
- * mode {@link AdminKeyFilter} was built to remove: a new session-scoped route
+ * mode {@link SupervisorGateFilter} was built to remove: a new session-scoped route
  * whose author forgets the call is simply open, and nothing notices. Here there
  * is no call to forget — {@link RouteInventory} decides, and
  * {@code ApiRouteInventoryTest} fails a route that carries a session id without

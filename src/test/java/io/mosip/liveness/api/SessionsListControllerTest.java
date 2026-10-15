@@ -1,5 +1,6 @@
 package io.mosip.liveness.api;
 
+import io.mosip.liveness.testing.AuthTestFixture;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.mosip.liveness.config.WorkflowPolicyDefaults;
@@ -61,14 +62,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(TestConfig.class)
 @TestPropertySource(properties = {
         "mosip.security.operator-api-key=" + SessionsListControllerTest.OPERATOR_KEY,
-        "mosip.security.admin-api-key=" + SessionsListControllerTest.ADMIN_KEY,
         "mosip.security.rate-limit.session-create-limit=1000"
 })
 class SessionsListControllerTest {
 
-    /** Synthetic; long enough for the startup rules (operator ≥16, admin ≥32). */
+    /** Synthetic; long enough to satisfy the startup floor (operator ≥16). */
     static final String OPERATOR_KEY = "synthetic-operator-key-0001";
-    static final String ADMIN_KEY = "synthetic-admin-key-0000000000000000001";
 
     /** A fixed id, so a refusal can be told from a real row in the body. */
     private static final UUID ID = UUID.fromString("5c8f1c9e-0000-4000-8000-000000000001");
@@ -76,10 +75,12 @@ class SessionsListControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private LivenessSessionRepository sessionRepo;
+    @Autowired private io.mosip.liveness.auth.AuthService authService;
 
     @BeforeEach
     void setUp() {
         reset(sessionRepo);
+        AuthTestFixture.stub(authService);
     }
 
     @Test
@@ -117,11 +118,26 @@ class SessionsListControllerTest {
                 .andExpect(jsonPath("$[0].finalResult").value(true));
     }
 
+    /**
+     * The gate accepts a session now as well as the key, and a supervisor session
+     * reads the feed: the privileged role is allowed everything the smaller one is.
+     * This is what replaced "the admin key reads the operator feed too".
+     */
     @Test
-    void theAdminKeyReadsTheOperatorFeedToo() throws Exception {
+    void aSupervisorSessionReadsTheOperatorFeed() throws Exception {
         when(sessionRepo.findRecent(any(), any(), any())).thenReturn(List.of());
 
-        mockMvc.perform(get("/api/v1/sessions").header(AdminKeyGuard.HEADER, ADMIN_KEY))
+        mockMvc.perform(get("/api/v1/sessions").with(AuthTestFixture.asSupervisor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    /** An operator session reads it too, without needing the key at all. */
+    @Test
+    void anOperatorSessionReadsTheOperatorFeed() throws Exception {
+        when(sessionRepo.findRecent(any(), any(), any())).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/sessions").with(AuthTestFixture.asOperator()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
     }

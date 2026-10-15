@@ -115,15 +115,16 @@ determinism and observed behaviour are measured in
 5. `GET /api/v1/sessions/{id}/audit` — full structured audit trail.
 6. `GET/PUT /api/v1/config/{workflow_type}` — read/update per-workflow policy
    (threshold, challenge types, timeout, retry count, failure policy) —
-   no redeploy required. **PUT requires the admin API key** (see
+   no redeploy required. **PUT requires a signed-in `SUPERVISOR` account** (see
    [Security](#security)); reads are open. Every successful `PUT` is recorded in
-   the audit trail: `GET /api/v1/config/audit` returns who changed which
-   workflow, which fields moved, and their old → new values.
+   the audit trail: `GET /api/v1/config/audit` returns which account changed
+   which workflow, which fields moved, and their old → new values.
 7. `GET /api/v1/metrics` — anonymized operational metrics (pass rate, escalation
    rate, retry rate, PAD rejection rate, etc.) plus rate-limiter tallies:
    `rateLimitAllowedRequests`, `rateLimitedRequests` and the per-rule split
    `rateLimitedSessionCreate` / `rateLimitedFrames` /
-   `rateLimitedOperatorKey`, with `rateLimitRejectionRate`. Those come from
+   `rateLimitedOperatorKey` / `rateLimitedAuthLogin`, with
+   `rateLimitRejectionRate`. Those come from
    in-process counters, so they start at zero on restart while the session
    metrics come from the database.
 
@@ -195,12 +196,12 @@ extra check is marked `manual`: its result is recorded on the challenge row and
 in the audit trail, and it **never changes the session verdict** — a missed
 action leaves the session PASSED. The console also edits the **config policy**
 per workflow: loads are open `GET`s,
-saving issues a `PUT` with the `X-Admin-API-Key` header — paste
-`MOSIP_ADMIN_API_KEY` into the admin-key field first (kept in the tab's
-sessionStorage only, never logged). The key never sits in the page: the field is
-cleared on blur and after every save, and a hint shows only a **partial mask**
-(`••••••••••••-9f3`) so you can tell which key is loaded without exposing it to a
-screen share or screenshot — **Forget key** drops it from the tab. The console
+saving issues a `PUT` that the server authorises from your signed-in session — the
+console asks for a supervisor **username and password in a prompt** and holds
+neither (the credential never enters the page's markup, its storage or its memory,
+and the session itself is kept by the browser in an `HttpOnly` cookie no script can
+read). **Sign out** ends the session, and so does **Switch role**, which hands the
+workstation to the next person. The console
 also shows the **Request budget** panel: live meters for both limiter budgets
 (how many submissions remain and when the window resets, counting down each
 second), turning amber near the limit and red on a 429 with its retry time — so
@@ -412,33 +413,43 @@ curl -s localhost:8000/api/v1/sessions/$SESSION_ID/audit
 
 Hardening built into the service (no extra dependencies):
 
-- **Admin key on policy updates** — `PUT /api/v1/config/{workflow}` requires
-  the `X-Admin-API-Key` header matching `MOSIP_ADMIN_API_KEY`. The check is
-  **fail-closed**: if the key is not configured, config updates are refused
-  (403), so an unauthenticated caller can never lower `passiveThreshold` and
-  defeat PAD. Reads stay open for clients.
+- **Accounts instead of a shared admin key** — `PUT /api/v1/config/{workflow}`,
+  `GET /api/v1/eval/threshold-sweep` and every route under `/api/v1/users`
+  require a session whose account holds `SUPERVISOR`. The check is
+  **fail-closed**: with no usable session it is 401, and with a session for the
+  smaller `OPERATOR` role it is 403, so an unauthenticated caller can never lower
+  `passiveThreshold` and defeat PAD. Reads stay open for clients.
   ```bash
-  curl -X PUT localhost:8000/api/v1/config/RESIDENT \
+  # sign in — the session arrives as an HttpOnly cookie, so a jar is all curl needs
+  curl -s -c jar.txt -X POST localhost:8000/api/v1/auth/login \
     -H "Content-Type: application/json" \
-    -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY" \
+    -d '{"username":"$MOSIP_AUTH_BOOTSTRAP_USERNAME","password":"$MOSIP_AUTH_BOOTSTRAP_PASSWORD"}'
+  curl -s -b jar.txt -X PUT localhost:8000/api/v1/config/RESIDENT \
+    -H "Content-Type: application/json" \
     -d '{"passiveThreshold": 0.85}'
   ```
+  The session token is 256 bits, returned exactly once in a `Set-Cookie` header
+  (`HttpOnly`, `SameSite=Lax`) and never in a body; it is stored server-side as a
+  SHA-256 digest, so a database snapshot is not a set of usable sessions. Signing
+  out revokes it, a password change revokes every session the account held, and
+  expiry is a column rather than a job. See
+  [docs/configuration.md](docs/configuration.md#who-may-do-what-accounts-roles-and-the-operator-key).
 - **Operator key and the role probe** — `GET /api/v1/auth/role` reports which
-  role a key proves, so the console can choose its surface from the service's
-  answer instead of guessing: `X-Admin-API-Key` → `{"role":"SUPERVISOR"}`,
-  `X-Operator-API-Key` matching `MOSIP_OPERATOR_API_KEY` → `{"role":"OPERATOR"}`,
-  anything else → **401**. The two keys are compared in constant time, the
-  comparison **fails closed** (a blank operator key means nobody is ever answered
-  `OPERATOR`, and an empty header never matches one), and the response holds the
-  role and nothing else — no key, not even a fingerprint of one. Key attempts on
-  operator routes spend the existing per-IP rate-limit budget, so guessing is
-  throttled rather than free. See
-  [docs/configuration.md](docs/configuration.md#the-two-api-keys-and-the-roles-they-prove).
-- **Policy edits are audited** — the key alone must not be enough to weaken
+  role the caller proved, so the console can choose its surface from the service's
+  answer instead of guessing: a `SUPERVISOR` session → `{"role":"SUPERVISOR"}`,
+  an `OPERATOR` session or `X-Operator-API-Key` matching `MOSIP_OPERATOR_API_KEY`
+  → `{"role":"OPERATOR"}`, anything else → **401**. A key is never answered
+  `SUPERVISOR`. The comparisons are constant time and **fail closed** (a blank
+  operator key means nobody is ever answered `OPERATOR`, and an empty header never
+  matches one), and the response holds the role and nothing else — no credential,
+  not even a fingerprint of one. Key and sign-in attempts spend the existing
+  per-IP rate-limit budget (under their own `operator-key` and `auth-login`
+  buckets), so guessing is throttled rather than free.
+- **Policy edits are audited** — an account alone must not be enough to weaken
   liveness silently. Each successful `PUT` writes a `CONFIG_CHANGED` entry in
   the *same transaction* as the policy update: which workflow, which fields
-  actually moved with old → new values, `CREATED` vs `UPDATED`, a truncated
-  SHA-256 fingerprint of the key (never the key), and a **risk classification**
+  actually moved with old → new values, `CREATED` vs `UPDATED`, the username of
+  the supervisor who made the edit (never a credential), and a **risk classification**
   — an edit that lowers `passiveThreshold` or switches liveness (or active
   liveness) off is flagged `HIGH`, with the weakening move named, so the
   console shows the alert at a glance. Rejected requests record
@@ -522,10 +533,16 @@ Hardening built into the service (no extra dependencies):
   `-XX:MaxRAMPercentage=50 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError`, and
   PostgreSQL is published on `127.0.0.1` only.
 
-Set a strong key before exposing the service:
+Create the first supervisor before exposing the service — on a brand-new
+database these two variables are the only way in, since every account is created
+by an account and there is not one yet:
 
 ```bash
-export MOSIP_ADMIN_API_KEY=$(openssl rand -hex 32)
+export MOSIP_AUTH_BOOTSTRAP_USERNAME=supervisor
+export MOSIP_AUTH_BOOTSTRAP_PASSWORD=$(openssl rand -base64 24)
+# ...then sign in at /api/v1/auth/login and change that password. The bootstrap
+# only ever runs on a database with no accounts at all, so leaving the pair set
+# afterwards is a no-op rather than a backdoor.
 # keys the audit chain's hashes so a database-write attacker cannot rebuild it;
 # keep it stable across restarts. For keyed rotations, see docs/configuration.md
 # — immutable history may still require the previous key for verification.

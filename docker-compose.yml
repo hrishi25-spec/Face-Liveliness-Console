@@ -34,8 +34,13 @@ services:
       POSTGRES_APP_USER: pad_runtime
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
       POSTGRES_MIGRATE_USER: pad_migrate
-      # Admin key required by PUT /api/v1/config/* — set it in .env.
-      MOSIP_ADMIN_API_KEY: ${MOSIP_ADMIN_API_KEY:-}
+      # First-supervisor bootstrap. Set both in .env only for the first boot
+      # against an empty database: every privileged route needs an account, and
+      # this is how the first one exists. Leaving them set is a no-op from then
+      # on (the bootstrap does nothing once any account exists), but the honest
+      # deployment unsets them after signing in and replacing the password.
+      MOSIP_AUTH_BOOTSTRAP_USERNAME: ${MOSIP_AUTH_BOOTSTRAP_USERNAME:-}
+      MOSIP_AUTH_BOOTSTRAP_PASSWORD: ${MOSIP_AUTH_BOOTSTRAP_PASSWORD:-}
       # HMAC key for the config audit chain; optional, but recommended.
       MOSIP_AUDIT_HMAC_SECRET: ${MOSIP_AUDIT_HMAC_SECRET:-}
       # Keep the old key available while immutable history still needs it.

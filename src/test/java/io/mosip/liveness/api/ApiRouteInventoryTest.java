@@ -67,7 +67,8 @@ class ApiRouteInventoryTest {
     void everyDeclaredRouteIsClassified() {
         Set<String> discovered = new TreeSet<>(discoverRoutes().keySet());
         Set<String> classified = new TreeSet<>(RouteInventory.CLIENT_FACING);
-        classified.addAll(RouteInventory.ADMIN_KEYED);
+        classified.addAll(RouteInventory.AUTHENTICATED);
+        classified.addAll(RouteInventory.SUPERVISOR_KEYED);
         classified.addAll(RouteInventory.OPERATOR_KEYED);
         classified.addAll(RouteInventory.SESSION_SCOPED);
 
@@ -75,10 +76,12 @@ class ApiRouteInventoryTest {
         unclassified.removeAll(classified);
         assertTrue(unclassified.isEmpty(),
                 "New route(s) not classified in RouteInventory: " + unclassified
-                        + "\nAdd each to CLIENT_FACING (reachable by the frame client), to "
-                        + "ADMIN_KEYED (refused by AdminKeyFilter, metered by RateLimitFilter, "
-                        + "and covered in a *FailClosedTest), or to OPERATOR_KEYED (refused by "
-                        + "OperatorKeyFilter to a caller with no role).");
+                        + "\nAdd each to CLIENT_FACING (reachable anonymously), to "
+                        + "AUTHENTICATED (any valid session; confined to this list when the "
+                        + "account owes a password change), to SUPERVISOR_KEYED (refused by "
+                        + "SupervisorGateFilter, metered by RateLimitFilter, and covered in a "
+                        + "*FailClosedTest), or to OPERATOR_KEYED (refused by OperatorKeyFilter "
+                        + "to a caller that proves no role).");
 
         Set<String> stale = new TreeSet<>(classified);
         stale.removeAll(discovered);
@@ -86,13 +89,17 @@ class ApiRouteInventoryTest {
                 "Classified route(s) no longer declared: " + stale
                         + " — remove them from RouteInventory too, so the list stays the truth.");
 
-        // A route in two classification sets would be claimed by two filters (or,
-        // worse, by a keyed filter and the open client surface): the admin set is
-        // refused by AdminKeyFilter, the operator set by OperatorKeyFilter, and
-        // CLIENT_FACING by neither, so no route may be in two of them.
-        assertDisjoint(RouteInventory.CLIENT_FACING, RouteInventory.ADMIN_KEYED);
+        // A route in two classification sets would be claimed by two gates (or,
+        // worse, by a gated tier and the open client surface): the supervisor set is
+        // refused by SupervisorGateFilter, the operator set by OperatorKeyFilter, the
+        // authenticated set by AuthContextFilter, and CLIENT_FACING by none of them,
+        // so no route may be in two of the four.
+        assertDisjoint(RouteInventory.CLIENT_FACING, RouteInventory.AUTHENTICATED);
+        assertDisjoint(RouteInventory.CLIENT_FACING, RouteInventory.SUPERVISOR_KEYED);
         assertDisjoint(RouteInventory.CLIENT_FACING, RouteInventory.OPERATOR_KEYED);
-        assertDisjoint(RouteInventory.ADMIN_KEYED, RouteInventory.OPERATOR_KEYED);
+        assertDisjoint(RouteInventory.AUTHENTICATED, RouteInventory.SUPERVISOR_KEYED);
+        assertDisjoint(RouteInventory.AUTHENTICATED, RouteInventory.OPERATOR_KEYED);
+        assertDisjoint(RouteInventory.SUPERVISOR_KEYED, RouteInventory.OPERATOR_KEYED);
     }
 
     private static void assertDisjoint(Set<String> one, Set<String> other) {
@@ -136,7 +143,7 @@ class ApiRouteInventoryTest {
         // admin key: if one lands in ADMIN_KEYED the two filters both claim it and
         // the owner cannot reach their own session.
         Set<String> keyed = new TreeSet<>(RouteInventory.SESSION_SCOPED);
-        keyed.retainAll(RouteInventory.ADMIN_KEYED);
+        keyed.retainAll(RouteInventory.SUPERVISOR_KEYED);
         assertTrue(keyed.isEmpty(), "A session-scoped route cannot also be admin-keyed: " + keyed);
     }
 
@@ -157,7 +164,8 @@ class ApiRouteInventoryTest {
         }
 
         Set<String> others = new TreeSet<>(RouteInventory.CLIENT_FACING);
-        others.addAll(RouteInventory.ADMIN_KEYED);
+        others.addAll(RouteInventory.AUTHENTICATED);
+        others.addAll(RouteInventory.SUPERVISOR_KEYED);
         others.addAll(RouteInventory.OPERATOR_KEYED);
         others.removeAll(RouteInventory.SESSION_SCOPED);
         for (String route : others) {
@@ -194,25 +202,80 @@ class ApiRouteInventoryTest {
     }
 
     /**
-     * The route inventory is what the filter reads, so the filter's own matcher
-     * has to agree with it: every admin-keyed route must be one it refuses, and
-     * every client-facing route must be one it leaves alone. Without this, a
-     * typo in a pattern ({@code PUT /api/v1/config} rather than
+     * The route inventory is what the gate reads, so the gate's own matcher has to
+     * agree with it: every supervisor route must be one it refuses, and every route
+     * outside that tier must be one it leaves alone. Without this, a typo in a
+     * pattern ({@code PUT /api/v1/config} rather than
      * {@code PUT /api/v1/config/{workflowType}}) would leave the list correct and
-     * the guard open — the exact failure this refactor exists to remove.
+     * the gate open — the exact failure this class exists to prevent.
      */
     @Test
-    void theGuardMatchesExactlyTheAdminKeyedRoutes() {
-        for (String route : RouteInventory.ADMIN_KEYED) {
-            assertTrue(RouteInventory.isAdminRoute(verbOf(route), samplePathOf(route)),
-                    "AdminKeyFilter would not refuse " + route
-                            + " — listed as admin-keyed, but not matched");
+    void theGuardMatchesExactlyTheSupervisorKeyedRoutes() {
+        for (String route : RouteInventory.SUPERVISOR_KEYED) {
+            assertTrue(RouteInventory.isSupervisorRoute(verbOf(route), samplePathOf(route)),
+                    "SupervisorGateFilter would not refuse " + route
+                            + " — listed as supervisor-keyed, but not matched");
         }
-        for (String route : RouteInventory.CLIENT_FACING) {
-            assertFalse(RouteInventory.isAdminRoute(verbOf(route), samplePathOf(route)),
-                    "AdminKeyFilter would refuse " + route
-                            + " — a client-facing route must never match the guard");
+        Set<String> others = new TreeSet<>(RouteInventory.CLIENT_FACING);
+        others.addAll(RouteInventory.AUTHENTICATED);
+        others.addAll(RouteInventory.OPERATOR_KEYED);
+        for (String route : others) {
+            assertFalse(RouteInventory.isSupervisorRoute(verbOf(route), samplePathOf(route)),
+                    "SupervisorGateFilter would refuse " + route
+                            + " — only the supervisor tier carries that gate");
         }
+    }
+
+    /**
+     * The authenticated tier's matcher has to agree with its list for the same
+     * reason, and one disagreement costs more here than anywhere else: this list is
+     * also the short list a session that owes a password change is confined to, so a
+     * route missing from it is either unguarded or unreachable rather than merely
+     * misclassified.
+     */
+    @Test
+    void theAuthenticatedTierMatchesExactlyItsList() {
+        for (String route : RouteInventory.AUTHENTICATED) {
+            assertTrue(RouteInventory.isAuthenticatedRoute(verbOf(route), samplePathOf(route)),
+                    "AuthContextFilter would not require a session for " + route
+                            + " — listed as authenticated, but not matched");
+            assertTrue(RouteInventory.isPasswordChangeAllowedRoute(verbOf(route), samplePathOf(route)),
+                    route + " must be reachable by an account that owes a password change, "
+                            + "or that account cannot replace its own password");
+        }
+        Set<String> others = new TreeSet<>(RouteInventory.CLIENT_FACING);
+        others.addAll(RouteInventory.SUPERVISOR_KEYED);
+        others.addAll(RouteInventory.OPERATOR_KEYED);
+        for (String route : others) {
+            assertFalse(RouteInventory.isAuthenticatedRoute(verbOf(route), samplePathOf(route)),
+                    "AuthContextFilter would demand a session for " + route);
+        }
+    }
+
+    /**
+     * The confinement a flagged account lives under, pinned so it cannot widen by
+     * accident: the three routes that let it fix the situation, plus login.
+     */
+    @Test
+    void anOwedPasswordChangeMayReachOnlyTheRoutesThatFixIt() {
+        assertTrue(RouteInventory.isPasswordChangeAllowedRoute("GET", "/api/v1/auth/me"));
+        assertTrue(RouteInventory.isPasswordChangeAllowedRoute("POST", "/api/v1/auth/change-password"));
+        assertTrue(RouteInventory.isPasswordChangeAllowedRoute("POST", "/api/v1/auth/logout"));
+        // Login is allowed because a browser holding a flagged cookie must be able
+        // to sign in again; it reads nothing from that cookie.
+        assertTrue(RouteInventory.isPasswordChangeAllowedRoute("POST", "/api/v1/auth/login"));
+
+        // Everything else is refused — including routes this account's own role
+        // could otherwise reach, which is the point of the confinement.
+        assertFalse(RouteInventory.isPasswordChangeAllowedRoute("GET", "/api/v1/sessions"));
+        assertFalse(RouteInventory.isPasswordChangeAllowedRoute("PUT", "/api/v1/config/RESIDENT"));
+        assertFalse(RouteInventory.isPasswordChangeAllowedRoute("GET", "/api/v1/users"));
+        assertFalse(RouteInventory.isPasswordChangeAllowedRoute("POST", "/api/v1/sessions"));
+        assertFalse(RouteInventory.isPasswordChangeAllowedRoute("GET", "/api/v1/metrics"));
+        assertFalse(RouteInventory.isPasswordChangeAllowedRoute(null, null));
+        // A resolved walk has to be evaluated on the path it lands on.
+        assertFalse(RouteInventory.isPasswordChangeAllowedRoute("GET", "/api/v1/auth/../sessions"));
+        assertTrue(RouteInventory.isPasswordChangeAllowedRoute("GET", "/api/v1/auth/./me"));
     }
 
     /**
@@ -228,7 +291,8 @@ class ApiRouteInventoryTest {
                             + " — listed as operator-keyed, but not matched");
         }
         Set<String> others = new TreeSet<>(RouteInventory.CLIENT_FACING);
-        others.addAll(RouteInventory.ADMIN_KEYED);
+        others.addAll(RouteInventory.AUTHENTICATED);
+        others.addAll(RouteInventory.SUPERVISOR_KEYED);
         for (String route : others) {
             assertFalse(RouteInventory.isOperatorRoute(verbOf(route), samplePathOf(route)),
                     "OperatorKeyFilter would refuse " + route
@@ -238,8 +302,16 @@ class ApiRouteInventoryTest {
         // And the two keyed gates never claim the same request: a route in both
         // lists would be decided by whichever filter ran first.
         for (String route : RouteInventory.OPERATOR_KEYED) {
-            assertFalse(RouteInventory.isAdminRoute(verbOf(route), samplePathOf(route)),
-                    route + " is claimed by admin and operator filters alike");
+            assertFalse(RouteInventory.isSupervisorRoute(verbOf(route), samplePathOf(route)),
+                    route + " is claimed by the supervisor and operator gates alike");
+        }
+
+        // The operator key is refused on the supervisor tier by construction: the
+        // route is not operator-keyed, so OperatorKeyFilter never runs on it and no
+        // filter turns the key into a principal there.
+        for (String route : RouteInventory.SUPERVISOR_KEYED) {
+            assertFalse(RouteInventory.isOperatorRoute(verbOf(route), samplePathOf(route)),
+                    route + " must not be reachable with the operator key");
         }
     }
 
@@ -286,16 +358,16 @@ class ApiRouteInventoryTest {
         // {workflowType} is one segment, so the keyed write cannot catch the open
         // read beside it, and a slash smuggled through the variable does not widen
         // the guard into something it was never classified as.
-        assertTrue(RouteInventory.isAdminRoute("PUT", "/api/v1/config/RESIDENT"));
-        assertFalse(RouteInventory.isAdminRoute("GET", "/api/v1/config/RESIDENT"),
+        assertTrue(RouteInventory.isSupervisorRoute("PUT", "/api/v1/config/RESIDENT"));
+        assertFalse(RouteInventory.isSupervisorRoute("GET", "/api/v1/config/RESIDENT"),
                 "the policy read is how a client learns what it is judged against");
-        assertFalse(RouteInventory.isAdminRoute("GET", "/api/v1/config/RESIDENT/effective"));
-        assertFalse(RouteInventory.isAdminRoute("POST", "/api/v1/config/RESIDENT"),
+        assertFalse(RouteInventory.isSupervisorRoute("GET", "/api/v1/config/RESIDENT/effective"));
+        assertFalse(RouteInventory.isSupervisorRoute("POST", "/api/v1/config/RESIDENT"),
                 "the path prefix alone is not the write");
         // Audit reads are open (CLIENT_FACING), not admin-keyed
-        assertFalse(RouteInventory.isAdminRoute("GET", "/api/v1/config/audit"));
-        assertFalse(RouteInventory.isAdminRoute("GET", "/api/v1/config/audit/verify"));
-        assertFalse(RouteInventory.isAdminRoute("GET", "/api/v1/config/audit/extra"));
+        assertFalse(RouteInventory.isSupervisorRoute("GET", "/api/v1/config/audit"));
+        assertFalse(RouteInventory.isSupervisorRoute("GET", "/api/v1/config/audit/verify"));
+        assertFalse(RouteInventory.isSupervisorRoute("GET", "/api/v1/config/audit/extra"));
     }
 
     @Test
@@ -304,14 +376,14 @@ class ApiRouteInventoryTest {
         // raw URIs would refuse the spelled-out spelling and let the resolved one
         // through to a handler that no longer checks for itself.
         // Audit reads are open (CLIENT_FACING), so these resolve to open paths.
-        assertFalse(RouteInventory.isAdminRoute("GET", "/api/v1/config/./audit"));
+        assertFalse(RouteInventory.isSupervisorRoute("GET", "/api/v1/config/./audit"));
         // ".." pops one segment, so this resolves to /api/v1/config/audit/verify (open).
-        assertFalse(RouteInventory.isAdminRoute("GET", "/api/v1/config/../config/audit/verify"));
+        assertFalse(RouteInventory.isSupervisorRoute("GET", "/api/v1/config/../config/audit/verify"));
         // And a walk that leaves the guarded tree lands somewhere open, not guarded.
-        assertFalse(RouteInventory.isAdminRoute("GET", "/api/v1/config/../sessions"));
-        // The actual admin-keyed route (config write) is still guarded.
-        assertTrue(RouteInventory.isAdminRoute("PUT", "/api/v1/config/./RESIDENT"));
-        assertTrue(RouteInventory.isAdminRoute("PUT", "/api/v1/config/../config/RESIDENT"));
+        assertFalse(RouteInventory.isSupervisorRoute("GET", "/api/v1/config/../sessions"));
+        // The actual supervisor-keyed route (config write) is still guarded.
+        assertTrue(RouteInventory.isSupervisorRoute("PUT", "/api/v1/config/./RESIDENT"));
+        assertTrue(RouteInventory.isSupervisorRoute("PUT", "/api/v1/config/../config/RESIDENT"));
     }
 
     /** A fixed, well-formed session id, so a matched segment is readable as the id. */

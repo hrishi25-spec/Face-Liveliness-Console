@@ -64,9 +64,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.jpa.hibernate.ddl-auto=validate",
         "spring.flyway.enabled=true"
 })
-@org.springframework.test.context.TestPropertySource(properties = {
-        "MOSIP_ADMIN_API_KEY=test-admin-key-that-is-long-enough-for-validation"
-})
 class PostgresSchemaTest {
 
     @Container

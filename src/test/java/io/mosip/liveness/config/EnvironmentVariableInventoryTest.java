@@ -72,15 +72,22 @@ class EnvironmentVariableInventoryTest {
      * because {@code POSTGRES_PASSWORD} is still read — as the fallback for a
      * deployment given a single credential pair.</p>
      *
-     * <p>{@code MOSIP_OPERATOR_API_KEY} is a key like the admin one, just for the
-     * smaller role: whoever holds it can drive the operator surface. It is marked
-     * here for the same reason — a copied template must not carry a value.</p>
+     * <p>{@code MOSIP_OPERATOR_API_KEY} is a shared key for the smaller role:
+     * whoever holds it can read the operator surface. It is marked here for the
+     * same reason — a copied template must not carry a value.</p>
+     *
+     * <p>{@code MOSIP_AUTH_BOOTSTRAP_PASSWORD} creates the first supervisor on an
+     * empty database, so it is a credential like any other: the template ships it
+     * blank and commented out, and a deployment that copies the file cannot
+     * arrive with a known one. {@code MOSIP_ADMIN_API_KEY} left this list with the
+     * key itself, which the accounts and sessions in
+     * V12__auth_users_and_tokens.sql replaced.</p>
      */
     private static final Set<String> SECRETS = Set.of(
             "POSTGRES_PASSWORD",
             "POSTGRES_APP_PASSWORD",
-            "MOSIP_ADMIN_API_KEY",
             "MOSIP_OPERATOR_API_KEY",
+            "MOSIP_AUTH_BOOTSTRAP_PASSWORD",
             "MOSIP_AUDIT_HMAC_SECRET",
             "MOSIP_AUDIT_HMAC_PREVIOUS_SECRET");
 

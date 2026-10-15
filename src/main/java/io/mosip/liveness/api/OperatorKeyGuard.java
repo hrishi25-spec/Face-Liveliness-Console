@@ -1,111 +1,87 @@
 package io.mosip.liveness.api;
 
+import io.mosip.liveness.auth.AuthRefusals;
+import io.mosip.liveness.models.enums.AuthRole;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * The operator-key check itself: which role a caller's headers prove, if any.
+ * The operator API key check: the comparison, and the two ways to fail it.
  *
  * <p>{@link OperatorKeyFilter} calls this for every route in
- * {@link RouteInventory#OPERATOR_KEYED} — the console's role probe
- * ({@code GET /api/v1/auth/role}) today, and whatever operator-scoped routes the
- * operator surface grows later. It mirrors {@link AdminKeyGuard}: the same
- * constant-time compare, the same fail-closed reading of an unconfigured key,
- * and the same reason for existing — a handler that forgets its own check is an
- * open route, while a filter has no call to forget.</p>
+ * {@link RouteInventory#OPERATOR_KEYED} that has not already proved a role with a
+ * session token. Those routes are the console's role probe
+ * ({@code GET /api/v1/auth/role}) and the two read-only feeds — reads, so the key
+ * a deployment already has keeps working while the privileged surface moved to
+ * accountable accounts.</p>
  *
- * <p>Two keys are accepted, and the higher privilege wins:</p>
+ * <p><b>What this key cannot do, and why it survives.</b> It proves
+ * {@link AuthRole#OPERATOR} only. It is not in {@link #HEADER} any route of
+ * {@link RouteInventory#SUPERVISOR_KEYED}, no filter reads it there, and nothing
+ * promotes it: a leaked key reaches the feeds and never a policy write or an
+ * account. That asymmetry is the reason it was kept rather than deleted with the
+ * admin key — the privileged path needed an identity, the read-only path did
+ * not, and removing a working key the console depends on would have been change
+ * for its own sake.</p>
+ *
+ * <p>Two properties matter and are the reason this is one method rather than a
+ * copy per route:</p>
  * <ul>
- *   <li>{@link AdminKeyGuard#HEADER} matching
- *       {@code mosip.security.admin-api-key} → {@value #ROLE_SUPERVISOR}. A
- *       supervisor can do everything an operator can, so the admin key is
- *       accepted on operator routes too; if a caller somehow presents both,
- *       the answer is the supervisor role rather than whichever header was read
- *       first.</li>
- *   <li>{@link #HEADER} matching {@code mosip.security.operator-api-key} →
- *       {@value #ROLE_OPERATOR}. That key reaches operator routes only — it is
- *       never accepted by {@link AdminKeyGuard}, so policy writes stay
- *       supervisor-only.</li>
+ *   <li><b>Fail closed.</b> With no key configured the caller proves nothing at
+ *       all, so the routes close to key-based access rather than opening to
+ *       whoever sends an empty header — an unauthenticated caller could otherwise
+ *       read every session and every rejection in the service.</li>
+ *   <li><b>Constant time.</b> {@link MessageDigest#isEqual} rather than
+ *       {@code String.equals}, because the key is a shared secret and an
+ *       early-exit compare leaks its prefix to anyone who can time the
+ *       response.</li>
  * </ul>
  *
- * <p><b>Fail closed.</b> A key that is not configured never matches anything:
- * blank {@code operator-api-key} means no caller is ever answered
- * {@value #ROLE_OPERATOR}, even if the presented value is empty. With both keys
- * blank every caller is refused, so a deployment that forgot to configure them
- * has a closed operator surface rather than an open one. The admin key is
- * checked first and is unaffected by a blank operator key, deliberately: an
- * existing deployment that sets only {@code MOSIP_ADMIN_API_KEY} keeps working —
- * its holder is a supervisor and never needed the operator key — while nobody
- * gains operator access until that key is deliberately configured.</p>
- *
- * <p><b>Constant time.</b> {@link MessageDigest#isEqual} rather than
- * {@code String.equals}, because both keys are shared secrets and an early-exit
- * compare leaks a prefix to anyone who can time the response.</p>
- *
- * <p>The refusal message is a fixed string and the same whichever key was tried:
- * the endpoint's whole job is to answer with a role, so a message that
- * distinguished "no key" from "wrong key" would also tell a guesser when a
- * value was close. Nothing derived from the key — not even a fingerprint — is
- * put in a response body or a log line; the role name is the entire answer.</p>
+ * <p>{@link #REFUSAL} is shared with {@link AuthContextFilter} and the
+ * authenticated handlers through {@link AuthRefusals}: with tokens and keys both
+ * in play, a caller must not be able to tell from the wording which credential
+ * was expected — a message naming the key header would point a guesser at the one
+ * credential with no account behind it.</p>
  */
 final class OperatorKeyGuard {
 
-    /** Header carrying the operator key; one name so tests and the console cannot drift. */
+    /** Header carrying the key; one name so tests and the console cannot drift. */
     static final String HEADER = "X-Operator-API-Key";
 
-    /** The admin key's holder: everything operator routes allow, and policy writes. */
-    static final String ROLE_SUPERVISOR = "SUPERVISOR";
+    /**
+     * The admin key's holder: everything operator routes allow, and every
+     * privileged route. Kept as a constant on this class because the console
+     * switches on this exact wire name at {@code GET /api/v1/auth/role}; it is
+     * {@link AuthRole#SUPERVISOR}'s name, not a second spelling of it.
+     */
+    static final String ROLE_SUPERVISOR = AuthRole.SUPERVISOR.name();
 
     /** The operator key's holder: operator routes only, never a policy write. */
-    static final String ROLE_OPERATOR = "OPERATOR";
+    static final String ROLE_OPERATOR = AuthRole.OPERATOR.name();
 
     /**
      * The one refusal text, used by the filter and by the endpoint so the two
      * cannot drift and a caller cannot tell which one answered. Generic by
-     * design: it names no header, no key and no reason.
+     * design: it names no header, no credential and no reason.
      */
-    static final String REFUSAL = "Not authenticated: a valid API key is required.";
+    static final String REFUSAL = AuthRefusals.UNAUTHENTICATED;
 
     private OperatorKeyGuard() {
     }
 
     /**
-     * The role this caller's headers prove, or {@code null} when they prove
-     * none.
-     *
-     * <p>Not throwing, for the same reason as {@link AdminKeyGuard#refusal}: the
-     * caller may be a filter, which sits outside Spring MVC's exception
-     * resolution, so a thrown {@code ResponseStatusException} would become a
-     * container error page rather than the service's JSON error body.</p>
-     *
-     * @param configuredOperatorKey {@code MOSIP_OPERATOR_API_KEY}; blank disables
-     *                              the operator role entirely
-     * @param configuredAdminKey    {@code MOSIP_ADMIN_API_KEY}; blank disables the
-     *                              supervisor answer
-     * @param operatorHeader        the caller's {@link #HEADER} value, may be null
-     * @param adminHeader           the caller's {@link AdminKeyGuard#HEADER}
-     *                              value, may be null
-     * @return {@link #ROLE_SUPERVISOR}, {@link #ROLE_OPERATOR}, or {@code null}
-     */
-    static String role(String configuredOperatorKey, String configuredAdminKey,
-                       String operatorHeader, String adminHeader) {
-        if (matches(configuredAdminKey, adminHeader)) {
-            return ROLE_SUPERVISOR;
-        }
-        if (matches(configuredOperatorKey, operatorHeader)) {
-            return ROLE_OPERATOR;
-        }
-        return null;
-    }
-
-    /**
-     * Whether a presented header proves a configured key.
+     * Whether a presented header proves the configured operator key.
      *
      * <p>A blank configured key matches nothing — not even a presented blank —
      * which is what makes an unconfigured key fail closed instead of admitting
      * whoever sends an empty header.</p>
+     *
+     * @param configuredKey {@code MOSIP_OPERATOR_API_KEY}; blank disables the
+     *                      operator role entirely
+     * @param presentedKey  the caller's {@link #HEADER} value, may be null
      */
-    private static boolean matches(String configuredKey, String presentedKey) {
+    static boolean proves(String configuredKey, String presentedKey) {
         if (configuredKey == null || configuredKey.isBlank() || presentedKey == null) {
             return false;
         }

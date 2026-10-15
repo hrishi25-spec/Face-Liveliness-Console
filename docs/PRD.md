@@ -329,8 +329,9 @@ Every HTTP error body is `{"error": "<code>", "message": "<safe text>", "status"
 ### Policy and configuration
 - **FR-15** Serve per-workflow policy (`GET /api/v1/config/{workflowType}`) and its resolved
   effective form (`/effective`). *Implemented.*
-- **FR-16** Allow runtime policy updates without a client redeploy, gated by an admin API key
-  that **fails closed** when unset. *Implemented.*
+- **FR-16** Allow runtime policy updates without a client redeploy, gated by a signed-in
+  `SUPERVISOR` account that **fails closed** without a usable session. *Implemented* (V12
+  accounts and sessions replaced the shared admin API key).
 - **FR-17** Validate policy values on write and at startup. *Implemented*
   (`EffectivePolicyValidator`, `SecurityValidator`).
 - **FR-18** Keep configuration, YAML defaults, and policy rows consistent — one threshold is
@@ -391,21 +392,29 @@ are under `/api/v1`.
 | `GET` | `/health` | Liveness of the service; reports whether the engine is `available`. |
 | `POST` | `/api/v1/sessions` | Create a session (`workflowType`, `deviceId`, optional `subjectRef`, `online`). |
 | `GET` | `/api/v1/sessions/{id}` | Current session state + the snapshotted effective policy. |
-| `GET` | `/api/v1/sessions` | Recent sessions, newest first (`workflowType`/`status` filters, `limit` 1..200, default 50). **Requires the operator or admin API key.** |
+| `GET` | `/api/v1/sessions` | Recent sessions, newest first (`workflowType`/`status` filters, `limit` 1..200, default 50). **Requires the operator API key or a signed-in session.** |
 | `POST` | `/api/v1/sessions/{id}/close` | Close an active session; returns a summary (counters, duration). |
 | `POST` | `/api/v1/sessions/{id}/frames` | Submit one base64 frame; returns the verdict. |
 | `POST` | `/api/v1/sessions/{id}/challenges/validate` | Validate a frame burst against the issued challenge. |
 | `GET` | `/api/v1/sessions/{id}/audit` | The session's audit trail. |
-| `GET` | `/api/v1/rejections` | Recent failed sessions plus their `PAD_REJECTED`/`CHALLENGE_FAILED` events, newest first. **Requires the operator or admin API key.** |
+| `GET` | `/api/v1/rejections` | Recent failed sessions plus their `PAD_REJECTED`/`CHALLENGE_FAILED` events, newest first. **Requires the operator API key or a signed-in session.** |
 | `GET` | `/api/v1/metrics` | Anonymised operational metrics. |
 | `GET` | `/api/v1/config/{workflowType}` | Policy for one workflow. |
 | `GET` | `/api/v1/config/{workflowType}/effective` | The policy after defaults ⊕ overrides are resolved. |
-| `PUT` | `/api/v1/config/{workflowType}` | Update policy. **Requires the admin API key**; fails closed when unset. |
+| `PUT` | `/api/v1/config/{workflowType}` | Update policy. **Requires a `SUPERVISOR` session**; fails closed without one. |
 | `GET` | `/api/v1/config/audit` | Configuration-change audit trail. |
 | `GET` | `/api/v1/config/audit/verify` | Verify the audit chain; reports whether keyed HMAC mode is active. |
-| `GET` | `/api/v1/eval/threshold-sweep` | Sweep thresholds over a label set to pick an operating point. |
+| `GET` | `/api/v1/eval/threshold-sweep` | Sweep thresholds over a label set to pick an operating point. **Requires a `SUPERVISOR` session.** |
 | `GET` | `/api/v1/diagnostics` | Local-only debug snapshot; loopback callers only, and only when enabled. |
-| `GET` | `/api/v1/auth/role` | Which role the caller's key proves (`SUPERVISOR`/`OPERATOR`); the console's role probe. **Requires the operator or admin API key.** |
+| `POST` | `/api/v1/auth/login` | Exchange a username and password for a session. The token is returned only in an `HttpOnly` `Set-Cookie` header, never in the body. One generic `401` for every failure. |
+| `POST` | `/api/v1/auth/logout` | End the presented session; idempotent, and clears the cookie. |
+| `GET` | `/api/v1/auth/me` | The signed-in account. `401` without a usable session, including when it was disabled since the token was issued. |
+| `POST` | `/api/v1/auth/change-password` | Replace the caller's own password (the current one is required). Revokes every session the account holds, including the caller's, and issues a replacement. |
+| `GET` | `/api/v1/users` | Every account (name, role, flags — never a hash). **Requires a `SUPERVISOR` session.** |
+| `POST` | `/api/v1/users` | Create an account. **Requires a `SUPERVISOR` session.** The account owes a password change. |
+| `PUT` | `/api/v1/users/{username}` | Change a role, disable or re-enable, or reset the password (which revokes the account's sessions). **Requires a `SUPERVISOR` session.** |
+| `DELETE` | `/api/v1/users/{username}` | Remove an account. **Requires a `SUPERVISOR` session.** `409` when it is the last enabled supervisor. |
+| `GET` | `/api/v1/auth/role` | Which role the caller proved (`SUPERVISOR`/`OPERATOR`); the console's role probe. **Requires the operator API key or a signed-in session.** |
 
 **Key response shapes** (DTOs in `io.mosip.liveness.dto`):
 
@@ -458,14 +467,20 @@ curl -s -X POST localhost:8000/api/v1/sessions/$SESSION_ID/close
 curl -s localhost:8000/api/v1/sessions/$SESSION_ID/audit
 ```
 
-Policy writes are the only call that needs the admin key, and the service refuses them
-entirely when that key is unset (fail-closed, §12.4). The role probe and the two operator
-feeds are the only *reads* behind a key — the operator key, or the admin key, which
-outranks it:
+Policy writes and user management need a signed-in `SUPERVISOR` account, and the
+service refuses them entirely without a usable session (fail-closed, §12.4). The role
+probe and the two operator feeds are the only *reads* behind a credential, and there
+the smaller role is enough — the operator API key, or a signed-in session of either
+role (a key is never answered `SUPERVISOR`):
 
 ```bash
-curl -X PUT localhost:8000/api/v1/config/RESIDENT \
-  -H "Content-Type: application/json" -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY" \
+# sign in; the session comes back as an HttpOnly cookie, so a jar is all curl needs
+curl -s -c jar.txt -X POST localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"$MOSIP_AUTH_BOOTSTRAP_USERNAME","password":"$MOSIP_AUTH_BOOTSTRAP_PASSWORD"}'
+
+curl -s -b jar.txt -X PUT localhost:8000/api/v1/config/RESIDENT \
+  -H "Content-Type: application/json" \
   -d '{"passiveThreshold": 0.85}'
 
 curl -s "localhost:8000/api/v1/sessions?status=FAILED&limit=25" \
@@ -479,9 +494,11 @@ curl -s "localhost:8000/api/v1/sessions?status=FAILED&limit=25" \
 Schema owned by **Flyway** (`src/main/resources/db/migration/`), validated by Hibernate.
 Checked-in revisions: `V1__init_schema`, `V2__unify_passive_threshold`,
 `V3__challenge_window_15s`, `V4__session_policy_snapshot`, `V5__init_audit_table`,
-`V7__config_change_audit`, `V8__audit_logs_workflow_type`, `V9__audit_chain_immutability`.
-**Gap:** there are missing migration files in the version sequence; the numbering has
-gaps.
+`V7__config_change_audit`, `V8__audit_logs_workflow_type`, `V9__audit_chain_immutability`,
+`V10__drop_unused_audit_log_table`, `V11__challenge_manual_flag`,
+`V12__auth_users_and_tokens`.
+**Gap:** there are missing migration files in the version sequence; the numbering has gaps
+(one number in the range was never used).
 
 | Table | Holds | Notable columns |
 | --- | --- | --- |
@@ -490,6 +507,8 @@ gaps.
 | `challenges` | One issued active challenge. | `challenge_type`, `status`, `attempt_number`, `timeout_ms`, `issued_at`, `completed_at`. |
 | `config_policies` | Per-workflow policy (unique on workflow). | thresholds, `challenge_types` (JSON text), retries, `on_repeated_failure`. |
 | `audit_logs` | Append-only decision trail. | `event_type`, `details` (JSON text), `workflow_type`, `prev_hash` / `entry_hash` chain fields. |
+| `auth_users` | One account (V12). | `username` (unique, stored lower-cased), `password_hash` (BCrypt, never a password), `role`, `must_change_password`, `disabled`, `failed_attempts`, `locked_until` (a timestamp, so a lock expires by itself), `password_changed_at`. |
+| `auth_tokens` | One issued session (V12). | `token_hash` (SHA-256 of the token — the token itself is never stored), `issued_at`, `expires_at`, `revoked_at`, `last_used_at`; `user_id` cascades from `auth_users`. |
 
 **Note on column types.** Two further differences are deliberate. These JSON payloads are
 stored as `TEXT` (not `jsonb`) — the application maps them through a converter and never
@@ -529,7 +548,11 @@ different columns.
 | `mosip.liveness.min-challenge-window-ms` | `15000` | Floor applied to per-workflow timeouts. |
 | `mosip.liveness.max-retries` | `2` | Attempt budget. |
 | `mosip.liveness.diagnostics-enabled` | `false` | Local-only diagnostics endpoint. |
-| `mosip.security.admin-api-key` | *(empty)* | Required by `PUT /config/*`; **fails closed** when blank. |
+| `mosip.security.auth.bootstrap-username` / `...-password` | *(empty)* | Create the first `SUPERVISOR` account, and only on a database with no accounts at all. Both or neither; the account owes a password change. Leaving them set is a no-op from the second boot on. |
+| `mosip.security.auth.token-ttl-seconds` | `3600` | Session lifetime — the value that bounds a stolen token. |
+| `mosip.security.auth.max-failed-attempts` / `...-lockout-seconds` | `5` / `900` | Failed sign-ins before the lock, and how long it lasts (stored, so a restart cannot clear it). |
+| `mosip.security.auth.bcrypt-cost` | `12` | BCrypt work factor; refused below `10` outside the `dev` profile. |
+| `mosip.security.auth.cookie-secure` | `false` | `Secure` on the session cookie. Leave `false` for loopback HTTP and set `true` behind TLS. |
 | `mosip.security.audit-hmac-secret` | *(empty)* | Keys the audit chain (min 16 chars, startup fails below). Blank = plain SHA-256 (tamper-*detecting*). |
 | `mosip.security.audit-hmac-previous-secret` | *(empty)* | Accepted by verification during rotation; rejected when set alone. |
 | `mosip.security.max-request-body-bytes` | `25165824` | 24 MiB body cap. |
@@ -618,11 +641,17 @@ capture hardware. Injection attacks (a compromised camera feed) are explicitly *
 - CSP is strict and self-only; Swagger UI and `/webjars` are exempt from the CSP header
   alone (their bundled bootstrap scripts are inline) while still receiving every other header.
 - CORS is an explicit allow-list — no wildcard, `allow_credentials: false`.
+- The session cookie is `HttpOnly` (no script can read the token), `SameSite=Lax` (not attached
+  to a cross-site POST), `Path=/`, and `Secure` when the deployment terminates TLS. No token is
+  ever written to a response body, and no credential is ever logged.
 - Stack traces and exception messages never leave the service.
 
 ### 12.2 Abuse resistance
 - `RateLimitFilter` with in-memory fixed windows: 30 session creates per IP per minute, 60
-  frame/validation calls per session per 10 s (shared budget).
+  frame/validation calls per session per 10 s (shared budget). Sign-in attempts and
+  operator-key attempts are metered on that same per-IP budget under their own buckets
+  (`auth-login`, `operator-key`) and counted separately in `/api/v1/metrics`, so a password
+  guess and a key guess are visible as different incidents.
 - `ClientIpFilter` + `ClientIpResolver` honour `X-Forwarded-For` / `X-Real-IP` **only** from
   configured `trusted-proxies`. Empty means trust nobody, and the budget keys on the socket
   address — a client cannot spoof its way past the limiter.
@@ -646,9 +675,14 @@ capture hardware. Injection attacks (a compromised camera feed) are explicitly *
   immutable there is no re-key operation yet, so a rotation must keep the previous secret
   configured while historical hashes need it.
 
-### 12.4 Configuration writes
-`PUT /api/v1/config/{workflowType}` requires the admin API key and **fails closed** when it is
-unset. Every change is recorded in the configuration audit trail.
+### 12.4 Configuration writes and user management
+`PUT /api/v1/config/{workflowType}` and the calibration sweep require a session whose account
+holds `SUPERVISOR`, and every route under `/api/v1/users` requires the same; all of them **fail
+closed** with `401` when no session resolves and `403` when the session's role is too small.
+The shared admin API key these used to accept is gone, so a policy write is now attributable to
+a named account instead of to a value in an environment file, and revoking one person no longer
+means rotating everyone's credential. Every change is recorded in the configuration audit trail
+with the username that made it.
 
 ### 12.5 Privacy
 Responses carry only derived signals — never pixels, templates, or subject identifiers.
@@ -664,8 +698,9 @@ Metrics are aggregates. Frames are not persisted; only derived numeric fields ar
 | --- | --- |
 | *(root)* | `PadLivenessApplication` — Spring Boot entry point. |
 | `app/config/` | `AppConfig` — bean wiring, OpenCV init, SPI bean selection. |
-| `api/` | `SessionsController`, `FramesController`, `ChallengesController`, `ConfigController`, `AuditController`, `MetricsController`, `HealthController`, `CalibrationController`, `DiagnosticsController`; `SecurityHeadersFilter`, `RateLimitFilter`, `RateLimitCounters`, `ClientIpFilter`, `ClientIpResolver`, `AdminKeyFilter`, `AdminKeyGuard`, `SessionOwnershipFilter`, `UserSessionGuard`, `RouteInventory`, `FilterRefusal`, `GlobalExceptionHandler`. |
-| `dto/` | Request/response records: `SessionCreateRequest`, `SessionResponse`, `SessionSummary`, `FrameSubmitRequest`, `FrameProcessResult`, `ChallengeValidateRequest`, `ChallengeValidationResult`, `ChallengeResponse`, `ConfigPolicyResponse`, `ConfigPolicyUpdate`, `AuditLogEntry`, `OperationalMetrics`. |
+| `api/` | `SessionsController`, `FramesController`, `ChallengesController`, `ConfigController`, `AuditController`, `MetricsController`, `HealthController`, `CalibrationController`, `DiagnosticsController`, `AuthController`, `UsersController`; `SecurityHeadersFilter`, `RateLimitFilter`, `RateLimitCounters`, `ClientIpFilter`, `ClientIpResolver`, `AuthContextFilter`, `SupervisorGateFilter`, `OperatorKeyFilter`, `OperatorKeyGuard`, `AuthGate`, `SessionCookie`, `SessionOwnershipFilter`, `UserSessionGuard`, `RouteInventory`, `FilterRefusal`, `GlobalExceptionHandler`. |
+| `auth/` | `AuthService` (the only place a password is checked and a session begins or ends), `PasswordHasher` (BCrypt), `SessionTokens`, `AuthPrincipal`, `AuthRefusals`, `AuthUserBootstrap`. |
+| `dto/` | Request/response records: `SessionCreateRequest`, `SessionResponse`, `SessionSummary`, `FrameSubmitRequest`, `FrameProcessResult`, `ChallengeValidateRequest`, `ChallengeValidationResult`, `ChallengeResponse`, `ConfigPolicyResponse`, `ConfigPolicyUpdate`, `AuditLogEntry`, `OperationalMetrics`, `LoginRequest`, `ChangePasswordRequest`, `UserCreateRequest`, `UserUpdateRequest`, `UserResponse`. |
 | `services/` | `DecisionEngineService`, `PassiveScoringService`, `PadEngineService`, `LivenessEngineService`, `ChallengeSelectorService`, `ConfigService`, `ThresholdCalibrationService`, `ImageUtils`. |
 | `engine/` | `LivenessPipeline`, `FaceLivenessEngine`, `LivenessDecisionLogic`, `LivenessSession`, `FrameAssessment`, `AssessmentStatus`, `ValidationResult`, `SessionSummary`. |
 | `backend/` | `LivenessBackend`, `LivenessBackendSelection`, `MockLivenessBackend`, `OnnxMiniFasNetBackend`, `MediaPipeFaceMeshBackend`, `TfLiteMiniFasNetBackend`. |

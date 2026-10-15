@@ -16,8 +16,9 @@ import java.time.OffsetDateTime;
  * MVC's exception resolution: throwing {@code ResponseStatusException} from one
  * surfaces as a container error page, not JSON. That is why the shape is written
  * out by hand instead of produced by the handler — and why it lives in one place
- * here, now that three filters ({@link AdminKeyFilter}, {@link RateLimitFilter},
- * {@link SessionOwnershipFilter}) refuse in it. The client guide documents this
+ * here, now that several filters ({@link SupervisorGateFilter},
+ * {@link OperatorKeyFilter}, {@link RateLimitFilter}, {@link SessionOwnershipFilter},
+ * {@link AuthContextFilter}) refuse in it. The client guide documents this
  * body, and a client parses {@code message} out of it, so a second spelling of
  * it is a contract change waiting to happen.</p>
  *

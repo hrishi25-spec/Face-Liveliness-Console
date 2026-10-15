@@ -28,6 +28,8 @@ public class RateLimitCounters {
     private final AtomicLong framesRejected = new AtomicLong();
     private final AtomicLong operatorKeyAllowed = new AtomicLong();
     private final AtomicLong operatorKeyRejected = new AtomicLong();
+    private final AtomicLong authLoginAllowed = new AtomicLong();
+    private final AtomicLong authLoginRejected = new AtomicLong();
 
     /** A request on the per-IP session-creation budget was admitted or refused. */
     public void recordSessionCreate(boolean allowed) {
@@ -49,6 +51,17 @@ public class RateLimitCounters {
         bump(allowed ? operatorKeyAllowed : operatorKeyRejected);
     }
 
+    /**
+     * A request on the per-IP sign-in budget ({@code POST /api/v1/auth/login}).
+     * Its own pair rather than the operator-key ones, for the same reason those
+     * have their own rather than sharing the session-creation pair: a password
+     * guess and an operator-key guess are different incidents, and a tally that
+     * merged them would hide one behind the other.
+     */
+    public void recordAuthLogin(boolean allowed) {
+        bump(allowed ? authLoginAllowed : authLoginRejected);
+    }
+
     private void bump(AtomicLong counter) {
         counter.incrementAndGet();
     }
@@ -56,20 +69,22 @@ public class RateLimitCounters {
     public Counts snapshot() {
         return new Counts(sessionCreateAllowed.get(), sessionCreateRejected.get(),
                 framesAllowed.get(), framesRejected.get(),
-                operatorKeyAllowed.get(), operatorKeyRejected.get());
+                operatorKeyAllowed.get(), operatorKeyRejected.get(),
+                authLoginAllowed.get(), authLoginRejected.get());
     }
 
     /** An immutable read of the tallies, as reported by {@code /api/v1/metrics}. */
     public record Counts(long sessionCreateAllowed, long sessionCreateRejected,
                          long framesAllowed, long framesRejected,
-                         long operatorKeyAllowed, long operatorKeyRejected) {
+                         long operatorKeyAllowed, long operatorKeyRejected,
+                         long authLoginAllowed, long authLoginRejected) {
 
         public long allowed() {
-            return sessionCreateAllowed + framesAllowed + operatorKeyAllowed;
+            return sessionCreateAllowed + framesAllowed + operatorKeyAllowed + authLoginAllowed;
         }
 
         public long rejected() {
-            return sessionCreateRejected + framesRejected + operatorKeyRejected;
+            return sessionCreateRejected + framesRejected + operatorKeyRejected + authLoginRejected;
         }
 
         /** Share of limited-route requests that were refused; 0.0 when there were none. */
