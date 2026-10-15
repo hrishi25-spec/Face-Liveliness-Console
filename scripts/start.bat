@@ -58,7 +58,7 @@ echo.
 if not exist "target" mkdir "target"
 
 rem ------------------------------------------------------------------ 1. find JDK
-echo [.] Looking for a JDK 25 or newer...
+echo [.] Looking for a JDK 17 or newer...
 if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
 if not defined JAVA_BIN (
   for %%i in (java.exe) do if not "%%~$PATH:i"=="" set "JAVA_BIN=%%~$PATH:i"
@@ -66,8 +66,8 @@ if not defined JAVA_BIN (
 
 if not defined JAVA_BIN (
   echo [X] No Java found on PATH and JAVA_HOME is not set.
-  echo     Install a JDK 25+ then reopen this window:
-  echo       winget install EclipseAdoptium.Temurin.25.JDK
+  echo     Install a JDK 17+ then reopen this window:
+  echo       winget install EclipseAdoptium.Temurin.21.JDK
   exit /b 1
 )
 
@@ -83,8 +83,8 @@ for /f "tokens=1,2 delims=._" %%a in ("!JVER!") do (
   if "%%a"=="1" ( set "JMAJOR=%%b" ) else ( set "JMAJOR=%%a" )
 )
 if not defined JMAJOR set "JMAJOR=0"
-if !JMAJOR! LSS 25 (
-  echo [X] Java !JVER! is too old - this project needs JDK 25 or newer.
+if !JMAJOR! LSS 17 (
+  echo [X] Java !JVER! is too old - this project needs JDK 17 or newer.
   echo     Found: %JAVA_BIN%
   exit /b 1
 )
@@ -150,7 +150,7 @@ set "READY=0"
 for /l %%i in (1,1,120) do (
   if "!READY!"=="0" (
     if defined HAVECURL (
-      curl -s -f -m 2 "http://127.0.0.1:%PORT%/health" >nul 2>&1
+      curl --noproxy "*" -s -f -m 2 "http://127.0.0.1:%PORT%/health" >nul 2>&1
       if not errorlevel 1 set "READY=1"
     ) else (
       rem No curl (pre-1803 Windows): fall back to a fixed wait.
@@ -177,7 +177,7 @@ if not "!READY!"=="1" (
 
 set "ENGINE=unknown"
 if defined HAVECURL (
-  for /f "delims=" %%E in ('curl -s -f -m 2 "http://127.0.0.1:%PORT%/health" 2^>nul') do set "HEALTHJSON=%%E"
+  for /f "delims=" %%E in ('curl --noproxy "*" -s -f -m 2 "http://127.0.0.1:%PORT%/health" 2^>nul') do set "HEALTHJSON=%%E"
   echo !HEALTHJSON! | findstr /c:"\"engine\":\"available\"" >nul 2>&1 && set "ENGINE=available"
   echo !HEALTHJSON! | findstr /c:"\"engine\":\"unavailable\"" >nul 2>&1 && set "ENGINE=unavailable"
 )
@@ -187,6 +187,9 @@ echo [ok] Service is up
 echo    Console      http://localhost:%PORT%/
 echo    API docs     http://localhost:%PORT%/swagger-ui/index.html
 echo    Health       http://localhost:%PORT%/health
+if /i "%PROFILE%"=="dev" (
+  echo    Sign in      supervisor / supervisor123
+)
 if "!ENGINE!"=="available" (
   echo    Engine       available ^(OpenCV native library loaded^)
 ) else (

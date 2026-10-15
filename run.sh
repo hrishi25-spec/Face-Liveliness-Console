@@ -23,10 +23,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Find JDK 25+
+# Find JDK 17+
 java_major() {
   local v
-  v="$("$1" -version 2>&1 | head -1 | sed -E 's/.*"([^"]+)".*/\1')" || return 1
+  v="$("$1" -version 2>&1 | head -1 | sed -E 's/.*"([^"]+)".*/\1/')" || return 1
   case "$v" in
     1.*) printf '%s' "${v#1.}" | cut -d. -f1 ;;
     *)   printf '%s' "${v%%.*}" ;;
@@ -36,24 +36,24 @@ try_java() {
   [ -n "$1" ] && [ -x "$1" ] || return 1
   local major
   major="$(java_major "$1" 2>/dev/null || true)"
-  [ -n "$major" ] && [ "$major" -ge 25 ] 2>/dev/null || return 1
+  [ -n "$major" ] && [ "$major" -ge 17 ] 2>/dev/null || return 1
   JAVA_BIN="$1"
 }
 find_java() {
   [ -n "${JAVA_HOME:-}" ] && try_java "$JAVA_HOME/bin/java" && echo "$JAVA_BIN" && return
   p="$(command -v java 2>/dev/null || true)"
   [ -n "$p" ] && try_java "$p" && echo "$JAVA_BIN" && return
-  for p in /usr/lib/jvm/*/bin/java /opt/java/openjdk/bin/java /opt/homebrew/opt/openjdk@25/bin/java /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/java; do
+  for p in /usr/lib/jvm/*/bin/java /opt/java/openjdk/bin/java /opt/homebrew/opt/openjdk@21/bin/java /opt/homebrew/opt/openjdk@17/bin/java /opt/homebrew/opt/openjdk/bin/java /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/java; do
     try_java "$p" && echo "$JAVA_BIN" && return
   done
   return 1
 }
 
-JAVA_BIN=$(find_java) || { echo "Need JDK 25+. Install: brew install openjdk@25 / apt install openjdk-25-jdk / winget install EclipseAdoptium.Temurin.25.JDK"; exit 1; }
+JAVA_BIN=$(find_java) || { echo "Need JDK 17+. Install: brew install openjdk@21 / apt install openjdk-21-jdk / winget install EclipseAdoptium.Temurin.21.JDK"; exit 1; }
 
 # Build if needed (uses Maven wrapper)
 JAR="target/pad-liveness-backend-1.0.0-SNAPSHOT.jar"
-[ -f "$JAR" ] || { echo "Building..."; ./mvnw -q package -DskipTests; }
+[ -f "$JAR" ] || { echo "Building..."; if [ -x "./mvnw" ]; then ./mvnw -q package -DskipTests; else mvn -q package -DskipTests; fi; }
 
 # Check port
 (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && { echo "Port $PORT in use"; exit 1; }
@@ -67,11 +67,11 @@ trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null' EXIT INT TERM
 
 # Wait for health
 for _ in {1..60}; do
-  curl -fs "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
+  curl --noproxy "*" -fs "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
   sleep 1
 done
 
-ENGINE=$(curl -fs "http://127.0.0.1:$PORT/health" | sed -n 's/.*"engine":"\([^"]*\)".*/\1/p')
+ENGINE=$(curl --noproxy "*" -fs "http://127.0.0.1:$PORT/health" 2>/dev/null | sed -n 's/.*"engine":"\([^"]*\)".*/\1/p')
 
 echo ""
 echo "✓ Service running on http://localhost:$PORT"
@@ -79,6 +79,9 @@ echo "  Console:     http://localhost:$PORT/"
 echo "  API docs:    http://localhost:$PORT/swagger-ui/index.html"
 echo "  Health:      http://localhost:$PORT/health"
 echo "  Engine:      ${ENGINE:-unknown}"
+if [ "$PROFILE" = "dev" ]; then
+  echo "  Sign in:     supervisor / supervisor123"
+fi
 echo ""
 [ "$OPEN_BROWSER" = 1 ] && { xdg-open "http://localhost:$PORT/" 2>/dev/null || open "http://localhost:$PORT/" 2>/dev/null || start "" "http://localhost:$PORT/" 2>/dev/null; }
 

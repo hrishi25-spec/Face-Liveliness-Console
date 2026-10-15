@@ -4,9 +4,6 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 2026-10-11
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
 ### Added — A low-resource launch (`--lowmem`) for the 2-core / 2 GB target
 
 - `./start.sh --lowmem` / `start.bat --lowmem` start the service the way the
@@ -47,7 +44,6 @@ All notable changes to this project will be documented in this file.
   newer than the jar, and say whether sharing is active; a missing or stale archive
   is a JVM warning, never a boot failure (verified).
 
->>>>>>> Stashed changes
 ### Changed — A capture budget on the browser console, and a configurable analysis cap
 
 - The console sent the camera's **native** frame: 1280x720 on a webcam that
