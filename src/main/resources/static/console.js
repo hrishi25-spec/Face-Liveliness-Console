@@ -78,41 +78,20 @@
   // The role is determined by the server response after sign-in, never chosen
   // in the UI. Resident capture is always available; supervisor tabs appear
   // only when a supervisor-signed-in session is active.
-  const pill = $("pill-role");
   const pillUser = $("pill-user");
-  const topbarAuth = $("topbar-auth");
 
-  // Updates the UI after sign-in or sign-out. The role comes from the server
-  // response (me.role), not from a UI choice.
+  // Updates the UI after sign-in or sign-out.
   function updateRoleDisplay() {
     if (signedInAs) {
-      // Show signed-in state in the top bar
       pillUser.textContent = "user: " + signedInAs;
       pillUser.className = "pill ok";
       $("btn-sign-in").hidden = true;
       $("btn-sign-out").hidden = false;
-      // Show supervisor-specific tabs when the role is SUPERVISOR
-      const isSupervisor = signedInAs.toUpperCase().includes("SUPERVISOR") ||
-        signedInAs.toUpperCase().includes("ADMIN");
-      $("panel-policy").hidden = !isSupervisor;
-      $("panel-users").hidden = !isSupervisor;
-      $("panel-metrics").hidden = !isSupervisor;
-      $("panel-sweep").hidden = !isSupervisor;
-      $("panel-diagnostics").hidden = !isSupervisor;
-      $("panel-chain").hidden = !isSupervisor;
-      $("panel-sweep").hidden = !isSupervisor;
     } else {
-      // No signed-in user: show resident capture, hide supervisor tabs
       pillUser.textContent = "no user";
       pillUser.className = "pill";
       $("btn-sign-in").hidden = false;
       $("btn-sign-out").hidden = true;
-      $("panel-policy").hidden = true;
-      $("panel-users").hidden = true;
-      $("panel-metrics").hidden = true;
-      $("panel-sweep").hidden = true;
-      $("panel-diagnostics").hidden = true;
-      $("panel-chain").hidden = true;
     }
   }
 
@@ -344,10 +323,15 @@
   // ---------- health ----------
   async function refreshHealth() {
     try {
-      const res = await fetch("/health");
+      const res = await fetch("/health", { credentials: "omit" });
+      if (!res.ok) {
+        $("pill-health").textContent = "service: " + res.status;
+        $("pill-health").className = "pill bad";
+        return;
+      }
       const h = await res.json();
       $("pill-health").textContent = "service: " + h.status;
-      $("pill-health").className = "pill ok";
+      $("pill-health").className = "pill " + (h.status === "ok" ? "ok" : "warn");
       const available = h.engine === "available";
       $("pill-engine").textContent = "engine: " + h.engine;
       $("pill-engine").className = "pill " + (available ? "ok" : "warn");
@@ -1143,7 +1127,7 @@
     let username = "";
     let password = "";
     try {
-      username = (window.prompt("Supervisor username:") || "").trim();
+      username = (window.prompt("Supervisor username:", "supervisor") || "").trim();
       if (username) password = window.prompt(`Password for ${username}:`) || "";
     } catch { username = ""; password = ""; }
     if (!username || !password) {
@@ -1156,19 +1140,46 @@
         body: JSON.stringify({ username, password })
       });
       signedInAs = me.username || username;
-      cfgStatus(`Signed in as ${signedInAs} (${me.role}).`, true);
       if (me.mustChangePassword) {
-        cfgStatus(`Signed in as ${signedInAs}, but the account owes a password change — change it before saving a policy.`,
-          false);
+        let newPw = "";
+        try {
+          newPw = window.prompt(
+            `Initial sign-in for ${signedInAs} requires setting a new password (min 12 chars, different from current):\n\nEnter new password:`,
+            "supervisor1234"
+          ) || "";
+        } catch {}
+        if (newPw && newPw.length >= 12 && newPw !== password) {
+          try {
+            await api("/auth/change-password", {
+              method: "POST",
+              body: JSON.stringify({ currentPassword: password, newPassword: newPw })
+            });
+            cfgStatus(`Signed in as ${signedInAs} (${me.role}). Password updated.`, true);
+            log(`Signed in as ${signedInAs} (${me.role}) and updated password.`);
+          } catch (pe) {
+            signedInAs = "";
+            cfgStatus(`Sign-in refused: password change failed (${pe.message}).`, false);
+            await signOut("failed password change");
+            updateRoleDisplay();
+            return false;
+          }
+        } else {
+          signedInAs = "";
+          cfgStatus("Sign-in cancelled: a new password (min 12 chars, different from current) is required.", false);
+          await signOut("cancelled password change");
+          updateRoleDisplay();
+          return false;
+        }
+      } else {
+        cfgStatus(`Signed in as ${signedInAs} (${me.role}).`, true);
+        log(`Signed in as ${signedInAs} (${me.role}).`);
       }
-      log(`Signed in as ${signedInAs} (${me.role}).`);
+      updateRoleDisplay();
       return true;
     } catch (e) {
-      // One refusal for every reason (the service answers a generic 401), and the
-      // password is not echoed anywhere — not into the status line, not into the
-      // decision log.
       signedInAs = "";
       cfgStatus(`Sign-in refused (${e.message}).`, false);
+      updateRoleDisplay();
       return false;
     }
   }
@@ -1183,8 +1194,18 @@
       await api("/auth/logout", { method: "POST" });
     } catch { /* nothing to end, or nothing reachable — the label is cleared regardless */ }
     if (was) log(`Signed out ${was} (${why}).`);
+    updateRoleDisplay();
     return was;
   }
+
+  $("btn-sign-in").addEventListener("click", () => {
+    signIn();
+  });
+
+  $("btn-sign-out").addEventListener("click", () => {
+    signOut("topbar sign-out button").then(was => cfgStatus(
+      was ? `Signed out ${was}.` : "Not signed in.", true));
+  });
 
   $("btn-cfg-sign-out").addEventListener("click", () => {
     signOut("sign-out button").then(was => cfgStatus(
@@ -1757,8 +1778,22 @@
   // recent edit — and its risk level — are visible at a glance, not only after
   // clicking refresh. Same open GET as the policy read; no session needed.
   loadConfigAudit().catch(e => cfgStatus(e.message, false));
-  // Initialize the role display based on current auth state
-  updateRoleDisplay();
+  // Initialize the role display based on current auth state (restore session if cookie is present)
+  api("/auth/me").then(me => {
+    if (me && me.username) {
+      if (me.mustChangePassword) {
+        // Confined session would block public requests with 403; clear it so console operates normally
+        signOut("uncompleted password change");
+      } else {
+        signedInAs = me.username;
+        log(`Restored session for ${signedInAs} (${me.role}).`);
+        updateRoleDisplay();
+      }
+    }
+  }).catch(() => {
+    signedInAs = "";
+    updateRoleDisplay();
+  });
   // Skip background polling while the tab is hidden — no reason to spend CPU/battery
   // refreshing a console nobody is looking at.
   setInterval(() => {
