@@ -27,6 +27,19 @@ class Settings(BaseSettings):
     DEFAULT_CHALLENGE_TYPES: list[str] = ["blink", "smile", "turn_left", "turn_right"]
 
     # ---- Security ----
+    # The key a privileged write must present as X-Admin-API-Key. Blank means
+    # "no key configured", which refuses the route outright (403) rather than
+    # leaving it open — see app.api.deps.require_admin_key. Read only by the
+    # policy update today; the routes that need it are listed in the README's
+    # Security section.
+    #
+    # Named with its MOSIP_ prefix, unlike the fields above, because it is the same
+    # environment variable the Spring service documents for the same purpose and the
+    # name is part of the operator-facing contract: the field name *is* the env var
+    # pydantic-settings looks for, so calling it ADMIN_API_KEY would silently read a
+    # different variable than the one every document tells you to set.
+    MOSIP_ADMIN_API_KEY: str = ""
+
     # Origins allowed to call the API cross-origin (Registration Clients and
     # local dev servers). Override via CORS_ORIGINS (JSON list) in production;
     # the old wildcard + credentials combination is gone.

@@ -31,6 +31,24 @@ from app.models.liveness_session import LivenessSession
 from app.services.challenge_selector import select_challenge
 from app.services.liveness_engine import get_liveness_engine
 from app.services.pad_engine import get_pad_engine
+from app.shared.definitions.repeated_failure_action import (
+    ESCALATE_TO_OPERATOR,
+    FALLBACK,
+    LOCK_OUT,
+)
+
+# The policy -> terminal-outcome table. The outcomes themselves live in
+# app/shared/definitions/repeated_failure_action.py, which is the single source
+# of truth shared with the Spring service
+# (io.mosip.liveness.shared.definitions) and with docs/configuration.md's
+# failure table — this module only decides which of them a workflow's
+# on_repeated_failure selects, so the user-facing strings cannot drift between
+# the two backends or from the documentation.
+POLICY_OUTCOMES = {
+    FailurePolicy.LOCK: LOCK_OUT,
+    FailurePolicy.ESCALATE: ESCALATE_TO_OPERATOR,
+    FailurePolicy.ALLOW_RETRY: FALLBACK,
+}
 
 
 @dataclass
@@ -60,15 +78,6 @@ class ChallengeDecision:
     # policy lets the client open a fresh session (ALLOW_RETRY), False for
     # LOCK/ESCALATE. None on every non-terminal verdict.
     may_retry_session: bool | None = None
-
-
-@dataclass(frozen=True)
-class RepeatedFailureAction:
-    """Outcome of exhausting the retry budget."""
-    action: str
-    failure_reason: str
-    may_retry_session: bool
-    message: str
 
 
 def _finalize(db: DBSession, sess: LivenessSession, passed: bool, reason: str | None = None) -> None:
@@ -260,28 +269,7 @@ def process_challenge_validation(
         # ALLOW_RETRY is the only one that may open a fresh session. Reporting
         # all three as `reject` made a per-workflow on_repeated_failure stored
         # config rather than behaviour (the Spring service had the same gap).
-        # Map FailurePolicy to RepeatedFailureAction for the terminal verdict
-        policy_mapping = {
-            FailurePolicy.LOCK: RepeatedFailureAction(
-                action="locked",
-                failure_reason="max_retries_exceeded:locked_out",
-                may_retry_session=False,
-                message="Face verification failed. Please contact an operator for assistance."
-            ),
-            FailurePolicy.ESCALATE: RepeatedFailureAction(
-                action="escalate_to_operator",
-                failure_reason="max_retries_exceeded:escalation_required",
-                may_retry_session=False,
-                message="Face verification could not be completed. An operator will assist you."
-            ),
-            FailurePolicy.ALLOW_RETRY: RepeatedFailureAction(
-                action="failed",
-                failure_reason="max_retries_exceeded",
-                may_retry_session=True,
-                message="We could not verify face liveness. Please try again."
-            )
-        }
-        outcome = policy_mapping[policy.on_repeated_failure]
+        outcome = POLICY_OUTCOMES[policy.on_repeated_failure]
         _finalize(db, sess, False, outcome.failure_reason)
         return ChallengeDecision(
             passed=False, action=outcome.action, message=outcome.message,

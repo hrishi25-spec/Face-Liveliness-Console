@@ -26,8 +26,9 @@ import java.util.regex.Pattern;
  * (right-to-left, skipping trusted hops) and then {@code X-Real-IP} decide.
  *
  * <p>Never list a range that includes untrusted addresses (in particular not
- * {@code 0.0.0.0/0}); set it to the proxy's address or network. Trusting the
- * headers unconditionally would let one caller mint an unlimited number of rate
+ * {@code 0.0.0.0/0}); set it to the proxy's address or network. A {@code /0}
+ * entry is refused outright rather than honoured — see {@code parseCidr}. Trusting
+ * the headers unconditionally would let one caller mint an unlimited number of rate
  * limit buckets, forge an audit trail's {@code sourceIp} by pointing at somebody
  * else's address, or poison another client's bucket.
  */
@@ -146,7 +147,13 @@ public class ClientIpResolver {
         if (prefix < 0) {
             prefix = bytes.length * 8;   // a bare address is a /32 or /128
         }
-        if (prefix > bytes.length * 8) {
+        // A /0 entry (0.0.0.0/0, ::/0) matches every peer, so honouring it would
+        // make this list equal "trust all forwarded headers" — the one thing the
+        // operator is told never to configure. Refused rather than warned about,
+        // because the failure it enables is silent: any caller could then mint
+        // rate-limit buckets and write its own address into an audit row. Same
+        // fail-closed reading as an unparseable entry.
+        if (prefix < 1 || prefix > bytes.length * 8) {
             return null;
         }
         return new Cidr(bytes, prefix);

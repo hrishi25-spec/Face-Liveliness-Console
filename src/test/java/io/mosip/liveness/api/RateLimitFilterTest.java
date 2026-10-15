@@ -580,7 +580,7 @@ class RateLimitFilterTest {
     void frameBudget_isUnaffectedByTrustedProxies() throws Exception {
         // Frames are keyed by session id, so a forwarded IP must not change the
         // key or let a session escape its budget.
-        RateLimitFilter filter = filterBehindProxies(30, "0.0.0.0/0");
+        RateLimitFilter filter = filterBehindProxies(30, "172.18.0.0/16");
         String session = "/api/v1/sessions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/frames";
         MockHttpServletRequest request = new MockHttpServletRequest("POST", session);
         request.setRemoteAddr("172.18.0.2");

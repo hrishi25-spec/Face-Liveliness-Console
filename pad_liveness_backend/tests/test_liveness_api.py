@@ -8,12 +8,32 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.deps import ADMIN_KEY_HEADER
+from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.enums import ChallengeType, FailurePolicy
+from app.services.decision_engine import POLICY_OUTCOMES
 from app.services.liveness_engine import FaceObservation
 from app.services.pad_engine import PADResult
+
+# The key every policy write in this module presents. Any value works — the
+# point of the tests below is that the route refuses when one is configured and
+# not presented, and when none is configured at all.
+TEST_ADMIN_KEY = "test-admin-key-0123456789abcdef"
+
+
+@pytest.fixture(autouse=True)
+def configured_admin_key(monkeypatch):
+    """Configure the admin key for every test, so policy writes are authenticated.
+
+    The keyed route is fail-closed, so without this the suite's policy setup
+    would be refused. The tests that care about that behaviour override the value
+    themselves.
+    """
+    monkeypatch.setattr(settings, "MOSIP_ADMIN_API_KEY", TEST_ADMIN_KEY)
+    return TEST_ADMIN_KEY
 
 
 @pytest.fixture
@@ -150,7 +170,7 @@ def test_low_passive_score_escalates_and_successful_challenge_passes(client, eng
     assert validation.status_code == 200
     assert validation.json()["passed"] is True
     assert validation.json()["action"] == "proceed"
-    assert validation.json()["challenge"]["status"] == "passed"
+    assert validation.json()["challenge"]["status"] == "PASSED"
     assert client.get(f"/api/v1/sessions/{session_id}").json()["status"] == "passed"
     assert {event["event_type"] for event in client.get(f"/api/v1/sessions/{session_id}/audit").json()} == {
         "SESSION_CREATED", "CHALLENGE_ISSUED", "CHALLENGE_PASSED", "SESSION_PASSED"
@@ -216,7 +236,7 @@ def test_closing_active_session_expires_it_and_blocks_further_frames(client, eng
 # client-visible string must not be able to change without editing this table.
 SPENT_BUDGET_OUTCOMES = [
     pytest.param(
-        "lock",
+        "LOCK",
         "locked",
         "max_retries_exceeded:locked_out",
         False,
@@ -224,7 +244,7 @@ SPENT_BUDGET_OUTCOMES = [
         id="lock",
     ),
     pytest.param(
-        "escalate",
+        "ESCALATE",
         "escalate_to_operator",
         "max_retries_exceeded:escalation_required",
         False,
@@ -232,7 +252,7 @@ SPENT_BUDGET_OUTCOMES = [
         id="escalate",
     ),
     pytest.param(
-        "allow_retry",
+        "ALLOW_RETRY",
         "failed",
         "max_retries_exceeded",
         True,
@@ -242,11 +262,69 @@ SPENT_BUDGET_OUTCOMES = [
 ]
 
 
+def admin_headers(key=TEST_ADMIN_KEY):
+    return {ADMIN_KEY_HEADER: key}
+
+
 def set_policy(client, **fields):
     """Point the resident policy at these values (the update replaces the row)."""
-    response = client.put("/api/v1/config/resident", json=fields)
+    response = client.put("/api/v1/config/resident", json=fields, headers=admin_headers())
     assert response.status_code == 200, response.text
     return response.json()
+
+
+# ------------------------------------------------------- the policy write gate
+
+
+def test_policy_read_is_open_and_the_write_needs_the_key(client):
+    """A client reads the policy it is judged against; only the write is keyed."""
+    assert client.get("/api/v1/config/resident").status_code == 200
+
+    response = client.put(
+        "/api/v1/config/resident",
+        json={"passive_threshold": 0.99},
+        headers=admin_headers(),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["passive_threshold"] == pytest.approx(0.99)
+    assert client.get("/api/v1/config/resident").json()["passive_threshold"] == pytest.approx(0.99)
+
+
+def test_the_policy_write_is_refused_without_the_key(client):
+    """An unauthenticated caller must not be able to weaken the threshold."""
+    for headers in ({}, admin_headers(""), admin_headers("wrong-key"),
+                    admin_headers(TEST_ADMIN_KEY.upper())):
+        response = client.put(
+            "/api/v1/config/resident",
+            json={"passive_threshold": 0.0, "liveness_enabled": False},
+            headers=headers,
+        )
+        assert response.status_code == 403, (headers, response.text)
+        assert TEST_ADMIN_KEY not in response.text, "the refusal must not echo the key"
+
+    # Nothing moved: the policy is still the seeded default.
+    policy = client.get("/api/v1/config/resident").json()
+    assert policy["passive_threshold"] == pytest.approx(settings.DEFAULT_PASSIVE_THRESHOLD)
+    assert policy["liveness_enabled"] is True
+
+
+def test_the_policy_write_is_disabled_when_no_key_is_configured(client, monkeypatch):
+    """Fail closed: an unset key closes the route, it does not open it."""
+    monkeypatch.setattr(settings, "MOSIP_ADMIN_API_KEY", "")
+
+    response = client.put(
+        "/api/v1/config/resident",
+        json={"passive_threshold": 0.0},
+        headers=admin_headers(),
+    )
+
+    assert response.status_code == 403, response.text
+    assert "MOSIP_ADMIN_API_KEY" in response.json()["detail"], (
+        "the operator is told which variable enables the route"
+    )
+    assert client.get("/api/v1/config/resident").json()["passive_threshold"] == pytest.approx(
+        settings.DEFAULT_PASSIVE_THRESHOLD
+    )
 
 
 def spend_retry_budget(client, session_id, frame_base64, attempts):
@@ -327,16 +405,26 @@ def test_spent_retry_budget_reports_the_policys_terminal_action(
 
 
 def test_failure_policies_carry_the_documented_terminal_vocabulary():
-    """The mapping itself, independent of the API: one row per policy, and every
-    reason keeps the prefix a client that only knows the older spelling tests."""
+    """The table the engine reads, asserted where it is read.
+
+    `POLICY_OUTCOMES` is the mapping `process_challenge_validation` resolves a
+    spent retry budget through, so this checks the wire vocabulary itself rather
+    than a copy of it — the failure mode that let the lowercase spellings rot in
+    here while the API answered upper snake case. The strings themselves come
+    from the shared definitions module the Spring service mirrors, which is what
+    keeps the two backends' user-facing messages from drifting apart.
+    """
+    assert set(POLICY_OUTCOMES) == set(FailurePolicy), "every policy needs a row"
+
     assert [
-        (p.value, p.outcome.action, p.outcome.failure_reason, p.outcome.may_retry_session)
+        (p.value, POLICY_OUTCOMES[p].action, POLICY_OUTCOMES[p].failure_reason,
+         POLICY_OUTCOMES[p].may_retry_session)
         for p in FailurePolicy
     ] == [
-        ("lock", "locked", "max_retries_exceeded:locked_out", False),
-        ("escalate", "escalate_to_operator", "max_retries_exceeded:escalation_required", False),
-        ("allow_retry", "failed", "max_retries_exceeded", True),
+        ("LOCK", "locked", "max_retries_exceeded:locked_out", False),
+        ("ESCALATE", "escalate_to_operator", "max_retries_exceeded:escalation_required", False),
+        ("ALLOW_RETRY", "failed", "max_retries_exceeded", True),
     ]
-    for policy in FailurePolicy:
-        assert policy.outcome.failure_reason.startswith("max_retries_exceeded")
-        assert policy.outcome.message, f"{policy.value} needs the generic user-facing message"
+    for outcome in POLICY_OUTCOMES.values():
+        assert outcome.failure_reason.startswith("max_retries_exceeded")
+        assert outcome.message, "every terminal outcome needs the generic user-facing message"

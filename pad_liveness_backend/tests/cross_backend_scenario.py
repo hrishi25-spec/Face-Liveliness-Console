@@ -19,6 +19,7 @@ contract under test is the response shape, not PostgreSQL or the model.
 import argparse
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -44,6 +45,15 @@ from app.services.pad_engine import PADResult  # noqa: E402
 
 # Below every policy's passive threshold, so the first frame escalates.
 PASSIVE_SCORE = 0.4
+
+# The policy write is fail-closed: it needs `MOSIP_ADMIN_API_KEY` configured on
+# the service and presented as `X-Admin-API-Key`. The Spring service's
+# CrossBackendContractTest puts this variable in this process's environment, and
+# `tests/test_cross_backend_scenario.py` sets it for its own run — so the
+# scenario works the same way in both, instead of depending on a developer's
+# shell happening to have it.
+ADMIN_KEY_ENV = "MOSIP_ADMIN_API_KEY"
+ADMIN_KEY_HEADER = "X-Admin-API-Key"
 
 
 class _MissedChallengeEngine:
@@ -96,6 +106,12 @@ def _client() -> TestClient:
 def run(policy: str, max_retries: int) -> dict:
     """Spend the retry budget at `policy` and report the terminal shape."""
     frame_b64 = _frame_base64()
+    admin_key = os.environ.get(ADMIN_KEY_ENV, "")
+    if not admin_key:
+        raise SystemExit(
+            f"{ADMIN_KEY_ENV} must be set: the policy PUT is fail-closed, so the "
+            "scenario cannot configure a policy without it."
+        )
 
     with patch.object(decision_engine, "get_liveness_engine", lambda: _MissedChallengeEngine()), \
             patch.object(decision_engine, "get_pad_engine", lambda: _NoAttackEngine()), \
@@ -103,6 +119,7 @@ def run(policy: str, max_retries: int) -> dict:
         configured = client.put(
             "/api/v1/config/resident",
             json={"max_retry_count": max_retries, "on_repeated_failure": policy},
+            headers={ADMIN_KEY_HEADER: admin_key},
         )
         assert configured.status_code == 200, configured.text
 

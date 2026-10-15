@@ -95,6 +95,10 @@ const ROOT = resolve(process.env.BOUNDARIES_ROOT ?? join(SCRIPT_DIR, '..'));
 /** Directories that are never projects, never scopes, and never scanned. */
 const IGNORED_DIRS = new Set([
   '.git', '.github', '.claude', '.claude-flow', '.freebuff', '.mvn', '.vercel',
+  // A local scratch renderer for README.md, not a project: it ships one script
+  // and its own generated HTML, and the rendered output says nothing the
+  // committed README does not.
+  '.readme-preview',
   '.gradle', '.dart_tool', '.idea', '.venv', 'venv', 'node_modules',
   'target', 'build', 'dist', 'out', '__pycache__', 'screenshots',
   '.pytest_cache', '.ruff_cache', '.mypy_cache', '.cache', 'htmlcov',

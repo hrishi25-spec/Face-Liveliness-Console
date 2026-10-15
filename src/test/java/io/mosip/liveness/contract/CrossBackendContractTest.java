@@ -117,6 +117,15 @@ class CrossBackendContractTest extends RawHttpSupport {
 
     private static final String PYTHON_ENV = "PAD_LIVENESS_PYTHON";
     private static final String REQUIRE_PYTHON_ENV = "PAD_LIVENESS_REQUIRE_PYTHON";
+
+    /**
+     * The admin key the Python backend's policy write requires, set for the
+     * scenario subprocess. This service no longer has such a key of its own —
+     * the privileged surface here is a supervisor session — so the constant
+     * exists only to configure the other backend, and any value works.
+     */
+    static final String PYTHON_ADMIN_KEY_ENV = "MOSIP_ADMIN_API_KEY";
+    private static final String PYTHON_ADMIN_KEY = "cross-backend-admin-key-0123456789abcdef";
     private static final Path BACKEND_DIR = Path.of("pad_liveness_backend");
 
     private static String frameB64;
@@ -197,9 +206,31 @@ class CrossBackendContractTest extends RawHttpSupport {
             // around: the Python API is snake_case throughout.
             assertFalse(python.has("mayRetrySession"), "the Python API is snake_case: " + python);
             assertFalse(python.has("failureReason"), "the Python API is snake_case: " + python);
-            assertEquals(policy.name().toLowerCase(), python.get("policy").asText(),
+            assertEquals(policyValue(policy), python.get("policy").asText(),
                     "both halves must have configured the same repeated-failure policy: " + python);
         }
+    }
+
+    /**
+     * The policy's value on the wire, which is what both halves are configured
+     * with and what the scenario echoes back.
+     *
+     * <p>Deliberately not {@code policy.name()}: {@link RepeatedFailureAction}
+     * names the <em>terminal action</em> a spent budget reports
+     * ({@code LOCK_OUT} &rarr; {@code locked}), while the config field and the
+     * scenario's {@code --policy} both take the {@code FailurePolicy} spelling
+     * ({@code LOCK} / {@code ESCALATE} / {@code ALLOW_RETRY}). Comparing the two
+     * vocabularies to each other is a comparison that can never pass — the old
+     * {@code policy.name().toLowerCase()} asserted {@code lock_out} against
+     * {@code LOCK} — so the mapping lives in one helper and the assertion reads
+     * the value that was actually configured on both sides.</p>
+     */
+    private static String policyValue(RepeatedFailureAction policy) {
+        return switch (policy) {
+            case LOCK_OUT -> "LOCK";
+            case FALLBACK -> "ALLOW_RETRY";
+            case ESCALATE_TO_OPERATOR -> "ESCALATE";
+        };
     }
 
     // ------------------------------------------------------------ the Java half
@@ -216,12 +247,7 @@ class CrossBackendContractTest extends RawHttpSupport {
             List<String> intermediateActions) {}
 
     private TerminalShape spendTheJavaRetryBudget(RepeatedFailureAction policy) throws Exception {
-        // Map RepeatedFailureAction to the corresponding FailurePolicy values expected by the API
-        String apiPolicyValue = switch (policy) {
-            case LOCK_OUT -> "LOCK";
-            case FALLBACK -> "ALLOW_RETRY";
-            case ESCALATE_TO_OPERATOR -> "ESCALATE";
-        };
+        String apiPolicyValue = policyValue(policy);
 
         // SUPERVISOR is seeded LOCK_OUT; the policy is written explicitly so the
         // scenario does not depend on which workflow carries which seed.
@@ -321,18 +347,21 @@ class CrossBackendContractTest extends RawHttpSupport {
     // ---------------------------------------------------------- the Python half
 
     private JsonNode runPythonScenario(RepeatedFailureAction policy) throws Exception {
-        // Map RepeatedFailureAction to the corresponding policy values expected by the Python backend
-        String policyValue = switch (policy) {
-            case LOCK_OUT -> "LOCK";
-            case FALLBACK -> "ALLOW_RETRY";
-            case ESCALATE_TO_OPERATOR -> "ESCALATE";
-        };
+        String apiPolicyValue = policyValue(policy);
         Path stderr = Files.createTempFile("cross-backend-scenario", ".log");
         try {
             ProcessBuilder builder = new ProcessBuilder(
                     pythonInterpreter(), "tests/cross_backend_scenario.py",
-                    "--policy", policyValue, "--max-retries", String.valueOf(MAX_RETRIES));
+                    "--policy", apiPolicyValue, "--max-retries", String.valueOf(MAX_RETRIES));
             builder.directory(BACKEND_DIR.toFile());
+            // The scenario configures its policy over PUT /api/v1/config/resident,
+            // and that route is fail-closed in the Python backend: it is refused
+            // unless MOSIP_ADMIN_API_KEY is both configured on the service and
+            // presented as X-Admin-API-Key. Handing the key to *this* child rather
+            // than relying on the runner's environment is what keeps the gate
+            // honest — without it the scenario would fail on a machine that never
+            // exported the variable.
+            builder.environment().put(PYTHON_ADMIN_KEY_ENV, PYTHON_ADMIN_KEY);
             // Captured to a file: the script logs every HTTP call to stderr, and
             // reading two pipes in sequence is how a process ends up blocked.
             builder.redirectError(ProcessBuilder.Redirect.to(stderr.toFile()));

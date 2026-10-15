@@ -129,6 +129,43 @@ class ClientIpResolverTest {
         assertEquals(ClientIpResolver.class.getName() + ".clientIp", ClientIpResolver.ATTRIBUTE);
     }
 
+    // ------------------------------------------------------------------ the trust list
+
+    @Test
+    void aWildcardTrustEntryIsRefusedInsteadOfTrustingEveryForwardedHeader() {
+        // "Trust all forwarded headers" is the one configuration the setting tells
+        // an operator never to write. Honoured, it makes every peer a trusted hop,
+        // so the right-to-left walk over X-Forwarded-For finds no untrusted address
+        // and the resolver falls through to the caller's own X-Real-IP — a value
+        // any client can send. That is how one caller forges the audit trail's
+        // sourceIp and spends somebody else's rate-limit budget, so the entry is
+        // dropped like an unparseable one: fail closed, never warn and proceed.
+        ClientIpResolver v4 = resolverTrusting("0.0.0.0/0");
+        assertEquals("198.51.100.9",
+                v4.resolve(request("198.51.100.9", "203.0.113.1", "203.0.113.99")),
+                "a forged X-Real-IP must never be believed");
+
+        ClientIpResolver v6 = resolverTrusting("::/0");
+        assertEquals("2001:db8::5",
+                v6.resolve(request("2001:db8::5", null, "203.0.113.99")),
+                "the IPv6 wildcard is refused for the same reason");
+    }
+
+    @Test
+    void theValidEntriesBesideARefusedWildcardStillWork() {
+        ClientIpResolver resolver = resolverTrusting("0.0.0.0/0,172.18.0.0/16");
+        assertEquals("203.0.113.7", resolver.resolve(request("172.18.0.2", "203.0.113.7", null)),
+                "the named proxy network is still honoured");
+        assertEquals("198.51.100.9", resolver.resolve(request("198.51.100.9", null, "203.0.113.99")),
+                "an untrusted peer still cannot name itself");
+    }
+
+    @Test
+    void aPrefixWiderThanTheAddressIsStillIgnored() {
+        ClientIpResolver resolver = resolverTrusting("172.18.0.0/33, 172.18.0.0/-1");
+        assertEquals("198.51.100.9", resolver.resolve(request("198.51.100.9", "203.0.113.1", null)));
+    }
+
     // ------------------------------------------------------------------ locality
 
     @Test

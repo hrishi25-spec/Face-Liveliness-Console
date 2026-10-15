@@ -55,7 +55,8 @@ needs to change: implement the base class and update `get_liveness_engine()`
 5. `GET /sessions/{id}/audit` — full structured audit trail.
 6. `GET/PUT /config/{workflow_type}` — read/update per-workflow policy
    (threshold, challenge types, timeout, retry count, failure policy) —
-   no redeploy required.
+   no redeploy required. The **PUT requires the admin key** (see
+   [Security](#security)); the GET stays open.
 7. `GET /metrics` — anonymized operational metrics (pass rate, escalation
    rate, retry rate, PAD rejection rate, etc.).
 
@@ -69,9 +70,15 @@ can read either backend:
 
 | `on_repeated_failure` | Session | `action` | `failure_reason` | `may_retry_session` |
 |-----------------------|---------|----------|------------------|---------------------|
-| `lock` | `failed` | `locked` | `max_retries_exceeded:locked_out` | `false` |
-| `escalate` | `failed` | `escalate_to_operator` | `max_retries_exceeded:escalation_required` | `false` |
-| `allow_retry` | `failed` | `failed` | `max_retries_exceeded` | `true` |
+| `LOCK` | `failed` | `locked` | `max_retries_exceeded:locked_out` | `false` |
+| `ESCALATE` | `failed` | `escalate_to_operator` | `max_retries_exceeded:escalation_required` | `false` |
+| `ALLOW_RETRY` | `failed` | `failed` | `max_retries_exceeded` | `true` |
+
+The first column is the policy the `PUT` accepts (`FailurePolicy`, upper snake
+case in both backends); the `action` and `failure_reason` columns are the
+lower-case, user-facing half of the same table. `SessionStatus` is lower case
+and `ChallengeStatus` is upper snake case — each service reports its own enum
+casing, and a client reads them as written here.
 
 All three are terminal and none issues another challenge — extra attempts belong
 in `max_retry_count`, not in the failure action. `allow_retry` is the only mode
@@ -189,6 +196,49 @@ curl -s -X POST localhost:8000/api/v1/sessions/$SESSION_ID/challenges/validate \
 # 3. Check the audit trail
 curl -s localhost:8000/api/v1/sessions/$SESSION_ID/audit
 ```
+
+## Security
+
+Hardening built into the service (no extra dependencies):
+
+- **Admin key on policy updates** — `PUT /api/v1/config/{workflow_type}`
+  requires the `X-Admin-API-Key` header matching `MOSIP_ADMIN_API_KEY`. The check
+  is **fail-closed**: when the key is not configured the update is refused (403),
+  so an unauthenticated caller can never lower `passive_threshold` or switch
+  liveness off. Reads stay open, because a client has to be able to read the
+  policy it is judged against. The comparison is constant-time
+  (`hmac.compare_digest`), and neither refusal mentions the header, the key, or
+  anything derived from one — a wrong key and an absent one are the same answer.
+  ```bash
+  export MOSIP_ADMIN_API_KEY=$(openssl rand -hex 32)
+
+  curl -X PUT localhost:8000/api/v1/config/resident \
+    -H "Content-Type: application/json" \
+    -H "X-Admin-API-Key: $MOSIP_ADMIN_API_KEY" \
+    -d '{"passive_threshold": 0.85}'
+  ```
+  The Spring service's identical route is stricter still: it requires a
+  *supervisor session* rather than a shared key, so a policy write there is
+  attributable to an account. This backend keeps the key as its simpler guard,
+  and what the two must agree on is the shared contract — the fields, the
+  repeated-failure vocabulary and the terminal verdicts — which
+  `tests/cross_backend_scenario.py` and the Spring project's
+  `CrossBackendContractTest` compare on every CI run.
+- **CORS is an allow-list** (`CORS_ORIGINS`, default the local Registration
+  Client origins) with `allow_credentials=False`; the wildcard-plus-credentials
+  combination is deliberately absent.
+- **Security headers on every response** (`harden_requests`):
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy`, a
+  `Permissions-Policy` that allows the camera to this origin only, and a strict
+  `Content-Security-Policy`. FastAPI's own `/docs`, `/redoc` and `/openapi.json`
+  are exempt from CSP only, because their webjar boots inline.
+- **Request size cap** — POST/PUT bodies over `MAX_REQUEST_BODY_BYTES`
+  (default 24 MB) are refused with 413 before they are parsed, and frames are
+  decoded with an isolated `InvalidFrameError` handler that answers 422 rather
+  than leaking a decoder message or a 500.
+- **Error responses** carry no stack trace and no model internals: liveness and
+  PAD failures stay the generic, user-facing strings.
 
 ## Notes on the spec's non-functional requirements
 

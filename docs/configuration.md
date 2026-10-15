@@ -739,8 +739,17 @@ the `ConfigController` lazy-create path):
 | Workflow | `passiveThreshold` | `minChallengeCount` | `challengeTimeoutMs` | `maxRetryCount` | `onRepeatedFailure` | challenges |
 |----------|--------------------|---------------------|----------------------|-----------------|---------------------|------------|
 | `RESIDENT` | 0.80 | 1 | 20000 | 3 | `ESCALATE_TO_OPERATOR` | blink, smile |
-| `OPERATOR` | 0.82 | 1 | 15000 | 2 | `ALLOW_RETRY` | blink, turn_left, turn_right |
+| `OPERATOR` | 0.82 | 1 | 15000 | 2 | `FALLBACK` | blink, turn_left, turn_right |
 | `SUPERVISOR` | 0.85 | 2 | 15000 | 1 | `LOCK_OUT` | blink, smile, turn_left, turn_right |
+
+The names in that column are `RepeatedFailureAction` — the **terminal action**
+vocabulary, and what these seeds are written in
+(`WorkflowPolicyDefaults`). The REST field of the same name takes the
+`FailurePolicy` spelling instead: `LOCK`, `ESCALATE`, `ALLOW_RETRY`. The two
+vocabularies are one-to-one (`LOCK_OUT` ↔ `LOCK`, `ESCALATE_TO_OPERATOR` ↔
+`ESCALATE`, `FALLBACK` ↔ `ALLOW_RETRY`), which is why a `PUT` writes
+`ALLOW_RETRY` and the session that spends its budget then reports the `FALLBACK`
+action — see the table above.
 
 A resident may be physically assisted by an officer, so a failed resident check
 escalates to an operator; operator/supervisor authentication must never escalate to
