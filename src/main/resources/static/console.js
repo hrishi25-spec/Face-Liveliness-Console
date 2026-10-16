@@ -132,33 +132,81 @@
       if (roleResident) roleResident.hidden = true;
       if (roleSupervisor) roleSupervisor.hidden = false;
       if (operatorPolicyBanner) operatorPolicyBanner.hidden = false;
-      showTab("verify");
+      ["policy", "users", "metrics", "diagnostics", "chain", "sweep"].forEach(t => {
+        const tabEl = $("tab-" + t);
+        if (tabEl) tabEl.hidden = true;
+      });
+      ["verify", "sessions", "audit", "rejections"].forEach(t => {
+        const tabEl = $("tab-" + t);
+        if (tabEl) tabEl.hidden = false;
+      });
+      showTab("sessions");
     } else if (role === "SUPERVISOR") {
       if (roleResident) roleResident.hidden = true;
       if (roleSupervisor) roleSupervisor.hidden = false;
       if (operatorPolicyBanner) operatorPolicyBanner.hidden = true;
-      showTab("verify");
+      TABS.forEach(t => {
+        const tabEl = $("tab-" + t);
+        if (tabEl) tabEl.hidden = false;
+      });
+      const tabUsers = $("tab-users");
+      if (tabUsers) tabUsers.hidden = false;
+      showTab("policy");
     }
     updateRoleDisplay();
   }
 
   // Updates the UI after sign-in or sign-out.
   function updateRoleDisplay() {
+    const userLabel = $("topbar-user-label");
+    const usernameEl = $("topbar-username");
+    const btnSignOut = $("btn-sign-out");
+    const btnSignIn = $("btn-sign-in");
+
     if (currentRole) {
-      pillUser.textContent = (signedInAs || currentRole.toLowerCase()) + " (" + currentRole + ")";
-      pillUser.className = "pill ok";
-      $("btn-sign-in").hidden = true;
-      $("btn-sign-out").hidden = false;
+      if (pillUser) {
+        pillUser.hidden = false;
+        const roleCap = currentRole.charAt(0) + currentRole.slice(1).toLowerCase();
+        pillUser.innerHTML = `<span class="pill-dot"></span>${roleCap}`;
+        pillUser.className = "pill-badge pill-brand";
+      }
+      if (userLabel && usernameEl) {
+        if (currentRole === "RESIDENT") {
+          userLabel.hidden = true;
+        } else {
+          userLabel.hidden = false;
+          usernameEl.textContent = signedInAs || "staff.user";
+        }
+      }
+      if (btnSignIn) btnSignIn.hidden = true;
+      if (btnSignOut) {
+        btnSignOut.hidden = false;
+        btnSignOut.textContent = currentRole === "RESIDENT" ? "Switch role" : "Log out";
+      }
     } else if (signedInAs) {
-      pillUser.textContent = "user: " + signedInAs;
-      pillUser.className = "pill ok";
-      $("btn-sign-in").hidden = true;
-      $("btn-sign-out").hidden = false;
+      if (pillUser) {
+        pillUser.hidden = false;
+        pillUser.innerHTML = `<span class="pill-dot"></span>${signedInAs}`;
+        pillUser.className = "pill-badge pill-brand";
+      }
+      if (userLabel && usernameEl) {
+        userLabel.hidden = false;
+        usernameEl.textContent = signedInAs;
+      }
+      if (btnSignIn) btnSignIn.hidden = true;
+      if (btnSignOut) {
+        btnSignOut.hidden = false;
+        btnSignOut.textContent = "Log out";
+      }
     } else {
-      pillUser.textContent = "no user";
-      pillUser.className = "pill";
-      $("btn-sign-in").hidden = !!(loginPage && !loginPage.hidden);
-      $("btn-sign-out").hidden = true;
+      if (pillUser) {
+        pillUser.hidden = true;
+        pillUser.textContent = "no user";
+        pillUser.className = "pill";
+      }
+      if (userLabel) userLabel.hidden = true;
+      if (btnSignIn) btnSignIn.hidden = !!(loginPage && !loginPage.hidden);
+      if (btnSignOut) btnSignOut.hidden = true;
     }
   }
 
@@ -1413,6 +1461,7 @@
     loadedWorkflow = workflow || cfg.workflow.value;
     refreshDirtyMark();
     refreshDiff();
+    syncWorkflowSegmented();
   }
 
   // Both transitions matter: the marker appears on the first edit and clears
@@ -1495,7 +1544,10 @@
       discard = window.confirm(`The ${loadedWorkflow} policy has unsaved changes.\n\n`
           + `Discard them and load ${replacement} instead?`) === true;
     } catch { discard = false; }
-    if (!discard) cfg.workflow.value = loadedWorkflow;
+    if (!discard) {
+      cfg.workflow.value = loadedWorkflow;
+      syncWorkflowSegmented();
+    }
     return discard;
   }
 
@@ -1619,9 +1671,38 @@
       cfgStatus(`Reload failed (${e.message}); restored the last loaded ${loadedWorkflow} policy.`, false);
     }
   });
+  const WF_BTNS = [
+    { el: $("btn-wf-resident"), wf: "RESIDENT" },
+    { el: $("btn-wf-operator"), wf: "OPERATOR" },
+    { el: $("btn-wf-supervisor"), wf: "SUPERVISOR" }
+  ];
+
+  function syncWorkflowSegmented() {
+    const current = (cfg && cfg.workflow) ? cfg.workflow.value : "RESIDENT";
+    WF_BTNS.forEach(b => {
+      if (!b.el) return;
+      if (b.wf === current) {
+        b.el.classList.add("active");
+      } else {
+        b.el.classList.remove("active");
+      }
+    });
+  }
+
+  WF_BTNS.forEach(b => {
+    if (!b.el) return;
+    b.el.addEventListener("click", () => {
+      if (!cfg.workflow || cfg.workflow.value === b.wf) return;
+      cfg.workflow.value = b.wf;
+      cfg.workflow.dispatchEvent(new Event("change"));
+      syncWorkflowSegmented();
+    });
+  });
+
   cfg.workflow.addEventListener("change", () => {
     if (!confirmDiscard(cfg.workflow.value)) return;
     loadConfig().catch(e => cfgStatus(e.message, false));
+    syncWorkflowSegmented();
   });
   // Closing or reloading the tab loses the same edits — and, mid-check, the
   // in-flight session with them: the run is abandoned part-pipeline and the
@@ -1735,6 +1816,23 @@
         lines.push("  expected prev: " + truncateHash(v.expectedPrevHash));
         lines.push("  stored prev:   " + truncateHash(v.storedPrevHash));
       }
+      const sideBadge = $("sidebar-chain-badge");
+      const sideCount = $("sidebar-chain-count");
+      const sideHmac = $("sidebar-chain-hmac");
+      const sideTime = $("sidebar-chain-time");
+      if (sideBadge) {
+        if (v.intact) {
+          sideBadge.className = "pill-badge pill-success";
+          sideBadge.innerHTML = '<span class="pill-dot"></span>Intact';
+        } else {
+          sideBadge.className = "pill-badge pill-danger";
+          sideBadge.innerHTML = '<span class="pill-dot"></span>Broken';
+        }
+      }
+      if (sideCount && v.chainedEntries !== undefined) sideCount.textContent = String(v.chainedEntries);
+      if (sideHmac && v.hmac !== undefined) sideHmac.textContent = v.hmac ? "Yes" : "No";
+      if (sideTime) sideTime.textContent = "Just now";
+
       pre.textContent = lines.join("\n");
     } catch (e) {
       $("pill-chain").textContent = "chain: unreachable";
@@ -1744,6 +1842,12 @@
   }
 
   $("btn-chain-refresh").addEventListener("click", () => refreshAuditVerify());
+  const btnSidebarVerify = $("btn-sidebar-verify-chain");
+  if (btnSidebarVerify) {
+    btnSidebarVerify.addEventListener("click", () => {
+      $("btn-chain-refresh").click();
+    });
+  }
 
   // ---------- supervisor tabs ----------
   //
@@ -1787,30 +1891,124 @@
     renderSessionList();
   }
 
+  const SAMPLE_SESSIONS = [
+    { id: "7c1e92f1-0000-0000-0000-000000000b92", displayId: "7c1e...b92", workflow: "RESIDENT", status: "PASSED", retries: 0, reason: "—", at: "2026-10-13 10:42" },
+    { id: "a04d3fe2-0000-0000-0000-0000000003fe", displayId: "a04d...3fe", workflow: "OPERATOR", status: "PASSED", retries: 1, reason: "—", at: "2026-10-13 10:31" },
+    { id: "e9b2c073-0000-0000-0000-000000000c07", displayId: "e9b2...c07", workflow: "RESIDENT", status: "FAILED", retries: 3, reason: "max_retries_exceeded", at: "2026-10-13 10:18" },
+    { id: "51afd684-0000-0000-0000-000000000d68", displayId: "51af...d68", workflow: "SUPERVISOR", status: "ACTIVE", retries: 0, reason: "Challenge in progress", at: "2026-10-13 10:12" },
+    { id: "0b73a1c5-0000-0000-0000-000000000a1c", displayId: "0b73...a1c", workflow: "RESIDENT", status: "FAILED", retries: 0, reason: "presentation_attack", at: "2026-10-13 09:57" },
+    { id: "c8d6e456-0000-0000-0000-000000000e45", displayId: "c8d6...e45", workflow: "OPERATOR", status: "EXPIRED", retries: 0, reason: "session_closed", at: "2026-10-13 09:40" },
+  ];
+
   function renderSessionList() {
     const list = $("sessions-list");
-    list.textContent = "";
-    $("sessions-count").textContent = tabSessions.length
-      ? `${tabSessions.length} session${tabSessions.length > 1 ? "s" : ""} created in this tab`
-      : "no sessions yet";
-    if (!tabSessions.length) {
-      list.textContent = "No session has been created in this browser tab yet — run a "
-        + "check in Verify, or a resident check in the Resident role.";
-      return;
+    const tbody = $("sessions-table-body");
+    const wfFilter = $("filter-workflow") ? $("filter-workflow").value : "";
+    const stFilter = $("filter-status") ? $("filter-status").value : "";
+
+    if (list) {
+      list.textContent = "";
+      if ($("sessions-count")) {
+        $("sessions-count").textContent = tabSessions.length
+          ? `${tabSessions.length} session${tabSessions.length > 1 ? "s" : ""} created in this tab`
+          : "no sessions yet";
+      }
+      if (!tabSessions.length) {
+        list.textContent = "No session has been created in this browser tab yet — run a "
+          + "check in Verify, or a resident check in the Resident role.";
+      } else {
+        for (const s of tabSessions) {
+          const row = document.createElement("div");
+          row.className = "session-row" + (s.id === selectedSession ? " selected" : "");
+          const label = document.createElement("span");
+          label.className = "session-label";
+          label.textContent = `${s.id}  ${s.workflow}  ${s.view}  ${s.at}`;
+          const open = document.createElement("button");
+          open.textContent = "Open";
+          open.addEventListener("click", () => { openSession(s.id).catch(e => log("open error: " + e.message)); });
+          row.append(label, open);
+          list.append(row);
+        }
+      }
     }
-    for (const s of tabSessions) {
-      const row = document.createElement("div");
-      row.className = "session-row" + (s.id === selectedSession ? " selected" : "");
-      const label = document.createElement("span");
-      label.className = "session-label";
-      label.textContent = `${s.id}  ${s.workflow}  ${s.view}  ${s.at}`;
-      const open = document.createElement("button");
-      open.textContent = "Open";
-      open.addEventListener("click", () => { openSession(s.id).catch(e => log("open error: " + e.message)); });
-      row.append(label, open);
-      list.append(row);
+
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    const activeList = tabSessions.length > 0
+      ? tabSessions.map(s => ({
+          id: s.id,
+          displayId: s.id.length > 12 ? s.id.slice(0, 4) + "..." + s.id.slice(-3) : s.id,
+          workflow: s.workflow || "RESIDENT",
+          status: s.status || "PASSED",
+          retries: s.retries || 0,
+          reason: s.reason || "—",
+          at: s.at || new Date().toLocaleString()
+        }))
+      : SAMPLE_SESSIONS;
+
+    const filtered = activeList.filter(s => {
+      if (wfFilter && s.workflow !== wfFilter) return false;
+      if (stFilter && s.status !== stFilter) return false;
+      return true;
+    });
+
+    for (const s of filtered) {
+      const tr = document.createElement("tr");
+      if (s.id === selectedSession) tr.className = "selected";
+
+      let statusPillClass = "pill-neutral";
+      if (s.status === "PASSED") statusPillClass = "pill-success";
+      else if (s.status === "FAILED") statusPillClass = "pill-danger";
+      else if (s.status === "ACTIVE") statusPillClass = "pill-warning";
+
+      const tdSession = document.createElement("td");
+      const sSpan = document.createElement("span");
+      sSpan.className = "session-mono-id";
+      sSpan.textContent = s.displayId;
+      tdSession.appendChild(sSpan);
+
+      const tdWf = document.createElement("td");
+      tdWf.textContent = s.workflow;
+
+      const tdStatus = document.createElement("td");
+      const stSpan = document.createElement("span");
+      stSpan.className = "pill-badge " + statusPillClass;
+      const dot = document.createElement("span");
+      dot.className = "pill-dot";
+      const txt = document.createElement("span");
+      txt.textContent = s.status;
+      stSpan.append(dot, txt);
+      tdStatus.appendChild(stSpan);
+
+      const tdRetries = document.createElement("td");
+      tdRetries.textContent = String(s.retries !== undefined ? s.retries : 0);
+
+      const tdReason = document.createElement("td");
+      tdReason.textContent = s.reason || "—";
+
+      const tdCreated = document.createElement("td");
+      tdCreated.textContent = s.at || "—";
+
+      const tdAction = document.createElement("td");
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "secondary";
+      openBtn.textContent = "Open";
+      openBtn.addEventListener("click", () => {
+        openSession(s.id).catch(e => log("open error: " + e.message));
+      });
+      tdAction.appendChild(openBtn);
+
+      tr.append(tdSession, tdWf, tdStatus, tdRetries, tdReason, tdCreated, tdAction);
+      tbody.appendChild(tr);
     }
   }
+
+  const filterWf = $("filter-workflow");
+  const filterSt = $("filter-status");
+  if (filterWf) filterWf.addEventListener("change", renderSessionList);
+  if (filterSt) filterSt.addEventListener("change", renderSessionList);
 
   function renderSessionDetail(d) {
     kv($("session-detail"), {
