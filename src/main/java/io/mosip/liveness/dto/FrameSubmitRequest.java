@@ -20,4 +20,9 @@ public class FrameSubmitRequest {
     @NotBlank(message = "frame_base64 is required")
     @Size(max = 8_000_000, message = "frame_base64 exceeds the maximum frame size")
     private String frameBase64;
+
+    private String nonce;
+    private Long frameSeq;
+    private Long capturedAtEpochMs;
+    private String frameSha256;
 }

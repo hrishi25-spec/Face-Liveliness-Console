@@ -29,4 +29,8 @@ public class ChallengeValidateRequest {
     @NotEmpty(message = "frames_base64 must contain at least one frame")
     @Size(max = 60, message = "frames_base64 must contain at most 60 frames")
     private List<@Size(max = 8_000_000, message = "frame exceeds the maximum frame size") String> framesBase64;
+
+    private String nonce;
+    private List<Long> capturedAtEpochMs;
+    private List<String> framesSha256;
 }

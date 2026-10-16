@@ -102,6 +102,11 @@ public final class LivenessOverlayPresenter {
         m.put("prompt.smile", "Please smile");
         m.put("prompt.turn_left", "Please turn your head to the left");
         m.put("prompt.turn_right", "Please turn your head to the right");
+        m.put("prompt.look_up", "Please look up");
+        m.put("prompt.look_down", "Please look down");
+        m.put("prompt.look_left", "Please look to the left");
+        m.put("prompt.look_right", "Please look to the right");
+        m.put("prompt.look_direction", "Please look in the indicated direction");
         m.put("feedback.continue", "Please continue");
         m.put("feedback.detected", "Action detected");
         m.put("feedback.hold", "Hold still");

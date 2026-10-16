@@ -62,7 +62,23 @@ public final class ThresholdSweep {
             Double recommendedThreshold,
             String recommendationBasis,
             String note,
-            List<Row> rows) { }
+            List<Row> rows,
+            java.util.Map<String, Double> bpcerAtApcer) {
+
+        public Result(double targetBpcer,
+                      int minFrames,
+                      int windowFrames,
+                      String scorer,
+                      boolean attackDataIsProxy,
+                      int excludedWindows,
+                      Double recommendedThreshold,
+                      String recommendationBasis,
+                      String note,
+                      List<Row> rows) {
+            this(targetBpcer, minFrames, windowFrames, scorer, attackDataIsProxy, excludedWindows,
+                    recommendedThreshold, recommendationBasis, note, rows, deriveBpcerAtApcer(rows));
+        }
+    }
 
     /**
      * Runs the sweep.
@@ -139,6 +155,26 @@ public final class ThresholdSweep {
 
         return new Result(targetBpcer, minFrames, windowFrames, scorer, attackDataIsProxy,
                 excluded, rec.threshold, rec.basis, note, rows);
+    }
+
+    static java.util.Map<String, Double> deriveBpcerAtApcer(List<Row> rows) {
+        if (rows == null || rows.isEmpty()) return java.util.Map.of();
+        boolean hasAttack = rows.stream().anyMatch(r -> r.apcer() != null);
+        if (!hasAttack) return java.util.Map.of();
+
+        java.util.Map<String, Double> out = new java.util.LinkedHashMap<>();
+        out.put("bpcerAtApcer01", findBpcerAtApcer(rows, 0.01));
+        out.put("bpcerAtApcer05", findBpcerAtApcer(rows, 0.05));
+        out.put("bpcerAtApcer10", findBpcerAtApcer(rows, 0.10));
+        return java.util.Collections.unmodifiableMap(out);
+    }
+
+    private static Double findBpcerAtApcer(List<Row> rows, double targetApcer) {
+        return rows.stream()
+                .filter(r -> r.apcer() != null && r.apcer() <= targetApcer + 1e-12)
+                .min(java.util.Comparator.comparingDouble(Row::bpcer))
+                .map(Row::bpcer)
+                .orElse(null);
     }
 
     private record Recommendation(Double threshold, String basis) { }

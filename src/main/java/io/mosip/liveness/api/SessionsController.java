@@ -46,6 +46,8 @@ public class SessionsController {
     private final ChallengeRepository challengeRepo;
     private final ConfigService configService;
     private final EffectivePolicyValidator effectivePolicyValidator;
+    private final io.mosip.liveness.security.AntiReplayValidator antiReplayValidator;
+    private final io.mosip.liveness.services.LivenessEvidenceVerifier evidenceVerifier;
 
     /**
      * The operator's session feed: newest first, narrowable by workflow and
@@ -93,6 +95,7 @@ public class SessionsController {
                 .online(req.getOnline() != null ? req.getOnline() : true)
                 .status(SessionStatus.ACTIVE)
                 .retryCount(0)
+                .nonce(io.mosip.liveness.security.AntiReplayValidator.generateNonce())
                 .policySnapshot(policy)
                 .policySnapshotAt(OffsetDateTime.now())
                 .build();
@@ -114,6 +117,19 @@ public class SessionsController {
         return ResponseEntity.ok(toResponse(session));
     }
 
+    /**
+     * Verifies signed liveness evidence produced by an online client gate (spec §2 LivenessEvidence).
+     * Validates session nonce binding, timing window, and challenge completion before acceptance.
+     */
+    @PostMapping("/{sessionId}/evidence")
+    public ResponseEntity<io.mosip.liveness.dto.EvidenceVerificationResponse> verifyEvidence(
+            @PathVariable java.util.UUID sessionId,
+            @Valid @RequestBody io.mosip.liveness.dto.EvidenceVerificationRequest req) {
+        LivenessSession session = sessionRepo.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
+        return ResponseEntity.ok(evidenceVerifier.verify(session, req));
+    }
+
     /** Closing is an action on somebody's session; the filter has already refused a stranger. */
     @PostMapping("/{sessionId}/close")
     public ResponseEntity<SessionSummary> closeSession(
@@ -126,6 +142,8 @@ public class SessionsController {
             session.setClosedAt(OffsetDateTime.now());
             sessionRepo.save(session);
         }
+
+        antiReplayValidator.cleanupSession(sessionId);
 
         long durationMs = 0;
         if (session.getClosedAt() != null && session.getCreatedAt() != null) {
@@ -181,6 +199,7 @@ public class SessionsController {
                 .online(s.getOnline())
                 .finalResult(s.getFinalResult())
                 .failureReason(s.getFailureReason())
+                .nonce(s.getNonce())
                 .createdAt(s.getCreatedAt())
                 .updatedAt(s.getUpdatedAt())
                 .closedAt(s.getClosedAt())

@@ -164,4 +164,14 @@ public class TestConfig {
             @Value("${mosip.security.audit-hmac-previous-secret:}") String previousSecret) {
         return new AuditChainKey(secret, previousSecret);
     }
+
+    @Bean @Primary
+    public io.mosip.liveness.security.AntiReplayValidator antiReplayValidator() {
+        return Mockito.mock(io.mosip.liveness.security.AntiReplayValidator.class);
+    }
+
+    @Bean @Primary
+    public io.mosip.liveness.services.LivenessEvidenceVerifier livenessEvidenceVerifier() {
+        return Mockito.mock(io.mosip.liveness.services.LivenessEvidenceVerifier.class);
+    }
 }

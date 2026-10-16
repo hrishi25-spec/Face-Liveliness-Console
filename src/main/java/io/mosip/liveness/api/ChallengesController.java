@@ -36,6 +36,7 @@ public class ChallengesController {
     private final ChallengeRepository challengeRepo;
     private final DecisionEngineService decisionEngine;
     private final ImageUtils imageUtils;
+    private final io.mosip.liveness.security.AntiReplayValidator antiReplayValidator;
 
     @PostMapping("/validate")
     public ChallengeValidationResult validateChallenge(
@@ -45,10 +46,6 @@ public class ChallengesController {
         LivenessSession session = sessionRepo.findById(sessionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
 
-        // The status guard cannot run before the challenge lookup any more: a
-        // manually requested extra check is validated on a session that already
-        // PASSED (see ActiveLivenessController), so the challenge's own `manual`
-        // flag decides whether a non-ACTIVE session is acceptable.
         if (session.getStatus() != SessionStatus.ACTIVE
                 && session.getStatus() != SessionStatus.PASSED) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -58,6 +55,8 @@ public class ChallengesController {
         ChallengeEntity challenge = challengeRepo.findById(req.getChallengeId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Challenge not found for this session"));
+
+        antiReplayValidator.validateChallenge(session, challenge, req);
 
         if (!challenge.getSession().getId().equals(sessionId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
