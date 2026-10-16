@@ -3,48 +3,66 @@
    Strict CSP compliant: no inline styles or external fonts required. */
 
 :root {
-  /* Surfaces and backgrounds */
-  --color-bg: #f4f6fa;
+  /* Surfaces and backgrounds — the institutional palette of
+     stitch_markdown_ui_page_designer/liveness_verification_console/DESIGN.md:
+     a tinted, anti-glare canvas under crisp white containers. */
+  --color-bg: #f8fafc;
   --color-surface: #ffffff;
-  --color-surface-subtle: #f9fafb;
-  --color-subtle: #f2f4f7;
-  --color-subtle-2: #e4e7ec;
-  --color-video-bg: #0b132b;
+  --color-surface-subtle: #f8fafc;
+  --color-subtle: #f1f5f9;
+  --color-subtle-2: #e2e8f0;
+  --color-video-bg: #020617;
 
   /* Borders */
-  --color-border: #eaecf0;
-  --color-border-hover: #d0d5dd;
-  --color-border-strong: #98a2b3;
+  --color-border: #e2e8f0;
+  --color-border-hover: #cbd5e1;
+  --color-border-strong: #94a3b8;
 
   /* Typography */
-  --color-text-primary: #101828;
-  --color-text-secondary: #475467;
-  --color-text-muted: #667085;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748b;
   --color-text-inverse: #ffffff;
 
-  /* Brand / Primary — Vibrant Trust Blue */
-  --color-primary: #155eef;
-  --color-primary-hover: #1044c6;
-  --color-primary-active: #0d38a5;
-  --color-primary-subtle: #eff4ff;
-  --color-focus-ring: rgba(21, 94, 239, 0.2);
+  /* Brand / Primary — the signature institutional cobalt */
+  --color-primary: #1e56d0;
+  --color-primary-hover: #1b4dba;
+  --color-primary-active: #003eaa;
+  --color-primary-subtle: #eff6ff;
+  --color-primary-border: #bfdbfe;
+  --color-focus-ring: rgba(59, 130, 246, 0.35);
 
-  /* Status Tokens */
-  --color-success: #079455;
-  --color-success-surface: #ecfdf3;
-  --color-success-border: #a6f4c5;
-  --color-success-text: #027a48;
+  /* Status Tokens (pills, chips, inline status) */
+  --color-success: #15803d;
+  --color-success-surface: #dcfce7;
+  --color-success-border: #86efac;
+  --color-success-text: #15803d;
 
-  --color-danger: #d92d20;
-  --color-danger-hover: #b42318;
-  --color-danger-surface: #fef3f2;
-  --color-danger-border: #fecdca;
-  --color-danger-text: #b42318;
+  --color-danger: #b91c1c;
+  --color-danger-hover: #991b1b;
+  --color-danger-surface: #fee2e2;
+  --color-danger-border: #fca5a5;
+  --color-danger-text: #b91c1c;
 
-  --color-warning: #b54708;
-  --color-warning-surface: #fffaeb;
-  --color-warning-border: #fedf89;
-  --color-warning-text: #b54708;
+  --color-warning: #b45309;
+  --color-warning-surface: #fef3c7;
+  --color-warning-border: #fcd34d;
+  --color-warning-text: #b45309;
+
+  /* Status banners (feedback cards — one notch lighter than the pills) */
+  --banner-success-bg: #f0fdf4;
+  --banner-success-title: #14532d;
+  --banner-success-body: #166534;
+  --banner-danger-bg: #fef2f2;
+  --banner-danger-title: #7f1d1d;
+  --banner-danger-body: #991b1b;
+  --banner-warning-bg: #fefce8;
+  --banner-warning-border: #fde047;
+  --banner-warning-title: #713f12;
+  --banner-warning-body: #854d0e;
+  --banner-neutral-bg: #f1f5f9;
+  --banner-neutral-title: #0f172a;
+  --banner-neutral-body: #475569;
 
   /* Spacing */
   --space-1: 4px;
@@ -70,35 +88,72 @@
   --shadow-md: 0 4px 8px -2px rgba(16, 24, 40, 0.1), 0 2px 4px -2px rgba(16, 24, 40, 0.06);
   --shadow-lg: 0 12px 16px -4px rgba(16, 24, 40, 0.08), 0 4px 6px -2px rgba(16, 24, 40, 0.03);
 
-  /* Fonts */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  /* Fonts — DESIGN.md specifies Inter for UI and JetBrains Mono for hashes,
+     nonces and diagnostics. The page is served under `style-src 'self'`, so no
+     font CDN is allowed: Inter and JetBrains Mono are used when the workstation
+     already has them, and the platform UI font otherwise. */
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
-  /* Layout */
-  --layout-max-width: 1140px;
-  --control-height: 42px;
+  /* Layout — 1440px content cap on administrative screens, 8pt grid */
+  --layout-max-width: 1440px;
+  --layout-gutter: 24px;
+  --control-height: 40px;
+}
+
+/* The hidden attribute is the only show/hide switch in the markup, and the
+   component rules below set `display` on the same elements (buttons, pills,
+   tabs, cards). Without this the author rule wins over the user-agent's
+   `[hidden] { display: none }` and a hidden control stays on screen — which is
+   how an operator ended up seeing the supervisor-only Load/Sign-out buttons and
+   every admin tab. */
+[hidden] {
+  display: none !important;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #0d121c;
-    --color-surface: #151c28;
-    --color-surface-subtle: #1a2232;
-    --color-subtle: #1e283b;
-    --color-subtle-2: #28354c;
-    --color-border: #242f42;
-    --color-border-hover: #374660;
-    --color-border-strong: #4f6385;
-    --color-text-primary: #f2f4f7;
-    --color-text-secondary: #98a2b3;
-    --color-text-muted: #667085;
+    --color-bg: #0b1220;
+    --color-surface: #131c2e;
+    --color-surface-subtle: #17203a;
+    --color-subtle: #1c2740;
+    --color-subtle-2: #26334f;
+    --color-border: #26334f;
+    --color-border-hover: #3b4a6b;
+    --color-border-strong: #5b6b8c;
+    --color-text-primary: #eaf1ff;
+    --color-text-secondary: #b6c2d9;
+    --color-text-muted: #8494b0;
+    --color-primary: #6f9bff;
+    --color-primary-hover: #8cb0ff;
+    --color-primary-active: #b4c5ff;
     --color-primary-subtle: #172b53;
+    --color-primary-border: #2b4a8f;
+    --color-success: #4ade80;
     --color-success-surface: #0a2618;
     --color-success-border: #134e2c;
+    --color-success-text: #4ade80;
+    --color-danger: #fca5a5;
     --color-danger-surface: #2d1214;
     --color-danger-border: #591d21;
+    --color-danger-text: #fca5a5;
+    --color-warning: #fcd34d;
     --color-warning-surface: #291c06;
     --color-warning-border: #54390b;
+    --color-warning-text: #fcd34d;
+    --banner-success-bg: #0a2618;
+    --banner-success-title: #86efac;
+    --banner-success-body: #bbf7d0;
+    --banner-danger-bg: #2d1214;
+    --banner-danger-title: #fca5a5;
+    --banner-danger-body: #fecaca;
+    --banner-warning-bg: #291c06;
+    --banner-warning-border: #54390b;
+    --banner-warning-title: #fcd34d;
+    --banner-warning-body: #fde68a;
+    --banner-neutral-bg: #1c2740;
+    --banner-neutral-title: #eaf1ff;
+    --banner-neutral-body: #b6c2d9;
   }
 }
 
@@ -143,7 +198,7 @@ h1, h2, h3, h4, p {
 .topbar-inner {
   max-width: var(--layout-max-width);
   margin: 0 auto;
-  padding: 12px 24px;
+  padding: 14px var(--layout-gutter);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -157,8 +212,8 @@ h1, h2, h3, h4, p {
 }
 
 .brand-logo {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-md);
   background: var(--color-primary);
   color: #ffffff;
@@ -169,13 +224,29 @@ h1, h2, h3, h4, p {
   justify-content: center;
   box-shadow: var(--shadow-xs);
   user-select: none;
+  flex-shrink: 0;
+}
+
+/* Two-line identity block: product above, surface below (DESIGN.md brand bar) */
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
 }
 
 .brand-name {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--color-text-primary);
   letter-spacing: -0.01em;
+}
+
+.brand-sub {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
 }
 
 .topbar-right {
@@ -197,11 +268,18 @@ h1, h2, h3, h4, p {
 
 /* ============================ TYPOGRAPHY & HEADINGS ============================ */
 .page-title {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--color-text-primary);
   line-height: 1.25;
+}
+
+@media (max-width: 720px) {
+  .page-title {
+    font-size: 26px;
+    letter-spacing: -0.015em;
+  }
 }
 
 .page-subtitle {
@@ -218,7 +296,7 @@ h1, h2, h3, h4, p {
 .view {
   max-width: var(--layout-max-width);
   margin: 0 auto;
-  padding: 32px 24px;
+  padding: 32px var(--layout-gutter);
 }
 
 .card {
@@ -332,6 +410,7 @@ button.danger:disabled {
   font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;
+  border: 1px solid transparent;
 }
 
 .pill-dot {
@@ -344,6 +423,7 @@ button.danger:disabled {
 .pill-badge.pill-brand {
   background: var(--color-primary-subtle);
   color: var(--color-primary);
+  border-color: var(--color-primary-border);
 }
 .pill-badge.pill-brand .pill-dot {
   background: var(--color-primary);
@@ -381,34 +461,57 @@ button.danger:disabled {
   background: #f79009;
 }
 
-/* Legacy .pill class compatibility */
+/* Legacy .pill class compatibility — the header's live service chips. The dot
+   is drawn by ::before, so the state text ("chain: intact", "session 7c1e92f1")
+   stays exactly as the guards read it. */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
   border-radius: var(--radius-pill);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   white-space: nowrap;
   background: var(--color-subtle);
   color: var(--color-text-secondary);
   border: 1px solid var(--color-border);
 }
+
+.pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
 .pill.ok {
   background: var(--color-success-surface);
   color: var(--color-success-text);
   border-color: var(--color-success-border);
+}
+.pill.ok::before {
+  background: var(--color-success);
 }
 .pill.bad {
   background: var(--color-danger-surface);
   color: var(--color-danger-text);
   border-color: var(--color-danger-border);
 }
+.pill.bad::before {
+  background: var(--color-danger);
+}
 .pill.warn {
   background: var(--color-warning-surface);
   color: var(--color-warning-text);
   border-color: var(--color-warning-border);
+}
+.pill.warn::before {
+  background: var(--color-warning);
 }
 
 /* ============================ FORMS & INPUTS ============================ */
@@ -566,35 +669,41 @@ select:disabled {
   transform: translateX(20px);
 }
 
-/* ============================ RESULT BANNERS ============================ */
+/* ============================ RESULT BANNERS ============================
+   DESIGN.md, "Feedback & Status Banners": a 1px border, an 8px radius, a
+   leading status circle and a title/body pair. Success, failure and in-progress
+   are the three states the capture flow can be in; the neutral one is the
+   resting "READY" card. Nothing technical is carried here — the text is the
+   catalogue string or the service's own generic message. */
 .verdict {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 16px 20px;
-  border-radius: var(--radius-lg);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-subtle);
-  transition: all 150ms ease;
+  background: var(--banner-neutral-bg);
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .verdict-icon {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: #667085;
+  background: var(--color-text-muted);
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
+  margin-top: 1px;
 }
 
 .verdict-icon::after {
   content: "i";
   color: #ffffff;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 15px;
   font-family: var(--font-sans);
 }
 
@@ -602,19 +711,21 @@ select:disabled {
   font-size: 15px;
   font-weight: 600;
   line-height: 1.3;
-  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+  color: var(--banner-neutral-title);
 }
 
 .verdict .msg {
   font-size: 13px;
-  color: var(--color-text-secondary);
+  color: var(--banner-neutral-body);
   margin-top: 2px;
+  line-height: 1.45;
 }
 
 /* Proceed / Verified */
 .verdict.proceed {
-  background: var(--color-success-surface);
-  border-color: var(--color-success);
+  background: var(--banner-success-bg);
+  border-color: var(--color-success-border);
 }
 .verdict.proceed .verdict-icon {
   background: var(--color-success);
@@ -624,16 +735,16 @@ select:disabled {
   font-size: 16px;
 }
 .verdict.proceed .action {
-  color: var(--color-success-text);
+  color: var(--banner-success-title);
 }
 .verdict.proceed .msg {
-  color: var(--color-success-text);
+  color: var(--banner-success-body);
 }
 
 /* Reject / Not verified */
 .verdict.reject {
-  background: var(--color-danger-surface);
-  border-color: var(--color-danger);
+  background: var(--banner-danger-bg);
+  border-color: var(--color-danger-border);
 }
 .verdict.reject .verdict-icon {
   background: var(--color-danger);
@@ -643,16 +754,16 @@ select:disabled {
   font-size: 14px;
 }
 .verdict.reject .action {
-  color: var(--color-danger-text);
+  color: var(--banner-danger-title);
 }
 .verdict.reject .msg {
-  color: var(--color-danger-text);
+  color: var(--banner-danger-body);
 }
 
 /* Escalate / In progress */
 .verdict.escalate {
-  background: var(--color-warning-surface);
-  border-color: var(--color-warning-border);
+  background: var(--banner-warning-bg);
+  border-color: var(--banner-warning-border);
 }
 .verdict.escalate .verdict-icon {
   background: var(--color-warning);
@@ -662,10 +773,10 @@ select:disabled {
   font-size: 14px;
 }
 .verdict.escalate .action {
-  color: var(--color-warning-text);
+  color: var(--banner-warning-title);
 }
 .verdict.escalate .msg {
-  color: var(--color-warning-text);
+  color: var(--banner-warning-body);
 }
 
 /* ============================ SCREEN 1: ROLE PICKER ============================ */
@@ -776,11 +887,18 @@ select:disabled {
   padding: 24px;
 }
 
+/* The biometric camera surface (DESIGN.md): a hardened slate container with a
+   dashed vector guide, a pinned guidance badge and a monospace HUD. The guide
+   is white while positioning, cobalt once the run is analysing and green once
+   the session has passed — all driven by one state class on the wrapper, set
+   from the server's own responses and never from a local guess. */
 .camera-viewport-wrapper {
   position: relative;
   width: 100%;
   aspect-ratio: 4/3;
   background: var(--color-video-bg);
+  background-image: radial-gradient(rgba(56, 189, 248, 0.10) 1px, transparent 1px);
+  background-size: 24px 24px;
   border-radius: var(--radius-lg);
   overflow: hidden;
   margin-bottom: 20px;
@@ -806,18 +924,140 @@ video {
 }
 
 .camera-oval {
-  width: 210px;
-  height: 280px;
+  width: 212px;
+  height: 286px;
   border: 2px dashed rgba(255, 255, 255, 0.85);
   border-radius: 50%;
   margin-bottom: 16px;
+  transition: border-color 240ms ease, border-style 240ms ease;
+  /* Four calibration ticks at the guide's extremes, drawn as background
+     gradients so the guide stays a single element with no wrapper markup. */
+  background-image: linear-gradient(#ffffff, #ffffff), linear-gradient(#ffffff, #ffffff),
+                    linear-gradient(#ffffff, #ffffff), linear-gradient(#ffffff, #ffffff);
+  background-size: 2px 12px, 2px 12px, 12px 2px, 12px 2px;
+  background-position: center top, center bottom, left center, right center;
+  background-repeat: no-repeat;
 }
 
+.camera-viewport-wrapper.checking .camera-oval,
+.camera-viewport-wrapper.challenge .camera-oval {
+  border-style: solid;
+  border-color: var(--color-primary);
+}
+
+.camera-viewport-wrapper.challenge .camera-oval {
+  border-color: var(--color-warning);
+}
+
+.camera-viewport-wrapper.verified .camera-oval {
+  border-style: solid;
+  border-color: var(--color-success);
+}
+
+.camera-viewport-wrapper.rejected .camera-oval {
+  border-style: solid;
+  border-color: var(--color-danger);
+}
+
+/* Sweep line: the only animation in the capture surface, and it runs only while
+   a run is actually analysing. */
+.camera-scan {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 50%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.65);
+  opacity: 0;
+}
+
+.camera-viewport-wrapper.checking .camera-scan,
+.camera-viewport-wrapper.challenge .camera-scan {
+  opacity: 1;
+  animation: camera-scan 2.4s ease-in-out infinite;
+}
+
+@keyframes camera-scan {
+  0%, 100% { transform: translateY(-84px); }
+  50% { transform: translateY(84px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .camera-viewport-wrapper.checking .camera-scan,
+  .camera-viewport-wrapper.challenge .camera-scan {
+    animation: none;
+    opacity: 0.4;
+  }
+}
+
+/* Guidance badge, pinned inside the viewfinder (DESIGN.md). */
 .camera-oval-caption {
-  color: rgba(255, 255, 255, 0.95);
-  font-size: 13px;
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+  color: #ffffff;
+  font-size: 12px;
   font-weight: 500;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Frame metadata HUD: monospace, low-emphasis, and always reporting something
+   real — the capture budget actually in force, and the stream's own state. */
+.camera-hud {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.65);
+  pointer-events: none;
+}
+
+.camera-hud-left {
+  left: 14px;
+  bottom: 12px;
+}
+
+.camera-hud-right {
+  right: 14px;
+  top: 12px;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+}
+
+.camera-hud-right .hud-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.camera-viewport-wrapper.live .camera-hud-right .hud-dot {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.25);
+}
+
+@media (max-width: 640px) {
+  .camera-hud-left {
+    display: none;
+  }
 }
 
 .camera-actions-row {
@@ -837,21 +1077,65 @@ video {
 }
 
 .card-eyebrow {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--color-text-muted);
   margin-bottom: 6px;
+}
+
+/* Current-step card: eyebrow + activity dot, title, one-line note, progress bar
+   and a monospace stage row (DESIGN.md, "Current step" panel). */
+.step-eyebrow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-border-hover);
+  flex-shrink: 0;
+}
+
+.step-dot.live {
+  background: var(--color-primary);
+  animation: step-pulse 1.6s ease-in-out infinite;
+}
+
+.step-dot.done {
+  background: var(--color-success);
+}
+
+.step-dot.failed {
+  background: var(--color-danger);
+}
+
+@keyframes step-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 .step-title {
   font-size: 16px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.step-note {
+  font-size: 13px;
+  color: var(--color-text-secondary);
   margin-bottom: 16px;
 }
 
 .step-progress-track {
-  height: 8px;
+  height: 6px;
   border-radius: var(--radius-pill);
   background: var(--color-subtle);
   overflow: hidden;
@@ -859,10 +1143,103 @@ video {
 
 .step-progress-fill {
   height: 100%;
-  width: 45%;
+  width: 8%;
   background: var(--color-primary);
   border-radius: var(--radius-pill);
-  transition: width 200ms ease;
+  transition: width 300ms ease;
+}
+
+.step-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* Card headings that carry a leading glyph (design: "Instructions") */
+.card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-title-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+/* Environmental advice footnote under the instructions */
+.tip-callout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tip-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+/* Capture-facts card: the limits this page actually applies, read from the same
+   constants the capture loop uses — never a marketing figure. */
+.fact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+}
+
+.fact-head-ok {
+  color: var(--color-success);
+}
+
+.fact-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fact-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.fact-row dt {
+  color: var(--color-text-secondary);
+}
+
+.fact-row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-primary);
 }
 
 .instructions-list {
@@ -916,6 +1293,9 @@ video {
   border-bottom: 1px solid var(--color-border);
   margin-bottom: 24px;
   overflow-x: auto;
+  /* The tabs are a single row: without this the 1px of descender overhang
+     spawns native scrollbar arrows over the last tab. */
+  overflow-y: hidden;
 }
 
 .tabs .tab {
@@ -982,6 +1362,13 @@ video {
   gap: 16px;
   margin-bottom: 16px;
   flex-wrap: wrap;
+}
+
+/* Inside a padded card (the Users table) the bar keeps its own spacing, because
+   the table itself is edge-to-edge like the Sessions one. */
+.table-filter-bar-padded {
+  padding: 20px 20px 0;
+  margin-bottom: 16px;
 }
 
 .filter-controls-group {
@@ -1135,8 +1522,24 @@ video {
   line-height: 1;
 }
 
+/* Saved / loaded: the design's green "synchronized" pill. The text itself is
+   written by console.js and is what the guards assert on; only the chip appears
+   here. */
 .cfg-status.ok {
-  color: var(--color-success);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-success-surface);
+  color: var(--color-success-text);
+  border: 1px solid var(--color-success-border);
+  font-weight: 500;
+  font-size: 12px;
+}
+.cfg-status.ok::before {
+  content: "✓";
+  font-weight: 700;
 }
 .cfg-status.bad {
   color: var(--color-danger);
@@ -1208,16 +1611,61 @@ video {
   color: var(--color-text-primary);
 }
 
+/* An explanation, not a warning: DESIGN.md keeps amber for "active / checking",
+   so a standing note about how a save is authorised reads as neutral slate. */
 .notice-callout-card {
-  background: #fef6ee;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--color-subtle);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: 16px;
+  padding: 14px 16px;
+}
+
+.notice-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--color-text-muted);
 }
 
 .notice-text {
-  font-size: 13px;
-  color: #b54708;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
   line-height: 1.5;
+}
+
+/* ============================ CAPTURE SPLIT LAYOUT ============================
+   The staff capture screen puts the preview beside its controls instead of
+   above them: a 4/3 preview across a 1440px card is ~1080px tall, which pushed
+   Run and Stop below the fold on a laptop. */
+.capture-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .capture-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.capture-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.capture-side .camera-actions-row {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.capture-side .camera-actions-row button {
+  width: 100%;
 }
 
 /* ============================ PROGRESS STEPS ============================ */
@@ -1333,6 +1781,232 @@ video {
   font-weight: 600;
   color: var(--color-text-secondary);
   cursor: pointer;
+}
+
+/* ============================ SAMPLE ROWS & TABLE FOOTNOTES ============================
+   The console has no session-list endpoint (POST /sessions, GET /sessions/{id}
+   and close are all the service exposes), so the populated table is illustrative.
+   Anything that is not a session this tab created is tagged and its action is
+   disabled: an operator must never read a placeholder as a real verification. */
+.sample-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-subtle);
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.data-table tr.is-sample td {
+  color: var(--color-text-muted);
+  background: var(--color-surface-subtle);
+}
+
+.table-note {
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* ============================ WORKFLOW HEADER (POLICY) ============================ */
+.policy-workflow-header {
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.policy-workflow-header .segmented-control {
+  margin-bottom: 0;
+}
+
+/* ============================ FOOTER ============================ */
+.site-footer {
+  margin-top: 40px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 14px var(--layout-gutter);
+}
+
+.site-footer-inner {
+  max-width: var(--layout-max-width);
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.site-footer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.site-footer-sep {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-border-hover);
+  flex-shrink: 0;
+}
+
+/* ============================ SUPERVISOR CREDENTIAL DIALOG ============================
+   Level 3 of the DESIGN.md elevation ladder: a white sheet on a dimmed, blurred
+   backdrop. It is the console's only dialog, so it carries the whole
+   .auth-modal-* vocabulary rather than borrowing table or card rules. */
+.auth-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  /* DESIGN.md level 3: the sheet separates from the page behind it, so the
+     policy form is visibly out of reach while the credential is being proved. */
+  backdrop-filter: blur(4px);
+}
+
+.auth-modal-card {
+  width: 100%;
+  max-width: 520px;
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
+}
+
+.auth-modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--color-subtle);
+}
+
+.auth-modal-icon {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-subtle);
+  border: 1px solid var(--color-primary-border);
+  color: var(--color-primary);
+}
+
+/* min-width:0 keeps a long title from pushing the close button off the card. */
+.auth-modal-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.auth-modal-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.auth-modal-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.auth-modal-close {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.auth-modal-close:hover {
+  background: var(--color-subtle);
+  border: none;
+  color: var(--color-text-primary);
+}
+
+.auth-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.auth-modal-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-modal-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.auth-modal-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* The username is fixed once the account is known, so it reads as a value
+   rather than a field — same treatment as the reference dialog. */
+.auth-modal-field input[readonly] {
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
+.auth-modal-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-md);
+  background: var(--banner-danger-bg);
+  color: var(--banner-danger-body);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.auth-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 /* Utilities */

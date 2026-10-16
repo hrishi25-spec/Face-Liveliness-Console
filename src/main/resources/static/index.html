@@ -15,7 +15,10 @@
   <div class="topbar-inner">
     <div class="brand">
       <div class="brand-logo" aria-hidden="true">M</div>
-      <span class="brand-name">MOSIP Liveness Console</span>
+      <span class="brand-text">
+        <span class="brand-name">MOSIP</span>
+        <span class="brand-sub">Liveness Console</span>
+      </span>
     </div>
 
     <!-- Live service status pills (kept accessible and styled cleanly) -->
@@ -141,15 +144,31 @@
     <!-- Left Column: Camera card -->
     <div class="card camera-card">
       <div class="card-header-row">
-        <h2 class="card-title">Camera</h2>
-        <span class="pill-badge pill-neutral"><span class="pill-dot"></span>Camera ready</span>
+        <div class="card-title-row">
+          <svg class="card-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/>
+            <rect x="2" y="6" width="14" height="12" rx="2"/>
+          </svg>
+          <h2 class="card-title">Camera</h2>
+        </div>
+        <span class="pill-badge pill-neutral" id="res-camera-pill"><span class="pill-dot"></span>Camera ready</span>
       </div>
 
-      <div class="camera-viewport-wrapper">
+      <div class="camera-viewport-wrapper" id="res-viewfinder">
         <video id="res-video" autoplay playsinline muted></video>
         <div class="camera-overlay">
+          <div class="camera-scan" aria-hidden="true"></div>
           <div class="camera-oval"></div>
           <span class="camera-oval-caption">Position your face inside the oval</span>
+        </div>
+        <div class="camera-hud camera-hud-left">
+          <span>PAD: ISO/IEC 30107-3</span>
+          <span aria-hidden="true">·</span>
+          <span id="res-hud-budget">capture budget loading…</span>
+        </div>
+        <div class="camera-hud camera-hud-right" id="res-stream-state">
+          <span class="hud-dot" aria-hidden="true"></span>
+          <span id="res-stream-label">stream closed</span>
         </div>
       </div>
 
@@ -180,16 +199,31 @@
     <div class="resident-sidebar">
       <!-- Current step card -->
       <div class="card step-card">
-        <div class="card-eyebrow">Current step</div>
+        <div class="step-eyebrow-row">
+          <div class="card-eyebrow">Current step</div>
+          <span class="step-dot" id="res-step-dot" aria-hidden="true"></span>
+        </div>
         <div class="step-title" id="res-current-step">Checking face liveness…</div>
+        <p class="step-note" id="res-step-note">Real-time passive sensor verification</p>
         <div class="step-progress-track">
           <div class="step-progress-fill" id="res-step-progress"></div>
+        </div>
+        <div class="step-meta">
+          <span id="res-stage">Stage 1 of 3</span>
+          <span id="res-stage-state">Idle</span>
         </div>
       </div>
 
       <!-- Instructions card -->
       <div class="card instructions-card">
-        <h3 class="card-title">Instructions</h3>
+        <div class="card-title-row">
+          <svg class="card-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 16v-4"/>
+            <path d="M12 8h.01"/>
+          </svg>
+          <h3 class="card-title">Instructions</h3>
+        </div>
         <ol class="instructions-list">
           <li>
             <span class="instruction-num">1</span>
@@ -208,6 +242,28 @@
             <span class="instruction-text">Hold still when asked.</span>
           </li>
         </ol>
+        <p class="tip-callout">
+          <svg class="tip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 18h6"/>
+            <path d="M10 22h4"/>
+            <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>
+          </svg>
+          <span>Ensure your face is evenly lit without harsh backlighting.</span>
+        </p>
+      </div>
+
+      <!-- Capture facts: the limits this page really applies -->
+      <div class="card side-facts-card">
+        <div class="fact-head">
+          <span>Capture facts</span>
+          <span class="fact-head-ok">On-device</span>
+        </div>
+        <dl class="fact-list">
+          <div class="fact-row"><dt>Frame size ceiling</dt><dd id="res-fact-edge">—</dd></div>
+          <div class="fact-row"><dt>Encoder</dt><dd id="res-fact-encoder">—</dd></div>
+          <div class="fact-row"><dt>Send rate ceiling</dt><dd id="res-fact-fps">—</dd></div>
+          <div class="fact-row"><dt>PAD</dt><dd>ISO/IEC 30107-3</dd></div>
+        </dl>
       </div>
     </div>
   </div>
@@ -240,46 +296,64 @@
       <div class="card">
         <div id="engine-warn" class="warnbox" hidden></div>
 
-        <div class="steps-progress">
-          <span class="step" id="s1">1 · Session</span>
-          <span class="step" id="s2">2 · Passive liveness</span>
-          <span class="step" id="s3">3 · Active challenge</span>
-          <span class="step" id="s4">4 · Verdict</span>
-        </div>
+        <!-- Split capture layout (DESIGN.md, "Layout & Spacing": camera feed and
+             a controls panel side by side, so the actions and the verdict stay on
+             screen while the preview is up.) -->
+        <div class="capture-grid">
+          <div class="capture-main">
+            <div class="steps-progress">
+              <span class="step" id="s1">1 · Session</span>
+              <span class="step" id="s2">2 · Passive liveness</span>
+              <span class="step" id="s3">3 · Active challenge</span>
+              <span class="step" id="s4">4 · Verdict</span>
+            </div>
 
-        <div class="camera-viewport-wrapper">
-          <video id="video" autoplay playsinline muted></video>
-          <div class="camera-overlay">
-            <div class="camera-oval"></div>
-            <span class="camera-oval-caption">Position your face inside the oval</span>
+            <div class="camera-viewport-wrapper" id="sup-viewfinder">
+              <video id="video" autoplay playsinline muted></video>
+              <div class="camera-overlay">
+                <div class="camera-scan" aria-hidden="true"></div>
+                <div class="camera-oval"></div>
+                <span class="camera-oval-caption">Position your face inside the oval</span>
+              </div>
+              <div class="camera-hud camera-hud-left">
+                <span>PAD: ISO/IEC 30107-3</span>
+                <span aria-hidden="true">·</span>
+                <span id="sup-hud-budget">capture budget loading…</span>
+              </div>
+              <div class="camera-hud camera-hud-right" id="sup-stream-state">
+                <span class="hud-dot" aria-hidden="true"></span>
+                <span id="sup-stream-label">stream closed</span>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="form-row-2col mt14">
-          <label class="field-label">Workflow
-            <select id="workflow" class="select-control">
-              <option value="RESIDENT">RESIDENT</option>
-              <option value="OPERATOR">OPERATOR</option>
-              <option value="SUPERVISOR">SUPERVISOR</option>
-            </select>
-          </label>
-          <label class="field-label">Device ID
-            <input id="deviceId" class="text-control" value="L1-CAM-01">
-          </label>
-        </div>
+          <div class="capture-side">
+            <label class="field-label">Workflow
+              <select id="workflow" class="select-control">
+                <option value="RESIDENT">RESIDENT</option>
+                <option value="OPERATOR">OPERATOR</option>
+                <option value="SUPERVISOR">SUPERVISOR</option>
+              </select>
+            </label>
 
-        <div class="camera-actions-row mt14">
-          <button id="btn-camera" class="primary">Start camera</button>
-          <button id="btn-run" class="secondary" disabled>Run liveness check</button>
-          <button id="btn-active" class="secondary" disabled>Run active liveness</button>
-          <button id="btn-stop" class="danger" disabled>Stop</button>
-        </div>
+            <label class="field-label">Device ID
+              <input id="deviceId" class="text-control" value="L1-CAM-01">
+            </label>
 
-        <div id="verdict" class="verdict mt14" hidden>
-          <div class="verdict-icon" aria-hidden="true"></div>
-          <div class="verdict-content">
-            <div class="action" id="verdict-action"></div>
-            <div class="msg" id="verdict-msg"></div>
+            <div class="camera-actions-row">
+              <button id="btn-camera" class="primary">Start camera</button>
+              <button id="btn-run" class="secondary" disabled>Run liveness check</button>
+              <button id="btn-active" class="secondary" disabled>Run active liveness</button>
+              <button id="btn-stop" class="danger" disabled>Stop</button>
+            </div>
+
+            <div id="verdict" class="verdict" hidden>
+              <div class="verdict-icon" aria-hidden="true"></div>
+              <div class="verdict-content">
+                <div class="action" id="verdict-action"></div>
+                <div class="msg" id="verdict-msg"></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -347,6 +421,7 @@
             <!-- Dynamic and sample rows rendered here -->
           </tbody>
         </table>
+        <p class="table-note" id="sessions-note" hidden></p>
         <div id="sessions-list" class="sessions" hidden></div>
       </div>
 
@@ -405,10 +480,12 @@
         <div class="policy-main-col">
           <div class="card">
             <!-- Segmented button picker for workflow -->
-            <div class="segmented-control" id="workflow-segmented">
-              <button type="button" class="segmented-btn active" id="btn-wf-resident" data-wf="RESIDENT">RESIDENT</button>
-              <button type="button" class="segmented-btn" id="btn-wf-operator" data-wf="OPERATOR">OPERATOR</button>
-              <button type="button" class="segmented-btn" id="btn-wf-supervisor" data-wf="SUPERVISOR">SUPERVISOR</button>
+            <div class="policy-workflow-header">
+              <div class="segmented-control" id="workflow-segmented">
+                <button type="button" class="segmented-btn active" id="btn-wf-resident" data-wf="RESIDENT">RESIDENT</button>
+                <button type="button" class="segmented-btn" id="btn-wf-operator" data-wf="OPERATOR">OPERATOR</button>
+                <button type="button" class="segmented-btn" id="btn-wf-supervisor" data-wf="SUPERVISOR">SUPERVISOR</button>
+              </div>
             </div>
 
             <!-- Keep select element for exact test compatibility -->
@@ -540,7 +617,11 @@
 
           <!-- Notice box -->
           <div class="notice-callout-card mt14">
-            <p class="notice-text">Saving a policy asks for your supervisor credentials. They are never stored in the browser.</p>
+            <svg class="notice-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75"/>
+              <path d="M6.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z"/>
+            </svg>
+            <p class="notice-text">Saving a policy asks for your supervisor credentials in a confirmation dialog, and the service authorises every save from that session. They are never stored in the browser.</p>
           </div>
         </div>
       </div>
@@ -552,9 +633,29 @@
         <h1 class="page-title">Users</h1>
         <p class="page-subtitle">Supervisor user management and role assignment.</p>
       </div>
-      <div class="card">
-        <p class="hint">Supervisor-only: create, disable, reset password, change role. Confirm dialog on destructive actions. Never display hashes.</p>
-        <p class="hint">(User management is server-enforced; this panel is read-only until the supervisor-sign-in flow is implemented on the backend.)</p>
+      <div class="card table-card">
+        <div class="table-filter-bar table-filter-bar-padded">
+          <span class="row-label" id="users-count">accounts load on demand</span>
+          <button id="btn-users-refresh" class="secondary">Refresh users</button>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th>State</th>
+              <th>First sign-in</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="users-table-body">
+            <!-- Rendered from GET /api/v1/users -->
+          </tbody>
+        </table>
+        <p class="table-note" id="users-note">Read-only: this lists the accounts the service holds, and
+          the service authorises every route from the supervisor session. Creating an account, changing a
+          role, disabling one and resetting a password live in the API (`POST /api/v1/users`,
+          `PUT` and `DELETE /api/v1/users/{username}`) and are not wired into this panel yet.</p>
       </div>
     </div>
 
@@ -642,6 +743,69 @@
     </details>
   </div>
 </main>
+
+<!-- Supervisor credential dialog. One dialog, two jobs: authorising a policy
+     save, and setting a first password for an account the service confines to
+     that one route (see console.js). Markup only — no inline script or style,
+     so the page's strict CSP is unchanged. -->
+<div id="auth-modal" class="auth-modal" hidden>
+  <div class="auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" aria-describedby="auth-modal-subtitle">
+    <div class="auth-modal-head">
+      <span class="auth-modal-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75"/>
+          <path d="M6.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z"/>
+        </svg>
+      </span>
+      <div class="auth-modal-head-text">
+        <h3 class="auth-modal-title" id="auth-modal-title">Confirm Supervisor Authorization</h3>
+        <p class="auth-modal-subtitle" id="auth-modal-subtitle">Saving policy changes requires re-authenticating with supervisor credentials. Changes apply to new sessions only.</p>
+      </div>
+      <button type="button" class="auth-modal-close" id="auth-modal-close" aria-label="Cancel">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 18 18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <form class="auth-modal-body" id="auth-modal-form">
+      <div class="auth-modal-field" id="auth-modal-user-field">
+        <label class="field-label" for="auth-modal-user">Username / Supervisor ID</label>
+        <input id="auth-modal-user" type="text" autocomplete="username" spellcheck="false">
+      </div>
+      <div class="auth-modal-field" id="auth-modal-pass-field">
+        <div class="auth-modal-field-head">
+          <label class="field-label" for="auth-modal-pass" id="auth-modal-pass-label">Supervisor Password / Passcode</label>
+          <span class="auth-modal-hint" id="auth-modal-pass-hint">Session re-auth required</span>
+        </div>
+        <input id="auth-modal-pass" type="password" autocomplete="current-password">
+      </div>
+      <div class="auth-modal-field" id="auth-modal-new-field" hidden>
+        <div class="auth-modal-field-head">
+          <label class="field-label" for="auth-modal-new">New password</label>
+          <span class="auth-modal-hint">At least 12 characters</span>
+        </div>
+        <input id="auth-modal-new" type="password" autocomplete="new-password">
+        <p class="auth-modal-note">It must differ from the password just used, and it replaces it immediately.</p>
+      </div>
+      <p class="auth-modal-error" id="auth-modal-error" role="alert" hidden></p>
+      <div class="auth-modal-foot">
+        <button type="button" class="secondary" id="auth-modal-cancel">Cancel</button>
+        <button type="submit" class="primary" id="auth-modal-submit">Confirm &amp; Apply Policy</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer-inner">
+    <span>MOSIP Modular Open Source Identity Platform — Face Liveness &amp; PAD</span>
+    <span class="site-footer-meta">
+      <span>PRESENTATION ATTACK DETECTION</span>
+      <span class="site-footer-sep" aria-hidden="true"></span>
+      <span>ISO/IEC 30107-3</span>
+      <span class="site-footer-sep" aria-hidden="true"></span>
+      <span>DECISIONS ON-DEVICE</span>
+    </span>
+  </div>
+</footer>
 
 <script src="console.js"></script>
 </body>

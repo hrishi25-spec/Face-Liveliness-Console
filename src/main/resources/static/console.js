@@ -60,6 +60,12 @@
     box.className = "verdict " + (kind || "");
     $("verdict-action").textContent = action || "";
     $("verdict-msg").textContent = message || "";
+    // The guide mirrors the verdict kind, never a local guess: green once the
+    // session passed, amber while a challenge is open, red on a rejection.
+    setGuide(viewfinders.sup,
+      kind === "proceed" ? "verified"
+        : kind === "reject" ? "rejected"
+          : kind === "escalate" ? "challenge" : "idle");
   }
 
   // "Run active liveness" is enabled only while the current session has passed.
@@ -263,22 +269,46 @@
         });
         signedInAs = me.username || user;
         if (me.mustChangePassword) {
-          let newPw = "";
-          try {
-            newPw = window.prompt(
-              `Initial sign-in for ${signedInAs} requires setting a new password (min 12 chars, different from current):\n\nEnter new password:`,
-              "supervisor1234"
-            ) || "";
-          } catch {}
-          if (newPw && newPw.length >= 12 && newPw !== pass) {
-            await api("/auth/change-password", {
-              method: "POST",
-              body: JSON.stringify({ currentPassword: pass, newPassword: newPw })
-            });
-            log(`Password updated for ${signedInAs}.`);
+          const answer = await openAuthModal("setPassword", {
+            username: signedInAs,
+            usernameLocked: true,
+            mustDifferFrom: pass
+          });
+          const newPw = answer && answer.newPassword ? answer.newPassword : "";
+          // Declining, or a refused change, leaves a session the service confines
+          // to the change-password route: every other request — including this
+          // page's own loads — answers 403, so the console looks broken until the
+          // cookie expires. End the session in both cases and say what is needed.
+          let changed = false;
+          if (newPw) {
+            try {
+              await api("/auth/change-password", {
+                method: "POST",
+                body: JSON.stringify({ currentPassword: pass, newPassword: newPw })
+              });
+              changed = true;
+              log(`Password updated for ${signedInAs}.`);
+            } catch (pe) {
+              log(`Password change refused: ${pe.message}`);
+            }
+          }
+          if (!changed) {
+            await signOut("uncompleted first password change");
+            if (statusLoginSupervisor) {
+              statusLoginSupervisor.textContent = newPw
+                ? "This account's password could not be changed, so the session was "
+                  + "ended. Set a new one in the dialog to sign in here."
+                : "This account must change its password first. The dialog asks for a "
+                  + "new one on every sign-in until it is set.";
+              statusLoginSupervisor.className = "cfg-status bad";
+            }
+            return;
           }
         }
-        if (statusLoginSupervisor) statusLoginSupervisor.textContent = "";
+        if (statusLoginSupervisor) {
+          statusLoginSupervisor.textContent = "";
+          statusLoginSupervisor.className = "cfg-status";
+        }
         log(`Signed in as supervisor (${signedInAs}).`);
         showRoleView("SUPERVISOR", signedInAs);
       } catch (e) {
@@ -300,6 +330,8 @@
       stream = null;
     }
     video.srcObject = null;
+    setStream(viewfinders.sup, false);
+    setGuide(viewfinders.sup, "idle");
     releaseResidentCamera();
   }
 
@@ -311,6 +343,14 @@
     try {
       const s = await api(`/sessions/${id}/close`, { method: "POST" });
       log(`Session ${id} closed on ${why}: status=${s.status}`);
+      // The close response is the authority on this session's final state:
+      // record it, so the Sessions table stops showing the ACTIVE row it saw when
+      // the session was created.
+      const entry = tabSessions.find(t => t.id === id);
+      if (entry && s.status) {
+        entry.status = s.status;
+        renderSessionList();
+      }
     } catch (e) {
       log(`close on ${why} failed: ` + e.message);
     }
@@ -331,6 +371,7 @@
     lastChallenge = null;
     sessionPassed = false;
     resetSteps();
+    setGuide(viewfinders.sup, "idle");
     $("pill-session").textContent = "no session";
     $("pill-session").className = "pill";
     $("verdict").hidden = true;
@@ -415,6 +456,57 @@
   window.CAPTURE_BUDGET = Object.freeze({
     maxEdge: CAPTURE_MAX_EDGE, quality: CAPTURE_JPEG_QUALITY, maxFps: CAPTURE_MAX_FPS
   });
+
+  // ---------- viewfinder presentation (design: biometric camera surface) ----------
+  //
+  // The capture surface has two things to say and both are facts: whether a
+  // stream is open (the HUD badge) and which stage the gate is in (the guide
+  // colour and the sweep line). Nothing here decides anything — the state is
+  // set from the camera API's own success/failure and from the server's
+  // responses, so the picture can never disagree with the verdict.
+  const viewfinders = {
+    sup: { box: $("sup-viewfinder"), label: $("sup-stream-label") },
+    res: { box: $("res-viewfinder"), label: $("res-stream-label"),
+           pill: $("res-camera-pill") }
+  };
+  const GUIDE_STATES = ["checking", "challenge", "verified", "rejected"];
+
+  function setStream(v, open) {
+    if (!v || !v.box || !v.box.classList) return;
+    v.box.classList.toggle("live", !!open);
+    if (v.label) v.label.textContent = open ? "stream open" : "stream closed";
+    // The card's status pill says the same thing as the HUD, so the header of
+    // the card is never a promise the viewfinder contradicts.
+    if (v.pill) {
+      v.pill.className = "pill-badge " + (open ? "pill-success" : "pill-neutral");
+      v.pill.innerHTML = `<span class="pill-dot"></span>${open ? "Camera live" : "Camera ready"}`;
+    }
+  }
+
+  function setGuide(v, state) {
+    if (!v || !v.box || !v.box.classList) return;
+    GUIDE_STATES.forEach(c => v.box.classList.remove(c));
+    if (state && GUIDE_STATES.includes(state)) v.box.classList.add(state);
+  }
+
+  // The capture limits are rendered from the same frozen object the capture loop
+  // reads and the guards pin, so the HUD and the sidebar can never advertise a
+  // budget the page does not actually apply.
+  function renderCaptureFacts() {
+    const b = window.CAPTURE_BUDGET;
+    const budget = `${b.maxEdge}px · JPEG q${b.quality}`;
+    for (const id of ["sup-hud-budget", "res-hud-budget"]) {
+      const el = $(id);
+      if (el) el.textContent = budget;
+    }
+    const edge = $("res-fact-edge");
+    if (edge) edge.textContent = `${b.maxEdge}px long edge`;
+    const encoder = $("res-fact-encoder");
+    if (encoder) encoder.textContent = `JPEG q${b.quality}`;
+    const fps = $("res-fact-fps");
+    if (fps) fps.textContent = `${b.maxFps} frames/s`;
+  }
+  renderCaptureFacts();
 
   // One canvas reused for every capture: allocating a fresh canvas per frame
   // made garbage collection spike on low-end devices during long runs.
@@ -555,6 +647,7 @@
       video.srcObject = stream;
       $("btn-camera").disabled = true;
       $("btn-run").disabled = false;
+      setStream(viewfinders.sup, true);
       log("Camera started.");
     } catch (e) {
       log("Camera error: " + e.message
@@ -571,6 +664,7 @@
     resetSteps();
     sessionPassed = false;
     setActiveCheckEnabled(false);
+    setGuide(viewfinders.sup, "checking");
     $("audit").textContent = "No entries yet.";
     $("last").innerHTML = "<dt>—</dt><dd>—</dd>";
 
@@ -655,6 +749,9 @@
     } finally {
       running = false;
       resetControls();
+      // The run is over: show the status the service holds for this session, not
+      // the one the table guessed when the row was created.
+      await refreshSessionStatuses().catch(() => {});
     }
   });
 
@@ -870,6 +967,25 @@
     $("res-banner-msg").textContent = message || "";
   }
 
+  // The step card (design: the "Current step" panel): which stage of the gate is
+  // running, the one instruction that matters right now, how far the run has
+  // got, and a monospace stage row. The titles are catalogue strings, the stage
+  // words describe this page's own progress — never a score or a model value.
+  function resStep(pct, title, note, dot, stage, stageState) {
+    const fill = $("res-step-progress");
+    if (fill) fill.style.width = pct + "%";
+    const titleEl = $("res-current-step");
+    if (titleEl && title) titleEl.textContent = title;
+    const noteEl = $("res-step-note");
+    if (noteEl && note) noteEl.textContent = note;
+    const dotEl = $("res-step-dot");
+    if (dotEl) dotEl.className = dot ? "step-dot " + dot : "step-dot";
+    const stageEl = $("res-stage");
+    if (stageEl && stage) stageEl.textContent = stage;
+    const stateEl = $("res-stage-state");
+    if (stateEl && stageState) stateEl.textContent = stageState;
+  }
+
   // What the four buttons allow, derived from the panel's own state: a camera to
   // capture from, a PASSED session for the extra check, and something (a session
   // or a camera) worth stopping. Stop stays enabled during a run on purpose.
@@ -886,6 +1002,7 @@
       resident.stream = null;
     }
     resVideo.srcObject = null;
+    setStream(viewfinders.res, false);
   }
 
   // The header's session pill is shared with the Supervisor console, so the
@@ -910,7 +1027,10 @@
     resident.passed = false;
     releaseResidentCamera();
     residentSessionPill(null);
+    setGuide(viewfinders.res, "idle");
     resBanner("", "READY", "Start the camera to begin.");
+    resStep(8, MESSAGES["liveness.checking"], "Start the camera to begin.",
+      "", "Stage 1 of 3", "Idle");
     resSetControls();
   }
 
@@ -918,23 +1038,34 @@
   // goes to the decision log (design §1 — no technical exposure on the screen).
   function resFailure(e) {
     log("resident error: " + e.message);
+    refreshSessionStatuses().catch(() => {});
+    setGuide(viewfinders.res, "rejected");
     resBanner("reject", "REJECTED", MESSAGES["liveness.failed.try_again"]);
+    resStep(100, MESSAGES["liveness.failed.try_again"], "Recovery guidance is shown below.",
+      "failed", "Stage 3 of 3", "Not verified");
   }
 
   // The verdict: VERIFIED on a pass, REJECTED on every failure. The message is the
   // service's own generic text (it renders the failure table's key server-side);
   // the catalogue only stands in when it is absent.
   function resSettle(outcome) {
+    refreshSessionStatuses().catch(() => {});
     if (outcome && outcome.action === "proceed") {
       resident.passed = true;
+      setGuide(viewfinders.res, "verified");
       resBanner("proceed", "VERIFIED", outcome.message || MESSAGES["liveness.success"]);
+      resStep(100, MESSAGES["liveness.success"], "You can continue.",
+        "done", "Stage 3 of 3", "Complete");
       return;
     }
     const message = outcome
       ? (outcome.message || MESSAGES["liveness.failed.try_again"])
         + (outcome.mayRetrySession ? " You may start a new session." : "")
       : MESSAGES["liveness.failed.try_again"];
+    setGuide(viewfinders.res, "rejected");
     resBanner("reject", "REJECTED", message);
+    resStep(100, MESSAGES["liveness.failed.try_again"], "Recovery guidance is shown below.",
+      "failed", "Stage 3 of 3", "Not verified");
   }
 
   // The challenge loop: the same challenge id is re-validated every CAPTURE_MS
@@ -959,6 +1090,9 @@
       const baseline = grabFrame(resVideo);
       const recent = [];
       log(`resident challenge ${rounds}: ${challenge.challengeType}`);
+      setGuide(viewfinders.res, "challenge");
+      resStep(70, promptFor(challenge.challengeType),
+        "Active challenge — follow the prompt", "live", "Stage 3 of 3", "Challenge open");
       let outcome = null;
 
       while (resident.running && !outcome && Date.now() < deadline + 15000) {
@@ -1001,7 +1135,10 @@
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }, audio: false
       });
       resVideo.srcObject = resident.stream;
+      setStream(viewfinders.res, true);
       resBanner("", "READY", "Camera ready. Run the liveness check to begin.");
+      resStep(25, "Position your face inside the oval",
+        "Camera open — run the liveness check to begin.", "", "Stage 1 of 3", "Camera ready");
     } catch (e) {
       log("resident camera error: " + e.message
         + "\n  Browsers expose the camera only on a secure origin — use http://localhost:8000");
@@ -1016,7 +1153,10 @@
     resident.passed = false;
     resident.sessionId = null;
     resSetControls();
+    setGuide(viewfinders.res, "checking");
     resBanner("", "CHECKING…", MESSAGES["liveness.checking"]);
+    resStep(45, MESSAGES["liveness.checking"], "Filling the passive liveness window",
+      "live", "Stage 2 of 3", "Analysis in flight");
     try {
       const session = await api("/sessions", {
         method: "POST",
@@ -1072,8 +1212,12 @@
       if (!resident.running) return;
       // An extra check never rewrites the session verdict (brain §5): the banner
       // stays VERIFIED and carries the check's own message, which says so.
+      setGuide(viewfinders.res, "verified");
       resBanner("proceed", "VERIFIED",
         (outcome && outcome.message) || MESSAGES["feedback.continue"]);
+      resStep(100, MESSAGES["liveness.success"],
+        "Extra check complete — the session verdict is unchanged.",
+        "done", "Stage 3 of 3", "Complete");
     } catch (e) {
       if (resident.running) resFailure(e);
     } finally {
@@ -1093,7 +1237,10 @@
     resident.passed = false;
     releaseResidentCamera();
     residentSessionPill(null);
+    setGuide(viewfinders.res, "idle");
     resBanner("", "STOPPED", MESSAGES["liveness.cancelled"]);
+    resStep(8, MESSAGES["liveness.cancelled"], "Camera released.",
+      "", "Stage 1 of 3", "Idle");
     resSetControls();
     log(`resident: stopped${wasRunning ? " mid-check" : ""} — camera released.`);
     await closeSession(openSession, "resident stop");
@@ -1288,11 +1435,12 @@
   // Reads are open GETs; saving issues a PUT that the server authorises from the
   // signed-in session. The shared admin API key this used to carry is gone, and
   // what replaces it is better in one specific way: the credential is a password
-  // the operator types into a prompt (never into the DOM, so there is no field to
-  // screenshot or screen-share, and never into storage), and the thing that
-  // persists — the session — is kept by the browser in an HttpOnly cookie that no
-  // script can read. The token is never a JavaScript value, so a compromise of
-  // this page yields nothing to replay.
+  // the operator types into the confirmation dialog, and what persists afterwards
+  // — the session — is kept by the browser in an HttpOnly cookie that no script
+  // can read. The token is never a JavaScript value, so a compromise of this page
+  // yields nothing to replay. The password itself lives only in the dialog's own
+  // input while the dialog is open (cleared on close, never stored), which is the
+  // trade the styled dialog makes for a flow that can explain what it is asking.
   const cfg = {
     workflow: $("cfg-workflow"),
     threshold: $("cfg-threshold"), timeout: $("cfg-timeout"),
@@ -1315,18 +1463,159 @@
     cfg.status.className = "cfg-status " + (msg ? (ok ? "ok" : "bad") : "");
   }
 
-  // Sign in through prompts, for the same reason the page never had a key field:
-  // a value typed into a dialog is not in the markup, not readable back, and not
-  // in a screenshot of the form. Cancelling, an empty answer and an unavailable
-  // prompt (some embedded webviews block dialogs) all fail closed — nothing is
-  // sent, so nothing is granted.
+  // ---------- the supervisor credential dialog ----------
+  // One dialog for the two places the console must ask for a credential: saving
+  // policy, and setting a first password for an account the service confines to
+  // that one route. Both used to be window.prompt() calls. A prompt cannot say
+  // why it is asking, cannot show which account it is asking about, and returns
+  // the same empty string for "cancelled" and "typed nothing" — and some embedded
+  // webviews suppress it entirely, which left a first-time supervisor being asked
+  // nothing, then told to sign in again. The dialog is the page's own markup, so
+  // it is styled by the same sheet and the same session keeps working.
+  //
+  // A credential typed here is never stored: not in localStorage, not in
+  // sessionStorage, and not left on the input after the dialog closes.
+  const authModal = $("auth-modal");
+  const authModalForm = $("auth-modal-form");
+  const authModalTitle = $("auth-modal-title");
+  const authModalSubtitle = $("auth-modal-subtitle");
+  const authModalUserField = $("auth-modal-user-field");
+  const authModalUser = $("auth-modal-user");
+  const authModalPassField = $("auth-modal-pass-field");
+  const authModalPassLabel = $("auth-modal-pass-label");
+  const authModalPassHint = $("auth-modal-pass-hint");
+  const authModalPass = $("auth-modal-pass");
+  const authModalNewField = $("auth-modal-new-field");
+  const authModalNew = $("auth-modal-new");
+  const authModalError = $("auth-modal-error");
+  const authModalSubmit = $("auth-modal-submit");
+
+  const AUTH_MODAL_COPY = {
+    authorize: {
+      title: "Confirm Supervisor Authorization",
+      subtitle: "Saving policy changes requires re-authenticating with supervisor "
+        + "credentials. Changes apply to new sessions only.",
+      passwordLabel: "Supervisor Password / Passcode",
+      passwordHint: "Session re-auth required",
+      submit: "Confirm & Apply Policy",
+      withPassword: true,
+      withNewPassword: false
+    },
+    setPassword: {
+      title: "Set a new password",
+      subtitle: "This account must change its password before the service accepts "
+        + "it anywhere else. The password you just signed in with is the current one.",
+      passwordLabel: "",
+      passwordHint: "",
+      submit: "Set password and continue",
+      withPassword: false,
+      withNewPassword: true
+    }
+  };
+
+  let authModalMode = "authorize";
+  let authModalSettle = null;    // resolves the open dialog; null when closed
+  let authModalMustDifferFrom = "";
+
+  function authModalShowError(message) {
+    if (!authModalError) return;
+    authModalError.textContent = message || "";
+    authModalError.hidden = !message;
+  }
+
+  // Closing always clears the fields. A password left in the DOM is a password
+  // left in the DOM, and the dialog can be reopened by a different role in the
+  // same tab.
+  function closeAuthModal(values) {
+    const settle = authModalSettle;
+    authModalSettle = null;
+    authModalMustDifferFrom = "";
+    if (authModal) authModal.hidden = true;
+    if (authModalPass) authModalPass.value = "";
+    if (authModalNew) authModalNew.value = "";
+    authModalShowError("");
+    if (settle) settle(values);
+  }
+
+  // Resolves with the submitted values, or null if the dialog was cancelled —
+  // and "cancelled" is an answer, not an error, so every caller decides what
+  // that means for it.
+  function openAuthModal(mode, opts = {}) {
+    // Settle any earlier dialog first: a late answer must never be mistaken for
+    // the answer to the one now on screen.
+    if (authModalSettle) closeAuthModal(null);
+    if (!authModal) return Promise.resolve(null);
+    const copy = AUTH_MODAL_COPY[mode] || AUTH_MODAL_COPY.authorize;
+    authModalMode = AUTH_MODAL_COPY[mode] ? mode : "authorize";
+    authModalMustDifferFrom = opts.mustDifferFrom || "";
+    authModalTitle.textContent = copy.title;
+    authModalSubtitle.textContent = copy.subtitle;
+    authModalUser.value = opts.username || "";
+    authModalUserField.hidden = !opts.username;
+    // A known account is shown, not offered: only the account itself can change
+    // its own password, and re-authenticating mid-session is re-proving that
+    // account rather than switching to another one.
+    authModalUser.readOnly = Boolean(opts.usernameLocked);
+    authModalPassField.hidden = !copy.withPassword;
+    authModalPassLabel.textContent = copy.passwordLabel;
+    authModalPassHint.textContent = copy.passwordHint;
+    authModalNewField.hidden = !copy.withNewPassword;
+    authModalSubmit.textContent = copy.submit;
+    authModalShowError("");
+    authModal.hidden = false;
+    try { (copy.withNewPassword ? authModalNew : authModalPass).focus(); } catch {}
+    return new Promise(resolve => { authModalSettle = resolve; });
+  }
+
+  if (authModalForm) {
+    authModalForm.addEventListener("submit", event => {
+      // No action attribute on the form: a submit that reaches the browser would
+      // reload the page and drop the session it was about to authorise.
+      if (event && event.preventDefault) event.preventDefault();
+      if (!authModalSettle) return;
+      const values = {
+        username: (authModalUser && authModalUser.value || "").trim(),
+        password: (authModalPass && authModalPass.value) || "",
+        newPassword: (authModalNew && authModalNew.value) || ""
+      };
+      if (authModalMode === "setPassword") {
+        // The service's own rules, checked here only so a typo is answered in the
+        // dialog instead of by a refused request that has already ended the
+        // session. The service still decides.
+        if (values.newPassword.length < 12) {
+          authModalShowError("A new password needs at least 12 characters.");
+          return;
+        }
+        if (values.newPassword === authModalMustDifferFrom) {
+          authModalShowError("The new password must differ from the current one.");
+          return;
+        }
+      } else if (!values.username || !values.password) {
+        authModalShowError("A username and a password are both needed to authorise this change.");
+        return;
+      }
+      closeAuthModal(values);
+    });
+    const cancel = $("auth-modal-cancel");
+    const close = $("auth-modal-close");
+    if (cancel) cancel.addEventListener("click", () => closeAuthModal(null));
+    if (close) close.addEventListener("click", () => closeAuthModal(null));
+    document.addEventListener("keydown", event => {
+      if (event && event.key === "Escape" && authModalSettle) closeAuthModal(null);
+    });
+  }
+
+  // Sign in through the dialog, for the same reason the page never had a key
+  // field: a value typed into a dialog is not in the markup, not readable back,
+  // and not in a screenshot of the form. Cancelling, an empty answer and a
+  // missing dialog all fail closed — nothing is sent, so nothing is granted.
   async function signIn() {
-    let username = "";
-    let password = "";
-    try {
-      username = (window.prompt("Supervisor username:", "supervisor") || "").trim();
-      if (username) password = window.prompt(`Password for ${username}:`) || "";
-    } catch { username = ""; password = ""; }
+    const who = await openAuthModal("authorize", {
+      username: (inputSupervisorUser && inputSupervisorUser.value.trim()) || "supervisor"
+    });
+    const username = who && who.username ? who.username : "";
+    const password = who && who.password ? who.password : "";
+    if (username && inputSupervisorUser) inputSupervisorUser.value = username;
     if (!username || !password) {
       cfgStatus("Not signed in: a username and a password are both needed.", false);
       return false;
@@ -1338,14 +1627,13 @@
       });
       signedInAs = me.username || username;
       if (me.mustChangePassword) {
-        let newPw = "";
-        try {
-          newPw = window.prompt(
-            `Initial sign-in for ${signedInAs} requires setting a new password (min 12 chars, different from current):\n\nEnter new password:`,
-            "supervisor1234"
-          ) || "";
-        } catch {}
-        if (newPw && newPw.length >= 12 && newPw !== password) {
+        const answer = await openAuthModal("setPassword", {
+          username: signedInAs,
+          usernameLocked: true,
+          mustDifferFrom: password
+        });
+        const newPw = answer && answer.newPassword ? answer.newPassword : "";
+        if (newPw) {
           try {
             await api("/auth/change-password", {
               method: "POST",
@@ -1400,9 +1688,15 @@
     showLoginPage();
   });
 
+  // "Switch role" / "Log out" hands the workstation over, which is more than an
+  // identity change: an open camera (and its indicator light) and an open session
+  // belong to the person who just left. switchRole() releases both before the
+  // picker comes back — the plain signOut() it used to call left the camera
+  // streaming and the session ACTIVE server-side, with nothing on screen to show
+  // it. The policy status line stays out of it: a role switch is not a policy
+  // outcome, and a stale green "Signed out …" chip in the form footer said it was.
   $("btn-sign-out").addEventListener("click", () => {
-    signOut("topbar sign-out button").then(was => cfgStatus(
-      was ? `Signed out ${was}.` : "Not signed in.", true));
+    switchRole().catch(e => log("role switch failed: " + e.message));
   });
 
   $("btn-cfg-sign-out").addEventListener("click", () => {
@@ -1590,7 +1884,7 @@
       log("Operator attempted to save policy: Refused (Insufficient authority).");
       return;
     }
-    // Sign in only when this page has not done so yet. Cancelling the prompt aborts
+    // Sign in only when this page has not done so yet. Closing the dialog aborts
     // the save rather than sending a PUT the service would refuse.
     if (!signedInAs && !(await signIn())) return;
     const challengeTypes = CFG_TYPES.filter(([box]) => box.checked).map(([, name]) => name);
@@ -1853,9 +2147,11 @@
   //
   // The Supervisor container is the Operator surface (Verify, Sessions, Audit,
   // Rejection reasons) plus the admin views (Policy, Chain, Metrics, Sweep,
-  // Diagnostics). One panel is on screen at a time and Verify is the entry tab,
-  // so entering the role lands on the capture screen.
-  const TABS = ["verify", "sessions", "audit", "rejections", "policy", "chain",
+  // Diagnostics). One panel is on screen at a time. The entry tab is the one the
+  // role actually starts on: the Supervisor lands on Policy (the screen its
+  // authority is for, and the design's supervisor mock), the Operator on
+  // Sessions (its read-only review surface). Verify stays one click away.
+  const TABS = ["verify", "sessions", "audit", "rejections", "policy", "users", "chain",
                 "metrics", "sweep", "diagnostics"];
 
   function showTab(name) {
@@ -1885,7 +2181,13 @@
         workflow: session.workflowType || "—",
         device: session.deviceId || "—",
         view,
-        at: new Date().toLocaleTimeString()
+        at: new Date().toLocaleTimeString(),
+        // Only what the creation response said. A column with nothing known
+        // shows nothing known — the status is filled from GET /sessions/{id}
+        // when the run settles or the operator refreshes.
+        status: session.status || null,
+        retries: null,
+        reason: null
       });
     }
     renderSessionList();
@@ -1935,17 +2237,33 @@
     if (!tbody) return;
     tbody.innerHTML = "";
 
-    const activeList = tabSessions.length > 0
-      ? tabSessions.map(s => ({
+    // Real rows first: only sessions this tab created are sessions. The service
+    // exposes no session-list endpoint, so when there are none the table shows
+    // the design's layout with illustrative rows — every one of them tagged and
+    // stripped of its action, because a placeholder must never read as a real
+    // verification.
+    const usingSamples = tabSessions.length === 0;
+    const activeList = usingSamples
+      ? SAMPLE_SESSIONS.map(s => Object.assign({}, s, { sample: true }))
+      : tabSessions.map(s => ({
           id: s.id,
           displayId: s.id.length > 12 ? s.id.slice(0, 4) + "..." + s.id.slice(-3) : s.id,
-          workflow: s.workflow || "RESIDENT",
-          status: s.status || "PASSED",
-          retries: s.retries || 0,
+          workflow: s.workflow || "—",
+          status: s.status || "UNKNOWN",
+          retries: (s.retries === null || s.retries === undefined) ? "—" : s.retries,
           reason: s.reason || "—",
           at: s.at || new Date().toLocaleString()
-        }))
-      : SAMPLE_SESSIONS;
+        }));
+
+    const note = $("sessions-note");
+    if (note) {
+      note.hidden = !usingSamples;
+      note.textContent = usingSamples
+        ? "Sample rows: the service has no session-list endpoint, so only sessions created in this "
+          + "browser tab are real. Sample rows cannot be opened, and Audit/Rejections describe only "
+          + "a real selection."
+        : "";
+    }
 
     const filtered = activeList.filter(s => {
       if (wfFilter && s.workflow !== wfFilter) return false;
@@ -1955,7 +2273,8 @@
 
     for (const s of filtered) {
       const tr = document.createElement("tr");
-      if (s.id === selectedSession) tr.className = "selected";
+      if (s.sample) tr.className = "is-sample";
+      else if (s.id === selectedSession) tr.className = "selected";
 
       let statusPillClass = "pill-neutral";
       if (s.status === "PASSED") statusPillClass = "pill-success";
@@ -1967,6 +2286,12 @@
       sSpan.className = "session-mono-id";
       sSpan.textContent = s.displayId;
       tdSession.appendChild(sSpan);
+      if (s.sample) {
+        const tag = document.createElement("span");
+        tag.className = "sample-tag";
+        tag.textContent = "sample";
+        tdSession.appendChild(tag);
+      }
 
       const tdWf = document.createElement("td");
       tdWf.textContent = s.workflow;
@@ -1995,9 +2320,16 @@
       openBtn.type = "button";
       openBtn.className = "secondary";
       openBtn.textContent = "Open";
-      openBtn.addEventListener("click", () => {
-        openSession(s.id).catch(e => log("open error: " + e.message));
-      });
+      if (s.sample) {
+        // There is nothing to open: the id is a placeholder, so a click would
+        // only produce a 404 in the decision log.
+        openBtn.disabled = true;
+        openBtn.title = "Sample row — no such session exists";
+      } else {
+        openBtn.addEventListener("click", () => {
+          openSession(s.id).catch(e => log("open error: " + e.message));
+        });
+      }
       tdAction.appendChild(openBtn);
 
       tr.append(tdSession, tdWf, tdStatus, tdRetries, tdReason, tdCreated, tdAction);
@@ -2009,6 +2341,27 @@
   const filterSt = $("filter-status");
   if (filterWf) filterWf.addEventListener("change", renderSessionList);
   if (filterSt) filterSt.addEventListener("change", renderSessionList);
+
+  // Re-read the sessions this tab created from GET /sessions/{id} — the only
+  // endpoint that exists for it — so the table reports the service's status
+  // rather than the console's memory of a creation response. Nothing is derived:
+  // a session that cannot be re-read keeps the state it was last seen in, and one
+  // that was never read shows UNKNOWN.
+  async function refreshSessionStatuses() {
+    const ids = tabSessions.map(s => s.id);
+    if (!ids.length) return;
+    await Promise.all(ids.map(async id => {
+      const entry = tabSessions.find(s => s.id === id);
+      try {
+        const detail = await api(`/sessions/${id}`);
+        if (!entry) return;
+        entry.status = detail.status || entry.status;
+        entry.retries = detail.retryCount;
+        entry.reason = detail.failureReason || "—";
+      } catch { /* unreachable session: keep what was last known */ }
+    }));
+    renderSessionList();
+  }
 
   function renderSessionDetail(d) {
     kv($("session-detail"), {
@@ -2042,10 +2395,98 @@
     log(`session opened: ${id} status=${detail.status}`);
   }
 
-  $("btn-sessions").addEventListener("click", () => {
+  $("btn-sessions").addEventListener("click", async () => {
+    await refreshSessionStatuses().catch(() => {});
     renderSessionList();
     if (selectedSession) openSession(selectedSession).catch(e => log("open error: " + e.message));
   });
+
+  // ---------- users (read-only) ----------
+  //
+  // GET /api/v1/users is the whole of this panel: the service returns the
+  // accounts it holds, and every route on this page is authorised from the
+  // supervisor session. Creating an account, changing a role, disabling one and
+  // resetting a password are their own flows with their own confirmation
+  // semantics (docs/configuration.md), and are deliberately not wired into a
+  // table row yet — the panel says what it is instead of offering buttons that
+  // do nothing.
+  const ROLE_PILL = u => {
+    const pill = document.createElement("span");
+    pill.className = "pill-badge pill-brand";
+    const dot = document.createElement("span");
+    dot.className = "pill-dot";
+    const text = document.createElement("span");
+    text.textContent = u.role || "—";
+    pill.append(dot, text);
+    return pill;
+  };
+
+  const STATE_PILL = u => {
+    const pill = document.createElement("span");
+    const dot = document.createElement("span");
+    dot.className = "pill-dot";
+    const text = document.createElement("span");
+    // The service's own flags decide the badge: disabled outranks an owed
+    // password change, and neither is inferred from anything else.
+    if (u.disabled) {
+      pill.className = "pill-badge pill-danger";
+      text.textContent = "Disabled";
+    } else if (u.mustChangePassword) {
+      pill.className = "pill-badge pill-warning";
+      text.textContent = "Must change password";
+    } else {
+      pill.className = "pill-badge pill-success";
+      text.textContent = "Active";
+    }
+    pill.append(dot, text);
+    return pill;
+  };
+
+  async function loadUsers() {
+    const tbody = $("users-table-body");
+    if (!tbody) return;
+    const count = $("users-count");
+    try {
+      const users = await api("/users");
+      tbody.innerHTML = "";
+      for (const u of users) {
+        const tr = document.createElement("tr");
+        const tdUser = document.createElement("td");
+        const name = document.createElement("span");
+        name.className = "session-mono-id";
+        name.textContent = u.username;
+        tdUser.appendChild(name);
+        const tdRole = document.createElement("td");
+        tdRole.appendChild(ROLE_PILL(u));
+        const tdState = document.createElement("td");
+        tdState.appendChild(STATE_PILL(u));
+        const tdFirst = document.createElement("td");
+        tdFirst.textContent = u.mustChangePassword ? "pending" : "done";
+        const tdCreated = document.createElement("td");
+        const at = u.createdAt ? String(u.createdAt) : "";
+        tdCreated.textContent = at ? at.slice(0, 19).replace("T", " ") : "—";
+        tr.append(tdUser, tdRole, tdState, tdFirst, tdCreated);
+        tbody.appendChild(tr);
+      }
+      if (count) {
+        count.textContent = `${users.length} account${users.length === 1 ? "" : "s"}`;
+      }
+      log(`users listed: ${users.length}`);
+    } catch (e) {
+      // A refused read (no supervisor session) is reported where the table would
+      // be, so the panel never looks empty when it is actually unauthorised.
+      tbody.innerHTML = "";
+      if (count) count.textContent = "not available: " + e.message;
+      log("users error: " + e.message);
+    }
+  }
+
+  if ($("btn-users-refresh")) {
+    $("btn-users-refresh").addEventListener("click", () => loadUsers().catch(() => {}));
+  }
+  if ($("tab-users")) {
+    $("tab-users").addEventListener("click", () => loadUsers().catch(() => {}));
+  }
 
   // ---------- rejection reasons ----------
   //

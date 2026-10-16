@@ -18,7 +18,10 @@
  *      behind the most recent edit is visible at a glance,
  *   8. the manual extra-check button stays disabled until the session passes,
  *      then asks the server for one active challenge and reports that check's
- *      own verdict (never a rewritten session verdict).
+ *      own verdict (never a rewritten session verdict),
+ *   9. the Sessions table never invents a column: placeholders are tagged and
+ *      unopenable, and a real row's Status/Retries/Reason are read back from
+ *      GET /sessions/{id} — never defaulted to PASSED, 0 and "—".
  *
  * Run: node src/test/js/console-guards.test.mjs   (exit 0 = all assertions pass)
  *
@@ -159,6 +162,12 @@ function buildDom(source) {
     if (attrs.disabled !== undefined || /(^|\s)disabled(\s|=|$)/.test(rawAttrs)) {
       el.disabled = true;
     }
+    // Same for the bare `hidden` attribute: it is how the markup starts a dialog
+    // or a panel closed, and an assertion about that starting state is only
+    // meaningful if the DOM reflects it.
+    if (attrs.hidden !== undefined || /(^|\s)hidden(\s|=|$)/.test(rawAttrs)) {
+      el.hidden = true;
+    }
     for (const [k, v] of Object.entries(attrs)) el.attrs[k] = v;
     byId.set(attrs.id, el);
   }
@@ -224,8 +233,15 @@ let hangFrames = false;   // when set, frame POSTs answer only when released bel
 // the only way to observe "a second capture is dropped, not queued".
 const pendingFrameReleases = [];
 const releaseHang = () => { const go = pendingFrameReleases.shift(); if (go) go(); };
+// What POST /auth/login answers. The role picker and the credential dialog both
+// sign in through it, so a test can ask for either an ordinary session or an
+// account the service confines to the change-password route until it sets one.
+let loginAnswer = { username: "sup-01", role: "SUPERVISOR", mustChangePassword: false };
 let challengeAction = "proceed";   // action a challenge-validation stub answers with
 let frameAction = "proceed";       // action a frame-POST stub answers with
+// What GET /sessions/{id} reports — the truth the Sessions table has to show.
+let sessionDetailStatus = "ACTIVE";
+let sessionDetailRetries = 0;
 let chainVerify = {
   intact: true,
   hmac: true,
@@ -292,6 +308,10 @@ async function fetch(url, options = {}) {
     text: async () => JSON.stringify(body),
     json: async () => body
   });
+  if (url === "/api/v1/auth/login") return respond(loginAnswer);
+  if (url === "/api/v1/auth/change-password") return respond({ changed: true });
+  if (url === "/api/v1/auth/logout") return respond({ signedOut: true });
+  if (url === "/api/v1/auth/me") return respond({});
   if (url === "/health") return respond({ status: "UP", engine: "available" });
   if (url === "/api/v1/metrics") return respond({ framesProcessed: 1 });
   if (url === "/api/v1/config/audit/verify") return respond(chainVerify);
@@ -304,6 +324,21 @@ async function fetch(url, options = {}) {
     return respond({ id: "sess-00000000-0000-0000-0000-000000000001",
                      workflowType: JSON.parse(options.body).workflowType,
                      status: "ACTIVE" });
+  }
+  // GET /sessions/{id}: the only endpoint that reports a session's own status,
+  // and the one the Sessions table must read its Status/Retries/Reason columns
+  // from. The creation response above deliberately says ACTIVE for every
+  // session, so a table that echoed it (or defaulted to PASSED) cannot pass the
+  // assertions on the service's answer below.
+  const detail = url.match(/^\/api\/v1\/sessions\/([A-Za-z0-9-]+)$/);
+  if (detail && method === "GET") {
+    return respond({
+      id: detail[1],
+      workflowType: "RESIDENT",
+      status: sessionDetailStatus,
+      retryCount: sessionDetailRetries,
+      failureReason: sessionDetailStatus === "FAILED" ? "max_retries_exceeded" : "—"
+    });
   }
   if (url.includes("/frames")) {
     if (hangFrames) {
@@ -427,6 +462,26 @@ assert(status().textContent.includes("Loaded RESIDENT policy"),
 assert(!isDirtyShown(), "a freshly loaded form is not dirty");
 assert(diff().hidden === true, "the diff panel starts hidden");
 assert($id("cfg-workflow").value === "RESIDENT", "the workflow select starts on RESIDENT");
+
+section("sessions table — placeholders are labelled, never passed off as real");
+// Nothing has created a session in this tab yet, and the service exposes no
+// session-list endpoint: the table lays the design out with sample rows, and
+// every one of them has to say so and be unusable.
+const sessionRows = () => $id("sessions-table-body").children;
+const openButtons = () => sessionRows().map(tr => tr.children[6].children[0]);
+const sampleTags = () => sessionRows().map(tr => tr.children[0].children
+    .filter(c => c.className === "sample-tag"));
+assert(sessionRows().length === 6,
+    `the table renders the design's row count before any real session (got ${sessionRows().length})`);
+assert(sessionRows().every(tr => tr.className.includes("is-sample")),
+    "every placeholder row is styled as sample data");
+assert(sampleTags().every(tags => tags.length === 1 && tags[0].textContent === "sample"),
+    "each placeholder carries a SAMPLE tag in its Session cell");
+assert(openButtons().every(btn => btn.disabled === true),
+    "a placeholder row's Open action is disabled — there is nothing to open");
+assert($id("sessions-note").hidden === false
+    && $id("sessions-note").textContent.includes("Sample rows"),
+    "the table says why the rows are placeholders");
 
 section("config audit chain badge");
 const chainPill = () => $id("pill-chain");
@@ -757,6 +812,42 @@ assert(fetchCalls.filter(c => c.url.includes("/frames")).length > framesWhileHun
 assert(fetchCalls.filter(c => c.url.includes("/frames")).length <= framesWhileHung + 2,
     "and nothing was stored up behind it: at most the one dropped frame goes out");
 
+section("session columns report the service's answer, not a default");
+// Two sessions exist now (the supervisor run and the resident one), so the
+// placeholders are gone and every row is a real id. The stub's GET /sessions/{id}
+// says FAILED with 3 retries; the creation responses said ACTIVE with no
+// retries, so a table that showed PASSED, 0 or "—" here would be inventing it.
+sessionDetailStatus = "FAILED";
+sessionDetailRetries = 3;
+$id("btn-sessions").dispatch("click");
+await settle();
+const realRows = () => sessionRows().filter(tr => !tr.className.includes("is-sample"));
+assert(realRows().length > 0 && sessionRows().every(tr => !tr.className.includes("is-sample")),
+    `real sessions replace the placeholders (${realRows().length} rows)`);
+assert(fetchCalls.some(c => c.method === "GET" && /\/api\/v1\/sessions\/[^/]+$/.test(c.url)),
+    "the refresh reads each session back from GET /sessions/{id}");
+assert(realRows().every(tr => tr.children[2].textContent.includes("FAILED")),
+    "the Status column shows the service's status for every row");
+assert(realRows().every(tr => tr.children[3].textContent === "3"),
+    "the Retries column shows the service's retry count");
+assert(realRows().every(tr => tr.children[4].textContent.includes("max_retries_exceeded")),
+    "the Reason column shows the service's failure reason");
+assert(!sessionRows().some(tr => tr.children[2].textContent.includes("PASSED")),
+    "no row claims a pass while the service reports a failure");
+
+// And the table follows the service when the answer changes: a session that
+// later passes is shown as passed, from the same read.
+sessionDetailStatus = "PASSED";
+sessionDetailRetries = 0;
+$id("btn-sessions").dispatch("click");
+await settle();
+assert(realRows().every(tr => tr.children[2].textContent.includes("PASSED")),
+    "a changed status on the service is what the table shows");
+assert($id("sessions-note").hidden === true,
+    "the placeholder note is gone once the rows are real");
+sessionDetailStatus = "ACTIVE";
+sessionDetailRetries = 0;
+
 section("frame pacing — the 8/s ceiling holds for the shared gate (task 1)");
 // Both capture screens share one gate, so the ceiling is on the combined rate:
 // this is what stops two open screens (supervisor + resident) from sending
@@ -770,6 +861,115 @@ const ceiling = 1000 / windowTarget.CAPTURE_BUDGET.maxFps;
 assert(gated.length > 10, `the run produced enough gated sends to measure (${gated.length})`);
 assert(minGap >= ceiling - 1,
     `every send is at least ${ceiling}ms after the previous one (min gap ${minGap}ms over ${gated.length} sends)`);
+
+section("credential dialog — no platform prompt, and no request until it is answered");
+// Every credential the console asks for goes through the page's own dialog.
+// The platform prompt it replaced could not say what it was asking for, told
+// "cancelled" and "typed nothing" apart only by an empty string, and — because
+// some embedded webviews suppress it entirely — could leave a first-time
+// supervisor being asked nothing and then told to sign in again.
+// Comments are allowed to name the dialog that was removed; a call is not.
+const consoleCode = consoleJs
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\/.*$/gm, "");
+assert(!/window\.prompt/.test(consoleCode),
+    "console.js makes no window.prompt call");
+assert($id("auth-modal").hidden === true,
+    "the credential dialog starts hidden in the markup");
+assert($id("auth-modal-pass").value === "",
+    "the dialog's password field starts empty — nothing is remembered from a previous open");
+
+const modal = () => $id("auth-modal");
+const modalError = () => $id("auth-modal-error");
+const openModalBySaving = () => $id("btn-cfg-save").dispatch("click");
+const submitted = () => $id("auth-modal-form").dispatch("submit", { preventDefault() {} });
+const posts = () => fetchCalls.filter(c => (c.method || "GET") !== "GET");
+
+// The operator path that needs a credential: Save policy with no session yet.
+let beforeOpen = fetchCalls.length;
+openModalBySaving();
+await settle();
+assert(modal().hidden === false,
+    "saving with no session opens the dialog instead of a platform prompt");
+assert($id("auth-modal-title").textContent.includes("Confirm Supervisor Authorization"),
+    "the dialog says what the credential is authorising");
+assert($id("auth-modal-pass-field").hidden === false
+    && $id("auth-modal-new-field").hidden === true,
+    "authorising offers the password field and not the new-password one");
+assert(fetchCalls.length === beforeOpen,
+    "an open dialog sends nothing — the save waits for an answer");
+
+// Cancel is an answer: nothing is sent, and the save does not proceed.
+beforeOpen = fetchCalls.length;
+$id("auth-modal-cancel").dispatch("click");
+await settle();
+assert(modal().hidden === true, "Cancel closes the dialog");
+assert(fetchCalls.length === beforeOpen, "Cancel sends nothing at all");
+assert(!posts().some(c => c.url.endsWith("/auth/login")),
+    "a cancelled dialog never signs in");
+assert(status().textContent.includes("a username and a password are both needed"),
+    "the status line says why the save did not happen");
+
+// Answering it: exactly what was typed goes out, and the password does not
+// outlive the dialog anywhere in the page.
+openModalBySaving();
+await settle();
+$id("auth-modal-user").value = "sup-01";
+$id("auth-modal-pass").value = "correct-horse-battery-staple";
+submitted();
+await settle();
+const logins = posts().filter(c => c.url.endsWith("/auth/login"));
+assert(logins.length === 1, `answering the dialog signs in exactly once (got ${logins.length})`);
+assert(JSON.parse(logins[0].body).username === "sup-01"
+    && JSON.parse(logins[0].body).password === "correct-horse-battery-staple",
+    "the sign-in carries what was typed into the dialog");
+assert(modal().hidden === true && $id("auth-modal-pass").value === "",
+    "the dialog closes and clears the password field");
+assert(![...byId.values()].some(el => el.textContent.includes("correct-horse-battery-staple")),
+    "the password appears nowhere in the page's text afterwards");
+assert(posts().some(c => c.method === "PUT" && c.url.includes("/api/v1/config/")),
+    "the save the dialog authorised then proceeds");
+
+section("credential dialog — a first sign-in sets the password in the dialog");
+// An account the service confines to the change-password route: signing in is
+// the way in, and the new password is the answer to the dialog that follows.
+loginAnswer = { username: "supervisor", role: "SUPERVISOR", mustChangePassword: true };
+$id("input-supervisor-user").value = "supervisor";
+$id("input-supervisor-pass").value = "first-password";
+$id("btn-login-supervisor").dispatch("click");
+await settle();
+assert(modal().hidden === false,
+    "a first sign-in opens the dialog rather than asking through a prompt");
+assert($id("auth-modal-new-field").hidden === false
+    && $id("auth-modal-pass-field").hidden === true,
+    "it asks for a new password and does not ask for the current one again");
+assert($id("auth-modal-user").value === "supervisor"
+    && $id("auth-modal-user").readOnly === true,
+    "it names the account, which cannot be swapped mid-dialog");
+
+// A too-short password is answered in the dialog, before any request.
+let beforeShort = fetchCalls.length;
+$id("auth-modal-new").value = "short";
+submitted();
+await settle();
+assert(modal().hidden === false && modalError().hidden === false
+    && modalError().textContent.includes("at least 12"),
+    "a too-short new password is refused in the dialog, not by the service");
+assert(fetchCalls.length === beforeShort, "the refusal costs no request");
+
+// The password just used is sent as the current one, and the new one is used.
+$id("auth-modal-new").value = "second-longer-password";
+submitted();
+await settle();
+const changes = posts().filter(c => c.url.endsWith("/auth/change-password"));
+assert(changes.length === 1,
+    `setting it sends exactly one change-password request (got ${changes.length})`);
+assert(JSON.parse(changes[0].body).currentPassword === "first-password"
+    && JSON.parse(changes[0].body).newPassword === "second-longer-password",
+    "the change carries the password just used as the current one");
+assert(modal().hidden === true && $id("auth-modal-new").value === "",
+    "the dialog closes and clears the new password");
+loginAnswer = { username: "sup-01", role: "SUPERVISOR", mustChangePassword: false };
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
