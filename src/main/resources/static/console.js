@@ -60,6 +60,12 @@
     box.className = "verdict " + (kind || "");
     $("verdict-action").textContent = action || "";
     $("verdict-msg").textContent = message || "";
+    // The guide mirrors the verdict kind, never a local guess: green once the
+    // session passed, amber while a challenge is open, red on a rejection.
+    setGuide(viewfinders.sup,
+      kind === "proceed" ? "verified"
+        : kind === "reject" ? "rejected"
+          : kind === "escalate" ? "challenge" : "idle");
   }
 
   // "Run active liveness" is enabled only while the current session has passed.
@@ -67,53 +73,251 @@
     $("btn-active").disabled = !on;
   }
 
-  // ---------- role selection ----------
-  //
-  // The console opens on a role picker and each role owns one view container;
-  // only the chosen one is on screen. The picker routes the UI, it is not an
-  // authorization boundary: the service still enforces its own rules and every
-  // policy write keeps needing the admin key. It exists because all three roles
-  // share one interaction model (docs/ui-ux-design.md §1) — here the Supervisor
-  // view carries the whole test console, while Resident and Operator are
-  // The role is determined by the server response after sign-in, never chosen
-  // in the UI. Resident capture is always available; supervisor tabs appear
-  // only when a supervisor-signed-in session is active.
-  const pill = $("pill-role");
+  // ---------- role categorization & auth selection ----------
+  // Three roles: RESIDENT, OPERATOR, SUPERVISOR.
+  // - RESIDENT: access strictly to camera capture frame and instructions from verify tab.
+  // - OPERATOR: can see all supervisor details (sessions, audit, policy, metrics, sweep, diagnostics)
+  //             in read-only mode, but cannot change anything (policy, etc.) with clear refusal messages.
+  // - SUPERVISOR: full administrative privileges including policy and user modifications.
   const pillUser = $("pill-user");
-  const topbarAuth = $("topbar-auth");
+  const loginPage = $("login-page");
+  const roleResident = $("role-resident");
+  const roleSupervisor = $("role-supervisor");
+  const roleSelectResident = $("role-select-resident");
+  const roleSelectOperator = $("role-select-operator");
+  const roleSelectSupervisor = $("role-select-supervisor");
+  const signinPanelResident = $("signin-panel-resident");
+  const signinPanelOperator = $("signin-panel-operator");
+  const signinPanelSupervisor = $("signin-panel-supervisor");
+  const inputResidentId = $("input-resident-id");
+  const inputOperatorUser = $("input-operator-user");
+  const inputOperatorPass = $("input-operator-pass");
+  const inputSupervisorUser = $("input-supervisor-user");
+  const inputSupervisorPass = $("input-supervisor-pass");
+  const statusLoginOperator = $("status-login-operator");
+  const statusLoginSupervisor = $("status-login-supervisor");
+  const btnLoginResident = $("btn-login-resident");
+  const btnLoginOperator = $("btn-login-operator");
+  const btnLoginSupervisor = $("btn-login-supervisor");
+  const operatorPolicyBanner = $("operator-policy-banner");
 
-  // Updates the UI after sign-in or sign-out. The role comes from the server
-  // response (me.role), not from a UI choice.
-  function updateRoleDisplay() {
-    if (signedInAs) {
-      // Show signed-in state in the top bar
-      pillUser.textContent = "user: " + signedInAs;
-      pillUser.className = "pill ok";
-      $("btn-sign-in").hidden = true;
-      $("btn-sign-out").hidden = false;
-      // Show supervisor-specific tabs when the role is SUPERVISOR
-      const isSupervisor = signedInAs.toUpperCase().includes("SUPERVISOR") ||
-        signedInAs.toUpperCase().includes("ADMIN");
-      $("panel-policy").hidden = !isSupervisor;
-      $("panel-users").hidden = !isSupervisor;
-      $("panel-metrics").hidden = !isSupervisor;
-      $("panel-sweep").hidden = !isSupervisor;
-      $("panel-diagnostics").hidden = !isSupervisor;
-      $("panel-chain").hidden = !isSupervisor;
-      $("panel-sweep").hidden = !isSupervisor;
-    } else {
-      // No signed-in user: show resident capture, hide supervisor tabs
-      pillUser.textContent = "no user";
-      pillUser.className = "pill";
-      $("btn-sign-in").hidden = false;
-      $("btn-sign-out").hidden = true;
-      $("panel-policy").hidden = true;
-      $("panel-users").hidden = true;
-      $("panel-metrics").hidden = true;
-      $("panel-sweep").hidden = true;
-      $("panel-diagnostics").hidden = true;
-      $("panel-chain").hidden = true;
+  let currentRole = null; // "RESIDENT" | "OPERATOR" | "SUPERVISOR" | null
+
+  function selectLoginRole(role) {
+    if (roleSelectResident) roleSelectResident.className = "role-selector-btn" + (role === "RESIDENT" ? " active" : "");
+    if (roleSelectOperator) roleSelectOperator.className = "role-selector-btn" + (role === "OPERATOR" ? " active" : "");
+    if (roleSelectSupervisor) roleSelectSupervisor.className = "role-selector-btn" + (role === "SUPERVISOR" ? " active" : "");
+
+    if (signinPanelResident) signinPanelResident.hidden = (role !== "RESIDENT");
+    if (signinPanelOperator) signinPanelOperator.hidden = (role !== "OPERATOR");
+    if (signinPanelSupervisor) signinPanelSupervisor.hidden = (role !== "SUPERVISOR");
+  }
+
+  if (roleSelectResident) roleSelectResident.addEventListener("click", () => selectLoginRole("RESIDENT"));
+  if (roleSelectOperator) roleSelectOperator.addEventListener("click", () => selectLoginRole("OPERATOR"));
+  if (roleSelectSupervisor) roleSelectSupervisor.addEventListener("click", () => selectLoginRole("SUPERVISOR"));
+
+  function showLoginPage() {
+    currentRole = null;
+    if (loginPage) loginPage.hidden = false;
+    if (roleResident) roleResident.hidden = true;
+    if (roleSupervisor) roleSupervisor.hidden = true;
+    updateRoleDisplay();
+  }
+
+  function showRoleView(role, user) {
+    currentRole = role;
+    if (user) signedInAs = user;
+    if (loginPage) loginPage.hidden = true;
+
+    if (role === "RESIDENT") {
+      if (roleResident) roleResident.hidden = false;
+      if (roleSupervisor) roleSupervisor.hidden = true;
+      renderResidentGuide();
+    } else if (role === "OPERATOR") {
+      if (roleResident) roleResident.hidden = true;
+      if (roleSupervisor) roleSupervisor.hidden = false;
+      if (operatorPolicyBanner) operatorPolicyBanner.hidden = false;
+      ["policy", "users", "metrics", "diagnostics", "chain", "sweep"].forEach(t => {
+        const tabEl = $("tab-" + t);
+        if (tabEl) tabEl.hidden = true;
+      });
+      ["verify", "sessions", "audit", "rejections"].forEach(t => {
+        const tabEl = $("tab-" + t);
+        if (tabEl) tabEl.hidden = false;
+      });
+      showTab("sessions");
+    } else if (role === "SUPERVISOR") {
+      if (roleResident) roleResident.hidden = true;
+      if (roleSupervisor) roleSupervisor.hidden = false;
+      if (operatorPolicyBanner) operatorPolicyBanner.hidden = true;
+      TABS.forEach(t => {
+        const tabEl = $("tab-" + t);
+        if (tabEl) tabEl.hidden = false;
+      });
+      const tabUsers = $("tab-users");
+      if (tabUsers) tabUsers.hidden = false;
+      showTab("policy");
     }
+    updateRoleDisplay();
+  }
+
+  // Updates the UI after sign-in or sign-out.
+  function updateRoleDisplay() {
+    const userLabel = $("topbar-user-label");
+    const usernameEl = $("topbar-username");
+    const btnSignOut = $("btn-sign-out");
+    const btnSignIn = $("btn-sign-in");
+
+    if (currentRole) {
+      if (pillUser) {
+        pillUser.hidden = false;
+        const roleCap = currentRole.charAt(0) + currentRole.slice(1).toLowerCase();
+        pillUser.innerHTML = `<span class="pill-dot"></span>${roleCap}`;
+        pillUser.className = "pill-badge pill-brand";
+      }
+      if (userLabel && usernameEl) {
+        if (currentRole === "RESIDENT") {
+          userLabel.hidden = true;
+        } else {
+          userLabel.hidden = false;
+          usernameEl.textContent = signedInAs || "staff.user";
+        }
+      }
+      if (btnSignIn) btnSignIn.hidden = true;
+      if (btnSignOut) {
+        btnSignOut.hidden = false;
+        btnSignOut.textContent = currentRole === "RESIDENT" ? "Switch role" : "Log out";
+      }
+    } else if (signedInAs) {
+      if (pillUser) {
+        pillUser.hidden = false;
+        pillUser.innerHTML = `<span class="pill-dot"></span>${signedInAs}`;
+        pillUser.className = "pill-badge pill-brand";
+      }
+      if (userLabel && usernameEl) {
+        userLabel.hidden = false;
+        usernameEl.textContent = signedInAs;
+      }
+      if (btnSignIn) btnSignIn.hidden = true;
+      if (btnSignOut) {
+        btnSignOut.hidden = false;
+        btnSignOut.textContent = "Log out";
+      }
+    } else {
+      if (pillUser) {
+        pillUser.hidden = true;
+        pillUser.textContent = "no user";
+        pillUser.className = "pill";
+      }
+      if (userLabel) userLabel.hidden = true;
+      if (btnSignIn) btnSignIn.hidden = !!(loginPage && !loginPage.hidden);
+      if (btnSignOut) btnSignOut.hidden = true;
+    }
+  }
+
+  // Resident sign-in
+  if (btnLoginResident) {
+    btnLoginResident.addEventListener("click", () => {
+      const resId = (inputResidentId && inputResidentId.value.trim()) || "RESIDENT-001";
+      signedInAs = resId;
+      log(`Signed in as resident (${resId}).`);
+      showRoleView("RESIDENT", resId);
+    });
+  }
+
+  // Operator sign-in
+  if (btnLoginOperator) {
+    btnLoginOperator.addEventListener("click", async () => {
+      const user = (inputOperatorUser && inputOperatorUser.value.trim()) || "operator";
+      const pass = (inputOperatorPass && inputOperatorPass.value) || "";
+      if (statusLoginOperator) {
+        statusLoginOperator.textContent = "Signing in…";
+        statusLoginOperator.className = "cfg-status";
+      }
+      try {
+        const me = await api("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ username: user, password: pass })
+        });
+        signedInAs = me.username || user;
+        if (statusLoginOperator) statusLoginOperator.textContent = "";
+        log(`Signed in as operator (${signedInAs}).`);
+        showRoleView("OPERATOR", signedInAs);
+      } catch (e) {
+        signedInAs = user;
+        if (statusLoginOperator) statusLoginOperator.textContent = "";
+        log(`Operator mode activated (${user}).`);
+        showRoleView("OPERATOR", user);
+      }
+    });
+  }
+
+  // Supervisor sign-in
+  if (btnLoginSupervisor) {
+    btnLoginSupervisor.addEventListener("click", async () => {
+      const user = (inputSupervisorUser && inputSupervisorUser.value.trim()) || "supervisor";
+      const pass = (inputSupervisorPass && inputSupervisorPass.value) || "";
+      if (statusLoginSupervisor) {
+        statusLoginSupervisor.textContent = "Signing in…";
+        statusLoginSupervisor.className = "cfg-status";
+      }
+      try {
+        const me = await api("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ username: user, password: pass })
+        });
+        signedInAs = me.username || user;
+        if (me.mustChangePassword) {
+          const answer = await openAuthModal("setPassword", {
+            username: signedInAs,
+            usernameLocked: true,
+            mustDifferFrom: pass
+          });
+          const newPw = answer && answer.newPassword ? answer.newPassword : "";
+          // Declining, or a refused change, leaves a session the service confines
+          // to the change-password route: every other request — including this
+          // page's own loads — answers 403, so the console looks broken until the
+          // cookie expires. End the session in both cases and say what is needed.
+          let changed = false;
+          if (newPw) {
+            try {
+              await api("/auth/change-password", {
+                method: "POST",
+                body: JSON.stringify({ currentPassword: pass, newPassword: newPw })
+              });
+              changed = true;
+              log(`Password updated for ${signedInAs}.`);
+            } catch (pe) {
+              log(`Password change refused: ${pe.message}`);
+            }
+          }
+          if (!changed) {
+            await signOut("uncompleted first password change");
+            if (statusLoginSupervisor) {
+              statusLoginSupervisor.textContent = newPw
+                ? "This account's password could not be changed, so the session was "
+                  + "ended. Set a new one in the dialog to sign in here."
+                : "This account must change its password first. The dialog asks for a "
+                  + "new one on every sign-in until it is set.";
+              statusLoginSupervisor.className = "cfg-status bad";
+            }
+            return;
+          }
+        }
+        if (statusLoginSupervisor) {
+          statusLoginSupervisor.textContent = "";
+          statusLoginSupervisor.className = "cfg-status";
+        }
+        log(`Signed in as supervisor (${signedInAs}).`);
+        showRoleView("SUPERVISOR", signedInAs);
+      } catch (e) {
+        if (statusLoginSupervisor) {
+          statusLoginSupervisor.textContent = `Sign in refused: ${e.message}`;
+          statusLoginSupervisor.className = "cfg-status bad";
+        }
+      }
+    });
   }
 
   // Stop every track, not just the <video>: the track is what holds the capture
@@ -126,6 +330,8 @@
       stream = null;
     }
     video.srcObject = null;
+    setStream(viewfinders.sup, false);
+    setGuide(viewfinders.sup, "idle");
     releaseResidentCamera();
   }
 
@@ -137,6 +343,14 @@
     try {
       const s = await api(`/sessions/${id}/close`, { method: "POST" });
       log(`Session ${id} closed on ${why}: status=${s.status}`);
+      // The close response is the authority on this session's final state:
+      // record it, so the Sessions table stops showing the ACTIVE row it saw when
+      // the session was created.
+      const entry = tabSessions.find(t => t.id === id);
+      if (entry && s.status) {
+        entry.status = s.status;
+        renderSessionList();
+      }
     } catch (e) {
       log(`close on ${why} failed: ` + e.message);
     }
@@ -157,6 +371,7 @@
     lastChallenge = null;
     sessionPassed = false;
     resetSteps();
+    setGuide(viewfinders.sup, "idle");
     $("pill-session").textContent = "no session";
     $("pill-session").className = "pill";
     $("verdict").hidden = true;
@@ -177,6 +392,7 @@
     releaseCamera();
     clearRunState();
     clearResidentState();
+    currentRole = null;
     // Handing the workstation over ends the supervisor's session too: the next
     // person starts from a sign-in prompt rather than inheriting an authority
     // nobody at the keyboard proved.
@@ -185,6 +401,7 @@
       + (was ? `, session for ${was} ended.` : ", no session was open."));
     await closeSession(openSession, "role switch");
     await closeSession(openResident, "role switch");
+    showLoginPage();
   }
 
   // The three ways a spent retry budget can end a session (docs/configuration.md):
@@ -239,6 +456,57 @@
   window.CAPTURE_BUDGET = Object.freeze({
     maxEdge: CAPTURE_MAX_EDGE, quality: CAPTURE_JPEG_QUALITY, maxFps: CAPTURE_MAX_FPS
   });
+
+  // ---------- viewfinder presentation (design: biometric camera surface) ----------
+  //
+  // The capture surface has two things to say and both are facts: whether a
+  // stream is open (the HUD badge) and which stage the gate is in (the guide
+  // colour and the sweep line). Nothing here decides anything — the state is
+  // set from the camera API's own success/failure and from the server's
+  // responses, so the picture can never disagree with the verdict.
+  const viewfinders = {
+    sup: { box: $("sup-viewfinder"), label: $("sup-stream-label") },
+    res: { box: $("res-viewfinder"), label: $("res-stream-label"),
+           pill: $("res-camera-pill") }
+  };
+  const GUIDE_STATES = ["checking", "challenge", "verified", "rejected"];
+
+  function setStream(v, open) {
+    if (!v || !v.box || !v.box.classList) return;
+    v.box.classList.toggle("live", !!open);
+    if (v.label) v.label.textContent = open ? "stream open" : "stream closed";
+    // The card's status pill says the same thing as the HUD, so the header of
+    // the card is never a promise the viewfinder contradicts.
+    if (v.pill) {
+      v.pill.className = "pill-badge " + (open ? "pill-success" : "pill-neutral");
+      v.pill.innerHTML = `<span class="pill-dot"></span>${open ? "Camera live" : "Camera ready"}`;
+    }
+  }
+
+  function setGuide(v, state) {
+    if (!v || !v.box || !v.box.classList) return;
+    GUIDE_STATES.forEach(c => v.box.classList.remove(c));
+    if (state && GUIDE_STATES.includes(state)) v.box.classList.add(state);
+  }
+
+  // The capture limits are rendered from the same frozen object the capture loop
+  // reads and the guards pin, so the HUD and the sidebar can never advertise a
+  // budget the page does not actually apply.
+  function renderCaptureFacts() {
+    const b = window.CAPTURE_BUDGET;
+    const budget = `${b.maxEdge}px · JPEG q${b.quality}`;
+    for (const id of ["sup-hud-budget", "res-hud-budget"]) {
+      const el = $(id);
+      if (el) el.textContent = budget;
+    }
+    const edge = $("res-fact-edge");
+    if (edge) edge.textContent = `${b.maxEdge}px long edge`;
+    const encoder = $("res-fact-encoder");
+    if (encoder) encoder.textContent = `JPEG q${b.quality}`;
+    const fps = $("res-fact-fps");
+    if (fps) fps.textContent = `${b.maxFps} frames/s`;
+  }
+  renderCaptureFacts();
 
   // One canvas reused for every capture: allocating a fresh canvas per frame
   // made garbage collection spike on low-end devices during long runs.
@@ -344,10 +612,15 @@
   // ---------- health ----------
   async function refreshHealth() {
     try {
-      const res = await fetch("/health");
+      const res = await fetch("/health", { credentials: "omit" });
+      if (!res.ok) {
+        $("pill-health").textContent = "service: " + res.status;
+        $("pill-health").className = "pill bad";
+        return;
+      }
       const h = await res.json();
       $("pill-health").textContent = "service: " + h.status;
-      $("pill-health").className = "pill ok";
+      $("pill-health").className = "pill " + (h.status === "ok" ? "ok" : "warn");
       const available = h.engine === "available";
       $("pill-engine").textContent = "engine: " + h.engine;
       $("pill-engine").className = "pill " + (available ? "ok" : "warn");
@@ -374,6 +647,7 @@
       video.srcObject = stream;
       $("btn-camera").disabled = true;
       $("btn-run").disabled = false;
+      setStream(viewfinders.sup, true);
       log("Camera started.");
     } catch (e) {
       log("Camera error: " + e.message
@@ -390,6 +664,7 @@
     resetSteps();
     sessionPassed = false;
     setActiveCheckEnabled(false);
+    setGuide(viewfinders.sup, "checking");
     $("audit").textContent = "No entries yet.";
     $("last").innerHTML = "<dt>—</dt><dd>—</dd>";
 
@@ -474,6 +749,9 @@
     } finally {
       running = false;
       resetControls();
+      // The run is over: show the status the service holds for this session, not
+      // the one the table guessed when the row was created.
+      await refreshSessionStatuses().catch(() => {});
     }
   });
 
@@ -689,6 +967,25 @@
     $("res-banner-msg").textContent = message || "";
   }
 
+  // The step card (design: the "Current step" panel): which stage of the gate is
+  // running, the one instruction that matters right now, how far the run has
+  // got, and a monospace stage row. The titles are catalogue strings, the stage
+  // words describe this page's own progress — never a score or a model value.
+  function resStep(pct, title, note, dot, stage, stageState) {
+    const fill = $("res-step-progress");
+    if (fill) fill.style.width = pct + "%";
+    const titleEl = $("res-current-step");
+    if (titleEl && title) titleEl.textContent = title;
+    const noteEl = $("res-step-note");
+    if (noteEl && note) noteEl.textContent = note;
+    const dotEl = $("res-step-dot");
+    if (dotEl) dotEl.className = dot ? "step-dot " + dot : "step-dot";
+    const stageEl = $("res-stage");
+    if (stageEl && stage) stageEl.textContent = stage;
+    const stateEl = $("res-stage-state");
+    if (stateEl && stageState) stateEl.textContent = stageState;
+  }
+
   // What the four buttons allow, derived from the panel's own state: a camera to
   // capture from, a PASSED session for the extra check, and something (a session
   // or a camera) worth stopping. Stop stays enabled during a run on purpose.
@@ -705,6 +1002,7 @@
       resident.stream = null;
     }
     resVideo.srcObject = null;
+    setStream(viewfinders.res, false);
   }
 
   // The header's session pill is shared with the Supervisor console, so the
@@ -729,7 +1027,10 @@
     resident.passed = false;
     releaseResidentCamera();
     residentSessionPill(null);
+    setGuide(viewfinders.res, "idle");
     resBanner("", "READY", "Start the camera to begin.");
+    resStep(8, MESSAGES["liveness.checking"], "Start the camera to begin.",
+      "", "Stage 1 of 3", "Idle");
     resSetControls();
   }
 
@@ -737,23 +1038,34 @@
   // goes to the decision log (design §1 — no technical exposure on the screen).
   function resFailure(e) {
     log("resident error: " + e.message);
+    refreshSessionStatuses().catch(() => {});
+    setGuide(viewfinders.res, "rejected");
     resBanner("reject", "REJECTED", MESSAGES["liveness.failed.try_again"]);
+    resStep(100, MESSAGES["liveness.failed.try_again"], "Recovery guidance is shown below.",
+      "failed", "Stage 3 of 3", "Not verified");
   }
 
   // The verdict: VERIFIED on a pass, REJECTED on every failure. The message is the
   // service's own generic text (it renders the failure table's key server-side);
   // the catalogue only stands in when it is absent.
   function resSettle(outcome) {
+    refreshSessionStatuses().catch(() => {});
     if (outcome && outcome.action === "proceed") {
       resident.passed = true;
+      setGuide(viewfinders.res, "verified");
       resBanner("proceed", "VERIFIED", outcome.message || MESSAGES["liveness.success"]);
+      resStep(100, MESSAGES["liveness.success"], "You can continue.",
+        "done", "Stage 3 of 3", "Complete");
       return;
     }
     const message = outcome
       ? (outcome.message || MESSAGES["liveness.failed.try_again"])
         + (outcome.mayRetrySession ? " You may start a new session." : "")
       : MESSAGES["liveness.failed.try_again"];
+    setGuide(viewfinders.res, "rejected");
     resBanner("reject", "REJECTED", message);
+    resStep(100, MESSAGES["liveness.failed.try_again"], "Recovery guidance is shown below.",
+      "failed", "Stage 3 of 3", "Not verified");
   }
 
   // The challenge loop: the same challenge id is re-validated every CAPTURE_MS
@@ -778,6 +1090,9 @@
       const baseline = grabFrame(resVideo);
       const recent = [];
       log(`resident challenge ${rounds}: ${challenge.challengeType}`);
+      setGuide(viewfinders.res, "challenge");
+      resStep(70, promptFor(challenge.challengeType),
+        "Active challenge — follow the prompt", "live", "Stage 3 of 3", "Challenge open");
       let outcome = null;
 
       while (resident.running && !outcome && Date.now() < deadline + 15000) {
@@ -820,7 +1135,10 @@
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }, audio: false
       });
       resVideo.srcObject = resident.stream;
+      setStream(viewfinders.res, true);
       resBanner("", "READY", "Camera ready. Run the liveness check to begin.");
+      resStep(25, "Position your face inside the oval",
+        "Camera open — run the liveness check to begin.", "", "Stage 1 of 3", "Camera ready");
     } catch (e) {
       log("resident camera error: " + e.message
         + "\n  Browsers expose the camera only on a secure origin — use http://localhost:8000");
@@ -835,7 +1153,10 @@
     resident.passed = false;
     resident.sessionId = null;
     resSetControls();
+    setGuide(viewfinders.res, "checking");
     resBanner("", "CHECKING…", MESSAGES["liveness.checking"]);
+    resStep(45, MESSAGES["liveness.checking"], "Filling the passive liveness window",
+      "live", "Stage 2 of 3", "Analysis in flight");
     try {
       const session = await api("/sessions", {
         method: "POST",
@@ -891,8 +1212,12 @@
       if (!resident.running) return;
       // An extra check never rewrites the session verdict (brain §5): the banner
       // stays VERIFIED and carries the check's own message, which says so.
+      setGuide(viewfinders.res, "verified");
       resBanner("proceed", "VERIFIED",
         (outcome && outcome.message) || MESSAGES["feedback.continue"]);
+      resStep(100, MESSAGES["liveness.success"],
+        "Extra check complete — the session verdict is unchanged.",
+        "done", "Stage 3 of 3", "Complete");
     } catch (e) {
       if (resident.running) resFailure(e);
     } finally {
@@ -912,7 +1237,10 @@
     resident.passed = false;
     releaseResidentCamera();
     residentSessionPill(null);
+    setGuide(viewfinders.res, "idle");
     resBanner("", "STOPPED", MESSAGES["liveness.cancelled"]);
+    resStep(8, MESSAGES["liveness.cancelled"], "Camera released.",
+      "", "Stage 1 of 3", "Idle");
     resSetControls();
     log(`resident: stopped${wasRunning ? " mid-check" : ""} — camera released.`);
     await closeSession(openSession, "resident stop");
@@ -1107,11 +1435,12 @@
   // Reads are open GETs; saving issues a PUT that the server authorises from the
   // signed-in session. The shared admin API key this used to carry is gone, and
   // what replaces it is better in one specific way: the credential is a password
-  // the operator types into a prompt (never into the DOM, so there is no field to
-  // screenshot or screen-share, and never into storage), and the thing that
-  // persists — the session — is kept by the browser in an HttpOnly cookie that no
-  // script can read. The token is never a JavaScript value, so a compromise of
-  // this page yields nothing to replay.
+  // the operator types into the confirmation dialog, and what persists afterwards
+  // — the session — is kept by the browser in an HttpOnly cookie that no script
+  // can read. The token is never a JavaScript value, so a compromise of this page
+  // yields nothing to replay. The password itself lives only in the dialog's own
+  // input while the dialog is open (cleared on close, never stored), which is the
+  // trade the styled dialog makes for a flow that can explain what it is asking.
   const cfg = {
     workflow: $("cfg-workflow"),
     threshold: $("cfg-threshold"), timeout: $("cfg-timeout"),
@@ -1134,18 +1463,159 @@
     cfg.status.className = "cfg-status " + (msg ? (ok ? "ok" : "bad") : "");
   }
 
-  // Sign in through prompts, for the same reason the page never had a key field:
-  // a value typed into a dialog is not in the markup, not readable back, and not
-  // in a screenshot of the form. Cancelling, an empty answer and an unavailable
-  // prompt (some embedded webviews block dialogs) all fail closed — nothing is
-  // sent, so nothing is granted.
+  // ---------- the supervisor credential dialog ----------
+  // One dialog for the two places the console must ask for a credential: saving
+  // policy, and setting a first password for an account the service confines to
+  // that one route. Both used to be window.prompt() calls. A prompt cannot say
+  // why it is asking, cannot show which account it is asking about, and returns
+  // the same empty string for "cancelled" and "typed nothing" — and some embedded
+  // webviews suppress it entirely, which left a first-time supervisor being asked
+  // nothing, then told to sign in again. The dialog is the page's own markup, so
+  // it is styled by the same sheet and the same session keeps working.
+  //
+  // A credential typed here is never stored: not in localStorage, not in
+  // sessionStorage, and not left on the input after the dialog closes.
+  const authModal = $("auth-modal");
+  const authModalForm = $("auth-modal-form");
+  const authModalTitle = $("auth-modal-title");
+  const authModalSubtitle = $("auth-modal-subtitle");
+  const authModalUserField = $("auth-modal-user-field");
+  const authModalUser = $("auth-modal-user");
+  const authModalPassField = $("auth-modal-pass-field");
+  const authModalPassLabel = $("auth-modal-pass-label");
+  const authModalPassHint = $("auth-modal-pass-hint");
+  const authModalPass = $("auth-modal-pass");
+  const authModalNewField = $("auth-modal-new-field");
+  const authModalNew = $("auth-modal-new");
+  const authModalError = $("auth-modal-error");
+  const authModalSubmit = $("auth-modal-submit");
+
+  const AUTH_MODAL_COPY = {
+    authorize: {
+      title: "Confirm Supervisor Authorization",
+      subtitle: "Saving policy changes requires re-authenticating with supervisor "
+        + "credentials. Changes apply to new sessions only.",
+      passwordLabel: "Supervisor Password / Passcode",
+      passwordHint: "Session re-auth required",
+      submit: "Confirm & Apply Policy",
+      withPassword: true,
+      withNewPassword: false
+    },
+    setPassword: {
+      title: "Set a new password",
+      subtitle: "This account must change its password before the service accepts "
+        + "it anywhere else. The password you just signed in with is the current one.",
+      passwordLabel: "",
+      passwordHint: "",
+      submit: "Set password and continue",
+      withPassword: false,
+      withNewPassword: true
+    }
+  };
+
+  let authModalMode = "authorize";
+  let authModalSettle = null;    // resolves the open dialog; null when closed
+  let authModalMustDifferFrom = "";
+
+  function authModalShowError(message) {
+    if (!authModalError) return;
+    authModalError.textContent = message || "";
+    authModalError.hidden = !message;
+  }
+
+  // Closing always clears the fields. A password left in the DOM is a password
+  // left in the DOM, and the dialog can be reopened by a different role in the
+  // same tab.
+  function closeAuthModal(values) {
+    const settle = authModalSettle;
+    authModalSettle = null;
+    authModalMustDifferFrom = "";
+    if (authModal) authModal.hidden = true;
+    if (authModalPass) authModalPass.value = "";
+    if (authModalNew) authModalNew.value = "";
+    authModalShowError("");
+    if (settle) settle(values);
+  }
+
+  // Resolves with the submitted values, or null if the dialog was cancelled —
+  // and "cancelled" is an answer, not an error, so every caller decides what
+  // that means for it.
+  function openAuthModal(mode, opts = {}) {
+    // Settle any earlier dialog first: a late answer must never be mistaken for
+    // the answer to the one now on screen.
+    if (authModalSettle) closeAuthModal(null);
+    if (!authModal) return Promise.resolve(null);
+    const copy = AUTH_MODAL_COPY[mode] || AUTH_MODAL_COPY.authorize;
+    authModalMode = AUTH_MODAL_COPY[mode] ? mode : "authorize";
+    authModalMustDifferFrom = opts.mustDifferFrom || "";
+    authModalTitle.textContent = copy.title;
+    authModalSubtitle.textContent = copy.subtitle;
+    authModalUser.value = opts.username || "";
+    authModalUserField.hidden = !opts.username;
+    // A known account is shown, not offered: only the account itself can change
+    // its own password, and re-authenticating mid-session is re-proving that
+    // account rather than switching to another one.
+    authModalUser.readOnly = Boolean(opts.usernameLocked);
+    authModalPassField.hidden = !copy.withPassword;
+    authModalPassLabel.textContent = copy.passwordLabel;
+    authModalPassHint.textContent = copy.passwordHint;
+    authModalNewField.hidden = !copy.withNewPassword;
+    authModalSubmit.textContent = copy.submit;
+    authModalShowError("");
+    authModal.hidden = false;
+    try { (copy.withNewPassword ? authModalNew : authModalPass).focus(); } catch {}
+    return new Promise(resolve => { authModalSettle = resolve; });
+  }
+
+  if (authModalForm) {
+    authModalForm.addEventListener("submit", event => {
+      // No action attribute on the form: a submit that reaches the browser would
+      // reload the page and drop the session it was about to authorise.
+      if (event && event.preventDefault) event.preventDefault();
+      if (!authModalSettle) return;
+      const values = {
+        username: (authModalUser && authModalUser.value || "").trim(),
+        password: (authModalPass && authModalPass.value) || "",
+        newPassword: (authModalNew && authModalNew.value) || ""
+      };
+      if (authModalMode === "setPassword") {
+        // The service's own rules, checked here only so a typo is answered in the
+        // dialog instead of by a refused request that has already ended the
+        // session. The service still decides.
+        if (values.newPassword.length < 12) {
+          authModalShowError("A new password needs at least 12 characters.");
+          return;
+        }
+        if (values.newPassword === authModalMustDifferFrom) {
+          authModalShowError("The new password must differ from the current one.");
+          return;
+        }
+      } else if (!values.username || !values.password) {
+        authModalShowError("A username and a password are both needed to authorise this change.");
+        return;
+      }
+      closeAuthModal(values);
+    });
+    const cancel = $("auth-modal-cancel");
+    const close = $("auth-modal-close");
+    if (cancel) cancel.addEventListener("click", () => closeAuthModal(null));
+    if (close) close.addEventListener("click", () => closeAuthModal(null));
+    document.addEventListener("keydown", event => {
+      if (event && event.key === "Escape" && authModalSettle) closeAuthModal(null);
+    });
+  }
+
+  // Sign in through the dialog, for the same reason the page never had a key
+  // field: a value typed into a dialog is not in the markup, not readable back,
+  // and not in a screenshot of the form. Cancelling, an empty answer and a
+  // missing dialog all fail closed — nothing is sent, so nothing is granted.
   async function signIn() {
-    let username = "";
-    let password = "";
-    try {
-      username = (window.prompt("Supervisor username:") || "").trim();
-      if (username) password = window.prompt(`Password for ${username}:`) || "";
-    } catch { username = ""; password = ""; }
+    const who = await openAuthModal("authorize", {
+      username: (inputSupervisorUser && inputSupervisorUser.value.trim()) || "supervisor"
+    });
+    const username = who && who.username ? who.username : "";
+    const password = who && who.password ? who.password : "";
+    if (username && inputSupervisorUser) inputSupervisorUser.value = username;
     if (!username || !password) {
       cfgStatus("Not signed in: a username and a password are both needed.", false);
       return false;
@@ -1156,19 +1626,45 @@
         body: JSON.stringify({ username, password })
       });
       signedInAs = me.username || username;
-      cfgStatus(`Signed in as ${signedInAs} (${me.role}).`, true);
       if (me.mustChangePassword) {
-        cfgStatus(`Signed in as ${signedInAs}, but the account owes a password change — change it before saving a policy.`,
-          false);
+        const answer = await openAuthModal("setPassword", {
+          username: signedInAs,
+          usernameLocked: true,
+          mustDifferFrom: password
+        });
+        const newPw = answer && answer.newPassword ? answer.newPassword : "";
+        if (newPw) {
+          try {
+            await api("/auth/change-password", {
+              method: "POST",
+              body: JSON.stringify({ currentPassword: password, newPassword: newPw })
+            });
+            cfgStatus(`Signed in as ${signedInAs} (${me.role}). Password updated.`, true);
+            log(`Signed in as ${signedInAs} (${me.role}) and updated password.`);
+          } catch (pe) {
+            signedInAs = "";
+            cfgStatus(`Sign-in refused: password change failed (${pe.message}).`, false);
+            await signOut("failed password change");
+            updateRoleDisplay();
+            return false;
+          }
+        } else {
+          signedInAs = "";
+          cfgStatus("Sign-in cancelled: a new password (min 12 chars, different from current) is required.", false);
+          await signOut("cancelled password change");
+          updateRoleDisplay();
+          return false;
+        }
+      } else {
+        cfgStatus(`Signed in as ${signedInAs} (${me.role}).`, true);
+        log(`Signed in as ${signedInAs} (${me.role}).`);
       }
-      log(`Signed in as ${signedInAs} (${me.role}).`);
+      updateRoleDisplay();
       return true;
     } catch (e) {
-      // One refusal for every reason (the service answers a generic 401), and the
-      // password is not echoed anywhere — not into the status line, not into the
-      // decision log.
       signedInAs = "";
       cfgStatus(`Sign-in refused (${e.message}).`, false);
+      updateRoleDisplay();
       return false;
     }
   }
@@ -1179,12 +1675,29 @@
   async function signOut(why) {
     const was = signedInAs;
     signedInAs = "";
+    currentRole = null;
     try {
       await api("/auth/logout", { method: "POST" });
     } catch { /* nothing to end, or nothing reachable — the label is cleared regardless */ }
     if (was) log(`Signed out ${was} (${why}).`);
+    showLoginPage();
     return was;
   }
+
+  $("btn-sign-in").addEventListener("click", () => {
+    showLoginPage();
+  });
+
+  // "Switch role" / "Log out" hands the workstation over, which is more than an
+  // identity change: an open camera (and its indicator light) and an open session
+  // belong to the person who just left. switchRole() releases both before the
+  // picker comes back — the plain signOut() it used to call left the camera
+  // streaming and the session ACTIVE server-side, with nothing on screen to show
+  // it. The policy status line stays out of it: a role switch is not a policy
+  // outcome, and a stale green "Signed out …" chip in the form footer said it was.
+  $("btn-sign-out").addEventListener("click", () => {
+    switchRole().catch(e => log("role switch failed: " + e.message));
+  });
 
   $("btn-cfg-sign-out").addEventListener("click", () => {
     signOut("sign-out button").then(was => cfgStatus(
@@ -1242,6 +1755,7 @@
     loadedWorkflow = workflow || cfg.workflow.value;
     refreshDirtyMark();
     refreshDiff();
+    syncWorkflowSegmented();
   }
 
   // Both transitions matter: the marker appears on the first edit and clears
@@ -1324,12 +1838,21 @@
       discard = window.confirm(`The ${loadedWorkflow} policy has unsaved changes.\n\n`
           + `Discard them and load ${replacement} instead?`) === true;
     } catch { discard = false; }
-    if (!discard) cfg.workflow.value = loadedWorkflow;
+    if (!discard) {
+      cfg.workflow.value = loadedWorkflow;
+      syncWorkflowSegmented();
+    }
     return discard;
   }
 
   CFG_FIELDS.forEach(el => {
-    const onEdit = () => { refreshDirtyMark(); refreshDiff(); };
+    const onEdit = () => {
+      if (currentRole === "OPERATOR") {
+        cfgStatus("You do not have authority to change policy. Edits cannot be saved by an operator.", false);
+      }
+      refreshDirtyMark();
+      refreshDiff();
+    };
     el.addEventListener("input", onEdit);
     el.addEventListener("change", onEdit);
   });
@@ -1352,7 +1875,16 @@
 
   async function saveConfig() {
     const wf = cfg.workflow.value;
-    // Sign in only when this page has not done so yet. Cancelling the prompt aborts
+    if (currentRole === "OPERATOR") {
+      const msg = "You do not have authority to change policy. Only a supervisor has permission to modify configuration.";
+      cfgStatus(msg, false);
+      try {
+        window.alert("Authority Denied: You do not have authority to change policy. Only a supervisor can make changes.");
+      } catch {}
+      log("Operator attempted to save policy: Refused (Insufficient authority).");
+      return;
+    }
+    // Sign in only when this page has not done so yet. Closing the dialog aborts
     // the save rather than sending a PUT the service would refuse.
     if (!signedInAs && !(await signIn())) return;
     const challengeTypes = CFG_TYPES.filter(([box]) => box.checked).map(([, name]) => name);
@@ -1389,7 +1921,11 @@
         return;
       }
       if (/FORBIDDEN/.test(e.message)) {
-        cfgStatus(`Not saved: this account may not write policy (${e.message}).`, false);
+        const msg = `Not saved: this account may not write policy. You do not have authority to change policy. (${e.message})`;
+        cfgStatus(msg, false);
+        try {
+          window.alert("Authority Denied: You do not have authority to change policy.");
+        } catch {}
         return;
       }
       throw e;
@@ -1429,9 +1965,38 @@
       cfgStatus(`Reload failed (${e.message}); restored the last loaded ${loadedWorkflow} policy.`, false);
     }
   });
+  const WF_BTNS = [
+    { el: $("btn-wf-resident"), wf: "RESIDENT" },
+    { el: $("btn-wf-operator"), wf: "OPERATOR" },
+    { el: $("btn-wf-supervisor"), wf: "SUPERVISOR" }
+  ];
+
+  function syncWorkflowSegmented() {
+    const current = (cfg && cfg.workflow) ? cfg.workflow.value : "RESIDENT";
+    WF_BTNS.forEach(b => {
+      if (!b.el) return;
+      if (b.wf === current) {
+        b.el.classList.add("active");
+      } else {
+        b.el.classList.remove("active");
+      }
+    });
+  }
+
+  WF_BTNS.forEach(b => {
+    if (!b.el) return;
+    b.el.addEventListener("click", () => {
+      if (!cfg.workflow || cfg.workflow.value === b.wf) return;
+      cfg.workflow.value = b.wf;
+      cfg.workflow.dispatchEvent(new Event("change"));
+      syncWorkflowSegmented();
+    });
+  });
+
   cfg.workflow.addEventListener("change", () => {
     if (!confirmDiscard(cfg.workflow.value)) return;
     loadConfig().catch(e => cfgStatus(e.message, false));
+    syncWorkflowSegmented();
   });
   // Closing or reloading the tab loses the same edits — and, mid-check, the
   // in-flight session with them: the run is abandoned part-pipeline and the
@@ -1545,6 +2110,23 @@
         lines.push("  expected prev: " + truncateHash(v.expectedPrevHash));
         lines.push("  stored prev:   " + truncateHash(v.storedPrevHash));
       }
+      const sideBadge = $("sidebar-chain-badge");
+      const sideCount = $("sidebar-chain-count");
+      const sideHmac = $("sidebar-chain-hmac");
+      const sideTime = $("sidebar-chain-time");
+      if (sideBadge) {
+        if (v.intact) {
+          sideBadge.className = "pill-badge pill-success";
+          sideBadge.innerHTML = '<span class="pill-dot"></span>Intact';
+        } else {
+          sideBadge.className = "pill-badge pill-danger";
+          sideBadge.innerHTML = '<span class="pill-dot"></span>Broken';
+        }
+      }
+      if (sideCount && v.chainedEntries !== undefined) sideCount.textContent = String(v.chainedEntries);
+      if (sideHmac && v.hmac !== undefined) sideHmac.textContent = v.hmac ? "Yes" : "No";
+      if (sideTime) sideTime.textContent = "Just now";
+
       pre.textContent = lines.join("\n");
     } catch (e) {
       $("pill-chain").textContent = "chain: unreachable";
@@ -1554,14 +2136,22 @@
   }
 
   $("btn-chain-refresh").addEventListener("click", () => refreshAuditVerify());
+  const btnSidebarVerify = $("btn-sidebar-verify-chain");
+  if (btnSidebarVerify) {
+    btnSidebarVerify.addEventListener("click", () => {
+      $("btn-chain-refresh").click();
+    });
+  }
 
   // ---------- supervisor tabs ----------
   //
   // The Supervisor container is the Operator surface (Verify, Sessions, Audit,
   // Rejection reasons) plus the admin views (Policy, Chain, Metrics, Sweep,
-  // Diagnostics). One panel is on screen at a time and Verify is the entry tab,
-  // so entering the role lands on the capture screen.
-  const TABS = ["verify", "sessions", "audit", "rejections", "policy", "chain",
+  // Diagnostics). One panel is on screen at a time. The entry tab is the one the
+  // role actually starts on: the Supervisor lands on Policy (the screen its
+  // authority is for, and the design's supervisor mock), the Operator on
+  // Sessions (its read-only review surface). Verify stays one click away.
+  const TABS = ["verify", "sessions", "audit", "rejections", "policy", "users", "chain",
                 "metrics", "sweep", "diagnostics"];
 
   function showTab(name) {
@@ -1591,35 +2181,186 @@
         workflow: session.workflowType || "—",
         device: session.deviceId || "—",
         view,
-        at: new Date().toLocaleTimeString()
+        at: new Date().toLocaleTimeString(),
+        // Only what the creation response said. A column with nothing known
+        // shows nothing known — the status is filled from GET /sessions/{id}
+        // when the run settles or the operator refreshes.
+        status: session.status || null,
+        retries: null,
+        reason: null
       });
     }
     renderSessionList();
   }
 
+  const SAMPLE_SESSIONS = [
+    { id: "7c1e92f1-0000-0000-0000-000000000b92", displayId: "7c1e...b92", workflow: "RESIDENT", status: "PASSED", retries: 0, reason: "—", at: "2026-10-13 10:42" },
+    { id: "a04d3fe2-0000-0000-0000-0000000003fe", displayId: "a04d...3fe", workflow: "OPERATOR", status: "PASSED", retries: 1, reason: "—", at: "2026-10-13 10:31" },
+    { id: "e9b2c073-0000-0000-0000-000000000c07", displayId: "e9b2...c07", workflow: "RESIDENT", status: "FAILED", retries: 3, reason: "max_retries_exceeded", at: "2026-10-13 10:18" },
+    { id: "51afd684-0000-0000-0000-000000000d68", displayId: "51af...d68", workflow: "SUPERVISOR", status: "ACTIVE", retries: 0, reason: "Challenge in progress", at: "2026-10-13 10:12" },
+    { id: "0b73a1c5-0000-0000-0000-000000000a1c", displayId: "0b73...a1c", workflow: "RESIDENT", status: "FAILED", retries: 0, reason: "presentation_attack", at: "2026-10-13 09:57" },
+    { id: "c8d6e456-0000-0000-0000-000000000e45", displayId: "c8d6...e45", workflow: "OPERATOR", status: "EXPIRED", retries: 0, reason: "session_closed", at: "2026-10-13 09:40" },
+  ];
+
   function renderSessionList() {
     const list = $("sessions-list");
-    list.textContent = "";
-    $("sessions-count").textContent = tabSessions.length
-      ? `${tabSessions.length} session${tabSessions.length > 1 ? "s" : ""} created in this tab`
-      : "no sessions yet";
-    if (!tabSessions.length) {
-      list.textContent = "No session has been created in this browser tab yet — run a "
-        + "check in Verify, or a resident check in the Resident role.";
-      return;
+    const tbody = $("sessions-table-body");
+    const wfFilter = $("filter-workflow") ? $("filter-workflow").value : "";
+    const stFilter = $("filter-status") ? $("filter-status").value : "";
+
+    if (list) {
+      list.textContent = "";
+      if ($("sessions-count")) {
+        $("sessions-count").textContent = tabSessions.length
+          ? `${tabSessions.length} session${tabSessions.length > 1 ? "s" : ""} created in this tab`
+          : "no sessions yet";
+      }
+      if (!tabSessions.length) {
+        list.textContent = "No session has been created in this browser tab yet — run a "
+          + "check in Verify, or a resident check in the Resident role.";
+      } else {
+        for (const s of tabSessions) {
+          const row = document.createElement("div");
+          row.className = "session-row" + (s.id === selectedSession ? " selected" : "");
+          const label = document.createElement("span");
+          label.className = "session-label";
+          label.textContent = `${s.id}  ${s.workflow}  ${s.view}  ${s.at}`;
+          const open = document.createElement("button");
+          open.textContent = "Open";
+          open.addEventListener("click", () => { openSession(s.id).catch(e => log("open error: " + e.message)); });
+          row.append(label, open);
+          list.append(row);
+        }
+      }
     }
-    for (const s of tabSessions) {
-      const row = document.createElement("div");
-      row.className = "session-row" + (s.id === selectedSession ? " selected" : "");
-      const label = document.createElement("span");
-      label.className = "session-label";
-      label.textContent = `${s.id}  ${s.workflow}  ${s.view}  ${s.at}`;
-      const open = document.createElement("button");
-      open.textContent = "Open";
-      open.addEventListener("click", () => { openSession(s.id).catch(e => log("open error: " + e.message)); });
-      row.append(label, open);
-      list.append(row);
+
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    // Real rows first: only sessions this tab created are sessions. The service
+    // exposes no session-list endpoint, so when there are none the table shows
+    // the design's layout with illustrative rows — every one of them tagged and
+    // stripped of its action, because a placeholder must never read as a real
+    // verification.
+    const usingSamples = tabSessions.length === 0;
+    const activeList = usingSamples
+      ? SAMPLE_SESSIONS.map(s => Object.assign({}, s, { sample: true }))
+      : tabSessions.map(s => ({
+          id: s.id,
+          displayId: s.id.length > 12 ? s.id.slice(0, 4) + "..." + s.id.slice(-3) : s.id,
+          workflow: s.workflow || "—",
+          status: s.status || "UNKNOWN",
+          retries: (s.retries === null || s.retries === undefined) ? "—" : s.retries,
+          reason: s.reason || "—",
+          at: s.at || new Date().toLocaleString()
+        }));
+
+    const note = $("sessions-note");
+    if (note) {
+      note.hidden = !usingSamples;
+      note.textContent = usingSamples
+        ? "Sample rows: the service has no session-list endpoint, so only sessions created in this "
+          + "browser tab are real. Sample rows cannot be opened, and Audit/Rejections describe only "
+          + "a real selection."
+        : "";
     }
+
+    const filtered = activeList.filter(s => {
+      if (wfFilter && s.workflow !== wfFilter) return false;
+      if (stFilter && s.status !== stFilter) return false;
+      return true;
+    });
+
+    for (const s of filtered) {
+      const tr = document.createElement("tr");
+      if (s.sample) tr.className = "is-sample";
+      else if (s.id === selectedSession) tr.className = "selected";
+
+      let statusPillClass = "pill-neutral";
+      if (s.status === "PASSED") statusPillClass = "pill-success";
+      else if (s.status === "FAILED") statusPillClass = "pill-danger";
+      else if (s.status === "ACTIVE") statusPillClass = "pill-warning";
+
+      const tdSession = document.createElement("td");
+      const sSpan = document.createElement("span");
+      sSpan.className = "session-mono-id";
+      sSpan.textContent = s.displayId;
+      tdSession.appendChild(sSpan);
+      if (s.sample) {
+        const tag = document.createElement("span");
+        tag.className = "sample-tag";
+        tag.textContent = "sample";
+        tdSession.appendChild(tag);
+      }
+
+      const tdWf = document.createElement("td");
+      tdWf.textContent = s.workflow;
+
+      const tdStatus = document.createElement("td");
+      const stSpan = document.createElement("span");
+      stSpan.className = "pill-badge " + statusPillClass;
+      const dot = document.createElement("span");
+      dot.className = "pill-dot";
+      const txt = document.createElement("span");
+      txt.textContent = s.status;
+      stSpan.append(dot, txt);
+      tdStatus.appendChild(stSpan);
+
+      const tdRetries = document.createElement("td");
+      tdRetries.textContent = String(s.retries !== undefined ? s.retries : 0);
+
+      const tdReason = document.createElement("td");
+      tdReason.textContent = s.reason || "—";
+
+      const tdCreated = document.createElement("td");
+      tdCreated.textContent = s.at || "—";
+
+      const tdAction = document.createElement("td");
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "secondary";
+      openBtn.textContent = "Open";
+      if (s.sample) {
+        // There is nothing to open: the id is a placeholder, so a click would
+        // only produce a 404 in the decision log.
+        openBtn.disabled = true;
+        openBtn.title = "Sample row — no such session exists";
+      } else {
+        openBtn.addEventListener("click", () => {
+          openSession(s.id).catch(e => log("open error: " + e.message));
+        });
+      }
+      tdAction.appendChild(openBtn);
+
+      tr.append(tdSession, tdWf, tdStatus, tdRetries, tdReason, tdCreated, tdAction);
+      tbody.appendChild(tr);
+    }
+  }
+
+  const filterWf = $("filter-workflow");
+  const filterSt = $("filter-status");
+  if (filterWf) filterWf.addEventListener("change", renderSessionList);
+  if (filterSt) filterSt.addEventListener("change", renderSessionList);
+
+  // Re-read the sessions this tab created from GET /sessions/{id} — the only
+  // endpoint that exists for it — so the table reports the service's status
+  // rather than the console's memory of a creation response. Nothing is derived:
+  // a session that cannot be re-read keeps the state it was last seen in, and one
+  // that was never read shows UNKNOWN.
+  async function refreshSessionStatuses() {
+    const ids = tabSessions.map(s => s.id);
+    if (!ids.length) return;
+    await Promise.all(ids.map(async id => {
+      const entry = tabSessions.find(s => s.id === id);
+      try {
+        const detail = await api(`/sessions/${id}`);
+        if (!entry) return;
+        entry.status = detail.status || entry.status;
+        entry.retries = detail.retryCount;
+        entry.reason = detail.failureReason || "—";
+      } catch { /* unreachable session: keep what was last known */ }
+    }));
+    renderSessionList();
   }
 
   function renderSessionDetail(d) {
@@ -1654,10 +2395,98 @@
     log(`session opened: ${id} status=${detail.status}`);
   }
 
-  $("btn-sessions").addEventListener("click", () => {
+  $("btn-sessions").addEventListener("click", async () => {
+    await refreshSessionStatuses().catch(() => {});
     renderSessionList();
     if (selectedSession) openSession(selectedSession).catch(e => log("open error: " + e.message));
   });
+
+  // ---------- users (read-only) ----------
+  //
+  // GET /api/v1/users is the whole of this panel: the service returns the
+  // accounts it holds, and every route on this page is authorised from the
+  // supervisor session. Creating an account, changing a role, disabling one and
+  // resetting a password are their own flows with their own confirmation
+  // semantics (docs/configuration.md), and are deliberately not wired into a
+  // table row yet — the panel says what it is instead of offering buttons that
+  // do nothing.
+  const ROLE_PILL = u => {
+    const pill = document.createElement("span");
+    pill.className = "pill-badge pill-brand";
+    const dot = document.createElement("span");
+    dot.className = "pill-dot";
+    const text = document.createElement("span");
+    text.textContent = u.role || "—";
+    pill.append(dot, text);
+    return pill;
+  };
+
+  const STATE_PILL = u => {
+    const pill = document.createElement("span");
+    const dot = document.createElement("span");
+    dot.className = "pill-dot";
+    const text = document.createElement("span");
+    // The service's own flags decide the badge: disabled outranks an owed
+    // password change, and neither is inferred from anything else.
+    if (u.disabled) {
+      pill.className = "pill-badge pill-danger";
+      text.textContent = "Disabled";
+    } else if (u.mustChangePassword) {
+      pill.className = "pill-badge pill-warning";
+      text.textContent = "Must change password";
+    } else {
+      pill.className = "pill-badge pill-success";
+      text.textContent = "Active";
+    }
+    pill.append(dot, text);
+    return pill;
+  };
+
+  async function loadUsers() {
+    const tbody = $("users-table-body");
+    if (!tbody) return;
+    const count = $("users-count");
+    try {
+      const users = await api("/users");
+      tbody.innerHTML = "";
+      for (const u of users) {
+        const tr = document.createElement("tr");
+        const tdUser = document.createElement("td");
+        const name = document.createElement("span");
+        name.className = "session-mono-id";
+        name.textContent = u.username;
+        tdUser.appendChild(name);
+        const tdRole = document.createElement("td");
+        tdRole.appendChild(ROLE_PILL(u));
+        const tdState = document.createElement("td");
+        tdState.appendChild(STATE_PILL(u));
+        const tdFirst = document.createElement("td");
+        tdFirst.textContent = u.mustChangePassword ? "pending" : "done";
+        const tdCreated = document.createElement("td");
+        const at = u.createdAt ? String(u.createdAt) : "";
+        tdCreated.textContent = at ? at.slice(0, 19).replace("T", " ") : "—";
+        tr.append(tdUser, tdRole, tdState, tdFirst, tdCreated);
+        tbody.appendChild(tr);
+      }
+      if (count) {
+        count.textContent = `${users.length} account${users.length === 1 ? "" : "s"}`;
+      }
+      log(`users listed: ${users.length}`);
+    } catch (e) {
+      // A refused read (no supervisor session) is reported where the table would
+      // be, so the panel never looks empty when it is actually unauthorised.
+      tbody.innerHTML = "";
+      if (count) count.textContent = "not available: " + e.message;
+      log("users error: " + e.message);
+    }
+  }
+
+  if ($("btn-users-refresh")) {
+    $("btn-users-refresh").addEventListener("click", () => loadUsers().catch(() => {}));
+  }
+  if ($("tab-users")) {
+    $("tab-users").addEventListener("click", () => loadUsers().catch(() => {}));
+  }
 
   // ---------- rejection reasons ----------
   //
@@ -1736,14 +2565,18 @@
       log(`sweep: targetBpcer=${r.targetBpcer} recommended=`
         + `${r.recommendedThreshold === null || r.recommendedThreshold === undefined ? "none" : r.recommendedThreshold}`);
     } catch (e) {
-      log("sweep error: " + e.message);
-      $("sweep-rows").textContent = "Sweep failed: " + e.message;
+      if (/FORBIDDEN/.test(e.message)) {
+        $("sweep-rows").textContent = "Authority Denied: You do not have authority to run threshold sweeps. Only a supervisor has permission.";
+      } else {
+        log("sweep error: " + e.message);
+        $("sweep-rows").textContent = "Sweep failed: " + e.message;
+      }
     }
   }
   $("btn-sweep").addEventListener("click", () => { refreshSweep(); });
 
-  // The console starts with no signed-in user: resident capture is available,
-  // supervisor tabs are hidden until sign-in authenticates a supervisor.
+  // The console starts with role selection login page:
+  // supervisor tabs and resident capture are hidden until sign-in authenticates a role.
   showTab("verify");
   renderSessionList();
   refreshRejections();
@@ -1757,8 +2590,23 @@
   // recent edit — and its risk level — are visible at a glance, not only after
   // clicking refresh. Same open GET as the policy read; no session needed.
   loadConfigAudit().catch(e => cfgStatus(e.message, false));
-  // Initialize the role display based on current auth state
-  updateRoleDisplay();
+
+  // Initially show only the login page for role selection
+  showLoginPage();
+
+  // Check existing session if available
+  api("/auth/me").then(me => {
+    if (me && me.username) {
+      if (me.mustChangePassword) {
+        // Confined session would block public requests with 403; clear it so console operates normally
+        signOut("uncompleted password change");
+      } else if (inputSupervisorUser && me.role === "SUPERVISOR") {
+        inputSupervisorUser.value = me.username;
+      } else if (inputOperatorUser && me.role === "OPERATOR") {
+        inputOperatorUser.value = me.username;
+      }
+    }
+  }).catch(() => {});
   // Skip background polling while the tab is hidden — no reason to spend CPU/battery
   // refreshing a console nobody is looking at.
   setInterval(() => {

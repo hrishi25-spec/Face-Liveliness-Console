@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>MOSIP Liveness Console - Policy</title>
+<!-- Tailwind CSS v3 with Forms and Container Queries -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#1d4ed8',
+              600: '#1e40af',
+              700: '#1d4ed8',
+            },
+            status: {
+              success: '#15803d',
+              successBg: '#dcfce7',
+              warning: '#b45309',
+              warningBg: '#fef3c7',
+              danger: '#b91c1c',
+              dangerBg: '#fee2e2'
+            }
+          }
+        }
+      }
+    }
+  </script>
+<!-- BEGIN: CustomStyles -->
+<style data-purpose="custom-elements">
+    /* Subtle font smoothing for crisp enterprise UI */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+  </style>
+<!-- END: CustomStyles -->
+</head>
+<body class="bg-[#f8fafc] text-slate-800 min-h-screen flex flex-col antialiased">
+<!-- BEGIN: MainHeader -->
+<header class="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+<!-- Brand / Title -->
+<div class="flex items-center space-x-3">
+<div class="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-sm tracking-tight shadow-sm">
+        M
+      </div>
+<h1 class="text-base font-semibold text-slate-900 tracking-tight">MOSIP Liveness Console</h1>
+</div>
+<!-- User & Role Profile Bar -->
+<div class="flex items-center space-x-3 text-sm">
+<span class="text-slate-500 font-normal">Signed in as <span class="text-slate-700 font-medium">staff.user</span></span>
+<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200/60">
+<span class="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+        Supervisor
+      </span>
+<button class="text-slate-600 hover:text-slate-900 transition-colors ml-1 text-sm font-normal" type="button">
+        Log out
+      </button>
+</div>
+</header>
+<!-- END: MainHeader -->
+<!-- BEGIN: MainContent -->
+<main class="flex-1 max-w-7xl w-full mx-auto px-6 py-8">
+<!-- Title & Description Header -->
+<section class="mb-6" data-purpose="page-intro">
+<h2 class="text-2xl font-bold text-slate-900">Policy</h2>
+<p class="text-sm text-slate-500 mt-1">Control how strict each workflow is. Changes apply to new sessions only.</p>
+</section>
+<!-- Navigation Sub-Tabs -->
+<nav aria-label="Secondary Navigation" class="flex items-center space-x-1 border-b border-slate-200 mb-8">
+<a class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 transition" href="#">Verify</a>
+<a class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 transition" href="#">Sessions</a>
+<a class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 transition" href="#">Audit</a>
+<a class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 transition" href="#">Rejections</a>
+<a class="px-3 py-2 text-sm font-medium text-blue-600 border-b-2 border-blue-600 -mb-[1px]" href="#">Policy</a>
+<a class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 transition" href="#">Users</a>
+<a class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 transition" href="#">Metrics</a>
+<a class="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 transition" href="#">Diagnostics</a>
+</nav>
+<!-- Grid Layout: Left Policy Form / Right Audit Sidebar -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+<!-- BEGIN: PolicyFormCard -->
+<section class="lg:col-span-8 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden" data-purpose="policy-configuration">
+<!-- Workflow Role Selector Tabs -->
+<div class="p-6 pb-4 border-b border-slate-100">
+<div class="inline-flex p-1 bg-slate-100 rounded-lg text-xs font-medium text-slate-600">
+<button class="px-4 py-1.5 rounded-md bg-white text-slate-900 font-semibold shadow-xs" type="button">
+              RESIDENT
+            </button>
+<button class="px-4 py-1.5 rounded-md text-slate-600 hover:text-slate-900 transition" type="button">
+              OPERATOR
+            </button>
+<button class="px-4 py-1.5 rounded-md text-slate-600 hover:text-slate-900 transition" type="button">
+              SUPERVISOR
+            </button>
+</div>
+</div>
+<form class="p-6 space-y-6" onsubmit="event.preventDefault();">
+<!-- Input Group: Passive Threshold & Minimum Challenges -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<!-- Passive threshold -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="passive_threshold">
+                Passive threshold
+              </label>
+<input class="w-full text-sm border-slate-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-900 font-mono" id="passive_threshold" name="passive_threshold" type="text" value="0.80"/>
+<p class="text-[11px] text-slate-400 mt-1.5">Higher is stricter. Range 0 to 1.</p>
+</div>
+<!-- Minimum challenges -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="min_challenges">
+                Minimum challenges
+              </label>
+<input class="w-full text-sm border-slate-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-900 font-mono" id="min_challenges" name="min_challenges" type="text" value="1"/>
+<p class="text-[11px] text-slate-400 mt-1.5">Actions required after a weak passive score.</p>
+</div>
+</div>
+<!-- Input Group: Challenge Timeout & Max Retries -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<!-- Challenge timeout (ms) -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="challenge_timeout">
+                Challenge timeout (ms)
+              </label>
+<input class="w-full text-sm border-slate-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-900 font-mono" id="challenge_timeout" name="challenge_timeout" type="text" value="20000"/>
+<p class="text-[11px] text-slate-400 mt-1.5">At least 15000.</p>
+</div>
+<!-- Max retries -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="max_retries">
+                Max retries
+              </label>
+<input class="w-full text-sm border-slate-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-900 font-mono" id="max_retries" name="max_retries" type="text" value="3"/>
+<p class="text-[11px] text-slate-400 mt-1.5">Attempts before the failure action applies.</p>
+</div>
+</div>
+<!-- Select Field: On repeated failure -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="failure_action">
+              On repeated failure
+            </label>
+<div class="relative">
+<select class="w-full text-sm border-slate-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-800 pr-10 font-mono" id="failure_action" name="failure_action">
+<option selected="" value="ESCALATE_TO_OPERATOR">ESCALATE_TO_OPERATOR</option>
+<option value="REJECT_SESSION">REJECT_SESSION</option>
+<option value="LOCK_ACCOUNT">LOCK_ACCOUNT</option>
+</select>
+</div>
+</div>
+<!-- Toggle Option: Active liveness enabled -->
+<div class="pt-2">
+<div class="flex items-center justify-between">
+<div>
+<label class="text-sm font-semibold text-slate-800 cursor-pointer" for="active-liveness-toggle">
+                  Active liveness enabled
+                </label>
+<p class="text-[11px] text-slate-400 mt-0.5">
+                  Ask for blink, smile or head turn when the passive score is low.
+                </p>
+</div>
+<!-- Switch component -->
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" id="active-liveness-toggle" type="checkbox"/>
+<div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+</label>
+</div>
+</div>
+<!-- Bottom Actions / Unsaved Changes status -->
+<div class="pt-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4"><div class="flex items-center gap-2"><span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>All policy settings synchronized</span><span class="text-xs text-slate-400 font-mono">Active policy v1.4.2</span></div><div class="flex items-center space-x-3 w-full sm:w-auto justify-end"><button class="px-4 py-2 bg-slate-100 text-slate-400 border border-slate-200 rounded-lg text-xs font-semibold cursor-not-allowed" disabled="" type="button">Policy saved</button></div></div>
+</form>
+</section>
+<!-- END: PolicyFormCard -->
+<!-- BEGIN: SidebarStatusCards -->
+<aside class="lg:col-span-4 space-y-6" data-purpose="sidebar-audit-details">
+<!-- Audit Chain Status Card -->
+<div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+<div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
+<h3 class="text-sm font-bold text-slate-900 tracking-tight">Audit chain</h3>
+<!-- Green Status Pill -->
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              Intact
+            </span>
+</div>
+<!-- Metrics Key-Value List -->
+<dl class="py-3.5 space-y-2.5 text-xs border-b border-slate-100">
+<div class="flex justify-between items-center">
+<dt class="text-slate-500">HMAC keyed</dt>
+<dd class="font-semibold text-slate-800">Yes</dd>
+</div>
+<div class="flex justify-between items-center">
+<dt class="text-slate-500">Chained entries</dt>
+<dd class="font-semibold text-slate-800 font-mono">128</dd>
+</div>
+<div class="flex justify-between items-center">
+<dt class="text-slate-500">Last verified</dt>
+<dd class="font-semibold text-slate-800">Just now</dd>
+</div>
+</dl>
+<!-- Verify Chain CTA Button -->
+<div class="pt-3.5"><button class="w-full py-2 px-3 border border-emerald-200 bg-emerald-50 rounded-lg text-xs font-semibold text-emerald-700 flex items-center justify-center gap-1.5 transition" type="button"><span class="font-bold">✓</span> Chain Verified (128/128 blocks valid)</button><div class="mt-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg text-[11px] text-emerald-800 leading-relaxed"><div class="font-semibold mb-0.5 flex items-center gap-1 text-emerald-900"><span class="w-1.5 h-1.5 rounded-full bg-emerald-600"></span> HMAC SHA-256 seal verified</div><p class="text-emerald-700">Zero tampering detected across 128 chained entries. Cryptographic integrity confirmed.</p></div></div>
+</div>
+<!-- Security / Policy Saving Info Card -->
+<div class="bg-slate-50/80 border border-slate-200 rounded-xl p-4 text-xs text-slate-500 leading-relaxed">
+<div class="flex items-start space-x-2.5">
+<!-- Optional subtle lock icon indicator -->
+<svg class="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 24 24">
+<path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<p>
+              Saving a policy asks for your supervisor credentials. They are never stored in the browser.
+            </p>
+</div>
+</div>
+</aside>
+<!-- END: SidebarStatusCards -->
+</div>
+</main>
+<!-- END: MainContent -->
+</body></html>

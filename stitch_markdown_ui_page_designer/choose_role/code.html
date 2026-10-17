@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_blank" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{colors:{"on-background":"#0b1c30","error":"#ba1a1a","secondary-container":"#dae2fd","on-error":"#ffffff","tertiary-fixed-dim":"#adc6ff","status-success-bg":"#DCFCE7","bg-subtle":"#F1F5F9","status-warning-border":"#FCD34D","inverse-surface":"#213145","status-neutral-bg":"#F1F5F9","on-surface-variant":"#434654","tertiary":"#004496","on-tertiary-container":"#cbdaff","surface-container-highest":"#d3e4fe","text-muted":"#64748B","status-danger":"#B91C1C","on-primary-fixed-variant":"#003ea8","border-default":"#E2E8F0","on-surface":"#0b1c30","on-tertiary":"#ffffff","status-neutral":"#475569","outline":"#737685","secondary-fixed-dim":"#bec6e0","secondary":"#565e74","primary":"#003eaa","status-success-border":"#86EFAC","status-danger-bg":"#FEE2E2","bg-page":"#F8FAFC","on-secondary":"#ffffff","primary-fixed-dim":"#b4c5ff","inverse-on-surface":"#eaf1ff","on-error-container":"#93000a","surface-container-low":"#eff4ff","surface-tint":"#1c55cf","on-secondary-fixed":"#131b2e","on-tertiary-fixed-variant":"#004395","tertiary-fixed":"#d8e2ff","surface-container-lowest":"#ffffff","primary-container":"#1e56d0","on-tertiary-fixed":"#001a42","status-warning":"#B45309","status-neutral-border":"#CBD5E1","background":"#f8f9ff","surface-bright":"#f8f9ff","inverse-primary":"#b4c5ff","on-secondary-fixed-variant":"#3f465c","border-strong":"#CBD5E1","text-secondary":"#475569","outline-variant":"#c3c6d6","surface-container":"#e5eeff","error-container":"#ffdad6","status-danger-border":"#FCA5A5","on-primary-container":"#cfd9ff","surface-variant":"#d3e4fe","text-primary":"#0F172A","secondary-fixed":"#dae2fd","primary-fixed":"#dbe1ff","surface":"#f8f9ff","bg-surface":"#FFFFFF","surface-container-high":"#dce9ff","on-secondary-container":"#5c647a","status-warning-bg":"#FEF3C7","on-primary-fixed":"#00174b","on-primary":"#ffffff","tertiary-container":"#005bc4","surface-dim":"#cbdbf5","status-success":"#15803D"},borderRadius:{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},spacing:{"space-2xs":"0.125rem","space-md":"1rem","margin-mobile":"1rem","space-sm":"0.5rem","gutter":"1.5rem","space-xl":"2rem","space-lg":"1.5rem","margin":"2rem","gutter-mobile":"1rem","space-xs":"0.25rem","space-2xl":"3rem"},fontFamily:{"code":["JetBrains Mono"],"headline-sm":["Inter"],"label-md":["Inter"],"display":["Inter"],"label-sm":["Inter"],"headline-lg":["Inter"],"headline-md":["Inter"],"body-lg":["Inter"],"label-lg":["Inter"],"body-sm":["Inter"],"display-mobile":["Inter"],"body-md":["Inter"],"headline-lg-mobile":["Inter"]},fontSize:{"code":["12px",{"lineHeight":"16px","fontWeight":"400"}],"headline-sm":["16px",{"lineHeight":"22px","fontWeight":"600"}],"label-md":["12px",{"lineHeight":"16px","fontWeight":"500"}],"display":["32px",{"lineHeight":"40px","letterSpacing":"-0.02em","fontWeight":"700"}],"label-sm":["11px",{"lineHeight":"14px","letterSpacing":"0.02em","fontWeight":"600"}],"headline-lg":["24px",{"lineHeight":"32px","letterSpacing":"-0.01em","fontWeight":"600"}],"headline-md":["18px",{"lineHeight":"24px","fontWeight":"600"}],"body-lg":["16px",{"lineHeight":"24px","fontWeight":"400"}],"label-lg":["14px",{"lineHeight":"20px","fontWeight":"500"}],"body-sm":["12px",{"lineHeight":"16px","fontWeight":"400"}],"display-mobile":["26px",{"lineHeight":"32px","letterSpacing":"-0.015em","fontWeight":"700"}],"body-md":["14px",{"lineHeight":"20px","fontWeight":"400"}],"headline-lg-mobile":["20px",{"lineHeight":"28px","letterSpacing":"-0.01em","fontWeight":"600"}]}}}};</script></head><body class="bg-bg-page font-body-md text-text-primary min-h-screen flex items-center justify-center antialiased"><main class="w-full flex items-center justify-center px-margin-mobile sm:px-margin"><div class="flex flex-col w-full">
+<div class="w-full max-w-6xl mx-auto py-10 px-4 sm:px-6 lg:px-8">
+<!-- Top Identity / Context Header -->
+<header class="flex items-center justify-between pb-10">
+<div class="flex items-center space-x-3">
+<div class="w-8 h-8 rounded-lg bg-primary-container text-on-primary flex items-center justify-center font-display text-headline-sm shadow-sm">
+          M
+        </div>
+<div class="flex flex-col">
+<span class="font-headline-md text-headline-sm text-text-primary tracking-tight">MOSIP Liveness Console</span>
+</div>
+</div>
+<!-- System status indicator (subtle enterprise touch) -->
+<div class="hidden sm:flex items-center space-x-2 bg-surface-container-lowest px-3 py-1.5 rounded-full shadow-sm">
+<span class="w-2 h-2 rounded-full bg-status-success animate-pulse"></span>
+<span class="font-label-sm text-text-muted">Node v1.4.2 Connected</span>
+</div>
+</header>
+<!-- Page Lead Section -->
+<div class="max-w-2xl pt-2 pb-10">
+<h1 class="font-display text-display text-text-primary tracking-tight">
+        Choose how you want to continue
+      </h1>
+<p class="font-body-lg text-body-lg text-text-secondary mt-2">
+        Select your role. Staff roles require sign-in.
+      </p>
+</div>
+<!-- Role Selection 3-Card Grid -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- Card 1: Resident -->
+<div class="group bg-surface-container-lowest rounded-xl shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between p-7">
+<div class="flex flex-col">
+<!-- Icon badge -->
+<div class="w-12 h-12 rounded-xl bg-secondary-fixed flex items-center justify-center text-primary-container mb-6 group-hover:scale-105 transition-transform duration-200">
+<span class="material-symbols-outlined text-[24px]">person</span>
+</div>
+<!-- Card Header & Copy -->
+<h2 class="font-headline-lg text-headline-lg text-text-primary mb-3">Resident</h2>
+<p class="font-body-md text-body-md text-text-secondary leading-relaxed min-h-[60px]">
+            Check that you are a live person during registration. No sign-in needed.
+          </p>
+<!-- Status / Requirement Pill -->
+<div class="mt-4 flex items-center">
+<span class="inline-flex items-center px-2.5 py-1 rounded-full bg-status-neutral-bg text-status-neutral font-label-md text-label-md">
+<span class="w-1.5 h-1.5 rounded-full bg-status-neutral mr-2"></span>
+              No sign-in
+            </span>
+</div>
+</div>
+<!-- Action Button -->
+<div class="pt-8">
+<button class="w-full h-11 rounded-lg bg-primary-container text-on-primary font-label-lg text-label-lg hover:bg-primary active:scale-[0.99] transition-all shadow-sm flex items-center justify-center" type="button">
+            Continue as Resident
+          </button>
+</div>
+</div>
+<!-- Card 2: Operator -->
+<div class="group bg-surface-container-lowest rounded-xl shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between p-7">
+<div class="flex flex-col">
+<!-- Icon badge -->
+<div class="w-12 h-12 rounded-xl bg-secondary-fixed flex items-center justify-center text-primary-container mb-6 group-hover:scale-105 transition-transform duration-200">
+<span class="material-symbols-outlined text-[24px]">assignment</span>
+</div>
+<!-- Card Header & Copy -->
+<h2 class="font-headline-lg text-headline-lg text-text-primary mb-3">Operator</h2>
+<p class="font-body-md text-body-md text-text-secondary leading-relaxed min-h-[60px]">
+            Verify your identity, review sessions, audit entries and rejection reasons. Read-only.
+          </p>
+<!-- Status / Requirement Pill -->
+<div class="mt-4 flex items-center">
+<span class="inline-flex items-center px-2.5 py-1 rounded-full bg-surface-container-low text-primary-container font-label-md text-label-md">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container mr-2"></span>
+              Staff sign-in
+            </span>
+</div>
+</div>
+<!-- Action Button -->
+<div class="pt-8">
+<button class="w-full h-11 rounded-lg bg-primary-container text-on-primary font-label-lg text-label-lg hover:bg-primary active:scale-[0.99] transition-all shadow-sm flex items-center justify-center" type="button">
+            Continue as Operator
+          </button>
+</div>
+</div>
+<!-- Card 3: Supervisor -->
+<div class="group bg-surface-container-lowest rounded-xl shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between p-7">
+<div class="flex flex-col">
+<!-- Icon badge -->
+<div class="w-12 h-12 rounded-xl bg-secondary-fixed flex items-center justify-center text-primary-container mb-6 group-hover:scale-105 transition-transform duration-200">
+<span class="material-symbols-outlined text-[24px]">verified_user</span>
+</div>
+<!-- Card Header & Copy -->
+<h2 class="font-headline-lg text-headline-lg text-text-primary mb-3">Supervisor</h2>
+<p class="font-body-md text-body-md text-text-secondary leading-relaxed min-h-[60px]">
+            Full access: policy, users, audit chain, metrics and diagnostics.
+          </p>
+<!-- Status / Requirement Pill -->
+<div class="mt-4 flex items-center">
+<span class="inline-flex items-center px-2.5 py-1 rounded-full bg-surface-container-low text-primary-container font-label-md text-label-md">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container mr-2"></span>
+              Staff sign-in
+            </span>
+</div>
+</div>
+<!-- Action Button -->
+<div class="pt-8">
+<button class="w-full h-11 rounded-lg bg-primary-container text-on-primary font-label-lg text-label-lg hover:bg-primary active:scale-[0.99] transition-all shadow-sm flex items-center justify-center" type="button">
+            Continue as Supervisor
+          </button>
+</div>
+</div>
+</div>
+<!-- Security & Access Enforcement Disclaimer Note -->
+<div class="mt-8 flex items-start space-x-2 text-text-muted">
+<p class="font-body-sm text-body-sm leading-relaxed">
+        The role you pick controls what the screen shows. Access itself is enforced by the server.
+      </p>
+</div>
+<!-- System Metadata Trace Strip (Institutional Depth) -->
+<div class="mt-16 pt-8 flex flex-wrap items-center justify-between text-text-muted font-code text-code gap-4">
+<div class="flex items-center space-x-4">
+<span>SESSION: INIT-49b8f2c</span>
+<span>GATE_POLICY: MOSIP-L1-STD</span>
+</div>
+<div class="flex items-center space-x-2">
+<span class="material-symbols-outlined text-sm">lock</span>
+<span>HARDENED TERMINAL CHANNEL</span>
+</div>
+</div>
+</div>
+</div></main></body></html>

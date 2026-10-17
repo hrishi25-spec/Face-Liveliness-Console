@@ -24,9 +24,12 @@ echo Usage: run.bat [--port N] [--profile dev^|default] [--no-browser]
 exit /b 0
 
 :start
-REM Find JDK 25+
+REM Find JDK 17+
 set "JAVA_BIN="
-if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+if defined JAVA_HOME (
+  if "%JAVA_HOME:~-1%"=="\" set "JAVA_HOME=%JAVA_HOME:~0,-1%"
+  if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+)
 if not defined JAVA_BIN for %%i in (java.exe) do if not "%%~$PATH:i"=="" set "JAVA_BIN=%%~$PATH:i"
 
 REM Last resort: the usual install folders. The wildcard has to be the final path
@@ -40,7 +43,7 @@ if not defined JAVA_BIN for /d %%d in ("%ProgramFiles%\Java\jdk*") do (
 if not defined JAVA_BIN if exist "C:\openjdk\bin\java.exe" set "JAVA_BIN=C:\openjdk\bin\java.exe"
 
 if not defined JAVA_BIN (
-  echo Need JDK 25+. Install: winget install EclipseAdoptium.Temurin.25.JDK
+  echo Need JDK 17+. Install: winget install EclipseAdoptium.Temurin.21.JDK
   exit /b 1
 )
 
@@ -58,14 +61,14 @@ if not defined JVER (
   echo Could not determine the Java version from "%JAVA_BIN%".
   exit /b 1
 )
-REM Accept any JDK 25 or newer: "25.0.1" -^> 25, legacy "1.8.0_382" -^> 8.
+REM Accept any JDK 17 or newer: "17.0.1" -^> 17, legacy "1.8.0_382" -^> 8.
 set "JMAJOR="
 for /f "tokens=1,2 delims=._" %%a in ("%JVER%") do (
   if "%%a"=="1" ( set "JMAJOR=%%b" ) else ( set "JMAJOR=%%a" )
 )
 if not defined JMAJOR set "JMAJOR=0"
-if %JMAJOR% LSS 25 (
-  echo Java %JVER% is too old - this project needs JDK 25 or newer.
+if %JMAJOR% LSS 17 (
+  echo Java %JVER% is too old - this project needs JDK 17 or newer.
   echo   Found: %JAVA_BIN%
   exit /b 1
 )
@@ -75,7 +78,11 @@ REM Build if needed
 set JAR=target\pad-liveness-backend-1.0.0-SNAPSHOT.jar
 if not exist "%JAR%" (
   echo Building...
-  call mvnw -q package -DskipTests
+  if exist "mvnw.cmd" (
+    call mvnw.cmd -q package -DskipTests
+  ) else (
+    call mvn -q package -DskipTests
+  )
 )
 
 REM Check port
@@ -90,7 +97,7 @@ REM timeout.exe ahead of System32, so "timeout /t 1" fails with "invalid time
 REM interval '/t'" when this script is launched from Git Bash.
 echo Waiting for service...
 for /l %%i in (1,1,60) do (
-  curl -fs http://127.0.0.1:%PORT%/health >nul 2>&1 && goto :running
+  curl --noproxy "*" -fs http://127.0.0.1:%PORT%/health >nul 2>&1 && goto :running
   ping -n 2 127.0.0.1 >nul 2>&1
 )
 echo Service failed to start
@@ -102,6 +109,9 @@ echo ✓ Service running on http://localhost:%PORT%
 echo   Console:     http://localhost:%PORT%/
 echo   API docs:    http://localhost:%PORT%/swagger-ui/index.html
 echo   Health:      http://localhost:%PORT%/health
+if /i "%PROFILE%"=="dev" (
+  echo   Sign in:     supervisor / supervisor123
+)
 if %OPEN_BROWSER%==1 start "" http://localhost:%PORT%/
 echo.
 echo Press Ctrl+C to stop.

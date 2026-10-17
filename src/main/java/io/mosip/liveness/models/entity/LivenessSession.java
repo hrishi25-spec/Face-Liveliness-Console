@@ -80,6 +80,13 @@ public class LivenessSession {
     @Column(name = "failure_reason", length = 256)
     private String failureReason;
 
+    @Column(name = "nonce", length = 64)
+    private String nonce;
+
+    @Column(name = "last_frame_seq")
+    @Builder.Default
+    private Long lastFrameSeq = 0L;
+
     /**
      * Effective policy resolved once at session creation and frozen for the life
      * of the session, so an admin edit to {@code config_policies} cannot change

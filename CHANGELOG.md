@@ -4,9 +4,140 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 2026-10-11
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
+### Changed — The console implements the reference design system, and the review fixed what only looked right
+
+- `src/main/resources/static/` now implements
+  `stitch_markdown_ui_page_designer/liveness_verification_console/DESIGN.md`:
+  the institutional palette (cobalt `#1E56D0` over a `#F8FAFC` canvas in white
+  containers, `#E2E8F0` borders, the four status triads), a 32px display heading,
+  the two-line MOSIP / Liveness Console identity, the 1440px content cap, a split
+  capture layout (preview beside its controls — the old single column pushed Run
+  and Stop below the fold on a laptop), the hardened `#020617` camera surface with
+  a dashed guide, calibration ticks and a monospace HUD, and a footer strip.
+  Inter and JetBrains Mono are used when the workstation has them; no font or CSS
+  CDN is loaded, because the console ships under `style-src 'self'`.
+- The viewfinder reports facts rather than decoration: the HUD's left side is the
+  capture budget actually in force (`window.CAPTURE_BUDGET`) and its right side the
+  stream's own state, the card's pill flips **Camera ready → Camera live** with the
+  stream, and the guide's colour follows the verdict the server returned (white
+  dashed → cobalt while analysing → amber while a challenge is open → green on a
+  pass, red on a rejection). The resident "Current step" card is driven by the run
+  (title, note, progress, `Stage n of 3` row) instead of sitting on fixed markup,
+  and a capture-facts card shows the same frozen budget object the capture loop
+  reads.
+- **Fixed: `[hidden]` did nothing.** The component rules set `display` on the same
+  elements, so the author rule beat the user-agent's `[hidden] { display: none }`.
+  The repair commit's own restyle is what introduced it, and it put an operator in
+  front of the supervisor-only *Load policy* / *Sign out* buttons and every admin
+  tab — Policy, Users, Metrics, Diagnostics, Chain, Sweep — none of which their
+  role exposes. One base rule restores the switch, and the operator tab row is the
+  four read-only views again.
+- **Fixed: the Sessions table invented its columns.** Rows were defaulted to
+  `PASSED` / `0` / `—` whenever the tab knew nothing. The creation response's
+  status is kept, `GET /sessions/{id}` fills status, retries and reason after a run
+  settles and on Refresh, a close records the status it returned, and a column with
+  nothing known says `UNKNOWN`. The design's populated table is still what a fresh
+  page shows — as placeholder rows, each tagged `SAMPLE`, its Open action disabled,
+  with a footnote saying the service has no session-list endpoint.
+- **Fixed: "Switch role" / "Log out" left the workstation running.** The button
+  called `signOut()`, so an open camera kept streaming and an open session stayed
+  `ACTIVE` server-side; `switchRole()` — written for exactly this and previously
+  unreferenced — now runs: camera released, session closed ("closed on role
+  switch: status=EXPIRED"), run state discarded.
+- **Fixed: a declined first password change bricked the page.** Signing in on an
+  account that still owes its first password change and refusing the prompt left a
+  session the service confines to the change-password route, so every later request
+  — including the document itself — answered `403`, and the console could not be
+  reopened from that browser until the cookie expired. The refusal now ends the
+  session and says what is needed.
+- **The console asks for a credential in its own dialog.** Every `window.prompt()`
+  is gone (the guards fail if one comes back): authorising a policy save and
+  setting a first password both open `#auth-modal`, the screen the reference
+  actually drew — lock chip, an account that is read-only once it is known, the
+  password field with a "Session re-auth required" hint, Cancel and a
+  **Confirm & Apply Policy** / **Set password and continue** primary. It matters
+  beyond looks: a platform prompt cannot say what it is asking for, returns the
+  same empty string for "cancelled" and "typed nothing", and some embedded
+  webviews suppress it entirely — which is how a first-time supervisor could be
+  asked nothing and then told to sign in again. A too-short or unchanged new
+  password is answered in the dialog before any request; the password is cleared
+  from the field on close and never stored. Verified in a browser end to end:
+  bootstrapped `supervisor` signing in from the role picker sets its password in
+  the dialog and lands on Policy, and a save after the session is dropped opens
+  the dialog and then reports `Saved RESIDENT policy.` The policy sidebar's
+  credential note is now the neutral slate card with a lock icon, matching the
+  mock, rather than an amber warning about a flow that is no longer unusual.
+- `src/main/resources/static/console.css`: the policy/form notes read neutral
+  slate rather than amber — DESIGN.md keeps amber for *active / checking* — and the
+  tab row no longer spawns native scrollbar arrows over the last tab (a 1px
+  descender overhang under `overflow: auto`; the row is one line, so the axis is
+  hidden).
+- **Fixed: the Users tab did nothing.** `users` was missing from the console's
+  tab list, so the tab had no click handler and its panel never opened — and the
+  panel was only two paragraphs of placeholder text. It now switches and lists the
+  accounts the service holds (`GET /api/v1/users`) with each account's own role and
+  state flags (disabled outranks an owed password change) and its creation time,
+  and it says that create / role change / disable / reset are not wired into the
+  table, rather than offering buttons that do nothing.
+- `src/test/js/console-guards.test.mjs` grew to **133 assertions** (from 96),
+  pinning the two honesty rules — placeholders are tagged and unopenable, and the
+  status, retry count and reason columns come back from `GET /sessions/{id}` rather
+  than from a default — and, in two new sections, the credential dialog: no
+  `window.prompt` in the code (comments naming the removed call are stripped before
+  the check), an open dialog sends nothing, Cancel sends nothing and aborts the
+  save, the answer typed in is what goes on the wire, a first sign-in asks for the
+  new password and refuses a too-short one locally, and the password is cleared
+  from the field and appears nowhere in the page's text afterwards. The harness's
+  DOM now honours the bare `hidden` attribute, as a browser does, so an assertion
+  about a dialog's starting state is meaningful. `docs/ui-ux-design.md` §7
+  documents the design system, the truth-in-UI rules, the divergences from the
+  mocks, and (§7.7) the single dialog and why nothing is asked through a platform
+  prompt.
+
+### Performance — the console's script crosses the wire compressed, and three startup knobs were measured out
+
+A report that the console "takes a long time to load" was measured before
+anything was changed, and the page was not the slow part: on this host a warm
+navigation reached `DOMContentLoaded` in **0.26–0.66 s**, while a `dev` start took
+**20.9 s** to answer `/health`. One real delivery defect was found and fixed; the
+startup knobs were measured and mostly rejected; the dead-code search came back
+empty.
+
+- **Fixed: the console's 113 KB script was served uncompressed, on every load.**
+  `server.compression.mime-types` *replaces* Spring Boot's default set, and the
+  default is where `text/javascript` came from — which is the type Spring serves a
+  `.js` resource as (RFC 9239). Both spellings are now listed. Measured on a cold
+  load: `/console.js` **115 565 → 32 766 bytes** (−71.6 %), and the console's three
+  files together **133 852 → 51 053 bytes** (−61.9 %; uncompressed they are
+  197 613).
+- **The console's files carry `Cache-Control` now**
+  (`spring.web.resources.cache.cachecontrol`: `max-age=600, must-revalidate,
+  public`). They carried none, so every reload re-fetched or revalidated
+  ~190 KB that cannot have changed. A repeat navigation now reports
+  `transferSize: 0` for both `console.css` and `console.js` — no request at all —
+  and `must-revalidate` keeps `Last-Modified`, so the cost after the window is one
+  conditional `304` per file. The window bounds a stale console to ten minutes
+  after a service restart that ships new files.
+- **No minifier, bundler, build step or dependency was added.** gzip removes the
+  bytes; the comments keep the reasoning in the source where it belongs.
+- **Three startup knobs were measured and rejected** (`dev`, one run each, stop at
+  `/health`): `spring.main.lazy-initialization=true` 21 079 ms against a 20 860 ms
+  baseline (inside noise, and it moves wiring failures to the first request),
+  `-XX:TieredStopAtLevel=1 -Xshare:auto` 21 572 ms (the cost is class loading and
+  Hibernate, not JIT), and `java -jar` on the built fat jar **30 159 ms — worse**,
+  because class loading goes through 244 MB of nested jar. The start is JVM + Maven
+  + Hibernate (5.6 s Maven bootstrap, ~5 s compile, 2.8 s component scan over 139
+  jars, 3.4 s Hibernate metamodel and schema), so none of them had anything to cut.
+- **Nothing dead was found to delete.** `console.js`: 79 functions, all
+  referenced. `console.css`: 185 class selectors, 172 referenced literally — the
+  other 13 are composed at runtime (`"pill " + kind`) and removing them would
+  break a state. `index.html`: 174 ids, 27 invisible to a grep for the same reason
+  (`$("tab-" + t)`).
+- `docs/performance-baseline.md` §11 records the before/after table, the rejected
+  knobs with their numbers, the startup breakdown and the limits of the
+  measurement (host load 3.3–5.0, one sample per configuration, warm caches — not
+  §5.1's cold-cache CI parity figure).
+
 ### Added — A low-resource launch (`--lowmem`) for the 2-core / 2 GB target
 
 - `./start.sh --lowmem` / `start.bat --lowmem` start the service the way the
@@ -47,7 +178,6 @@ All notable changes to this project will be documented in this file.
   newer than the jar, and say whether sharing is active; a missing or stale archive
   is a JVM warning, never a boot failure (verified).
 
->>>>>>> Stashed changes
 ### Changed — A capture budget on the browser console, and a configurable analysis cap
 
 - The console sent the camera's **native** frame: 1280x720 on a webcam that
@@ -130,7 +260,7 @@ All notable changes to this project will be documented in this file.
 - `BackendPerFrameLatencyTest` now measures two workloads (`repeated-frame`,
   `distinct-frames`) and labels them in the results line, because a memoized
   backend makes a repeated input measure nothing.
-=======
+
 ### Added — Windows launcher boot gate
 
 - Every gate in this repository ran on Linux, so the two things a Windows user
@@ -165,7 +295,6 @@ All notable changes to this project will be documented in this file.
   full jar with the same Maven command the packaging job runs, and boots it
   through the launcher. The README gate table lists the new job and the PRD
   moved to 14 jobs; the *Project boundaries* gate checks both sides.
->>>>>>> Stashed changes
 
 ### Changed — Session ownership moved into a filter, and a new session route cannot skip it
 

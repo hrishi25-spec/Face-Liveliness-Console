@@ -75,6 +75,7 @@ final class RouteInventory {
             "POST /api/v1/sessions/{sessionId}/frames",
             "POST /api/v1/sessions/{sessionId}/challenges/validate",
             "POST /api/v1/sessions/{sessionId}/active-liveness",
+            "POST /api/v1/sessions/{sessionId}/evidence",
             "GET /api/v1/config/{workflowType}",
             "GET /api/v1/config/{workflowType}/effective",
             "GET /api/v1/config/audit",
@@ -162,7 +163,8 @@ final class RouteInventory {
             "GET /api/v1/sessions/{sessionId}/audit",
             "POST /api/v1/sessions/{sessionId}/frames",
             "POST /api/v1/sessions/{sessionId}/challenges/validate",
-            "POST /api/v1/sessions/{sessionId}/active-liveness");
+            "POST /api/v1/sessions/{sessionId}/active-liveness",
+            "POST /api/v1/sessions/{sessionId}/evidence");
 
     /** A {@code {name}} placeholder, matched as exactly one path segment. */
     private static final Pattern VARIABLE = Pattern.compile("\\{[^}]+}");

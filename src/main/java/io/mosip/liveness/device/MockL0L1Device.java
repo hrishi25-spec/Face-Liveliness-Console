@@ -40,6 +40,9 @@ public final class MockL0L1Device implements DeviceAdapter {
         private int corruptEveryNthFrame = 0;
         private int disconnectAfterFrames = 0;
         private String deviceId = "mock-l0l1-0001";
+        private String deviceSubType = "MOCK_L1_FACE";
+        private boolean streamingSupported = true;
+        private long networkLatencyMs = 0;
 
         public Config width(int v) { width = v; return this; }
         public Config height(int v) { height = v; return this; }
@@ -54,6 +57,18 @@ public final class MockL0L1Device implements DeviceAdapter {
         /** After N good frames the link drops with DEVICE_CONNECTION_FAILURE (0 = never). */
         public Config disconnectAfterFrames(int n) { disconnectAfterFrames = n; return this; }
         public Config deviceId(String v) { deviceId = v; return this; }
+        public Config deviceSubType(String v) {
+            deviceSubType = v;
+            if ("MOCK_L0_FACE".equalsIgnoreCase(v) || "L0_FACE".equalsIgnoreCase(v) || "L0".equalsIgnoreCase(v)) {
+                streamingSupported = false;
+            }
+            return this;
+        }
+        public Config l0() { return deviceSubType("MOCK_L0_FACE"); }
+        public Config l1() { deviceSubType = "MOCK_L1_FACE"; streamingSupported = true; return this; }
+        public Config networkLatencyMs(long v) { networkLatencyMs = v; return this; }
+        public String deviceSubType() { return deviceSubType; }
+        public boolean isStreamingSupported() { return streamingSupported; }
 
         MockL0L1Device buildWith(SyntheticScene scene) { return new MockL0L1Device(scene, this); }
     }
@@ -93,8 +108,8 @@ public final class MockL0L1Device implements DeviceAdapter {
 
     @Override
     public DeviceCapabilities capabilities() {
-        return new DeviceCapabilities(cfg.deviceId, "MOCK_L1_FACE",
-                true, true, Set.of(cfg.format), cfg.fps);
+        return new DeviceCapabilities(cfg.deviceId, cfg.deviceSubType,
+                cfg.streamingSupported, true, Set.of(cfg.format), cfg.fps);
     }
 
     @Override
@@ -250,6 +265,7 @@ public final class MockL0L1Device implements DeviceAdapter {
             HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
             server.createContext("/info", this::handleInfo);
             server.createContext("/stream", this::handleStream);
+            server.createContext("/config", this::handleConfig);
             server.setExecutor(Executors.newCachedThreadPool(r -> {
                 Thread t = new Thread(r, cfg.deviceId + "-http");
                 t.setDaemon(true);
@@ -270,8 +286,19 @@ public final class MockL0L1Device implements DeviceAdapter {
     }
 
     private void handleInfo(HttpExchange ex) throws IOException {
-        String json = "{\"deviceId\":\"" + cfg.deviceId + "\",\"deviceSubType\":\"MOCK_L1_FACE\","
-                + "\"spec\":[\"STREAM\"],\"maxFps\":" + cfg.fps + "}";
+        if (cfg.networkLatencyMs > 0) {
+            try { Thread.sleep(cfg.networkLatencyMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+        if (cfg.failOnOpen) {
+            byte[] err = "{\"error\":\"DEVICE_UNAVAILABLE\",\"message\":\"simulated failure\"}".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(503, err.length);
+            try (OutputStream os = ex.getResponseBody()) { os.write(err); }
+            return;
+        }
+        String spec = cfg.streamingSupported ? "[\"STREAM\"]" : "[\"BURST\"]";
+        String json = "{\"deviceId\":\"" + cfg.deviceId + "\",\"deviceSubType\":\"" + cfg.deviceSubType + "\","
+                + "\"spec\":" + spec + ",\"maxFps\":" + cfg.fps + "}";
         byte[] body = json.getBytes(StandardCharsets.UTF_8);
         ex.getResponseHeaders().set("Content-Type", "application/json");
         ex.sendResponseHeaders(200, body.length);
@@ -281,12 +308,39 @@ public final class MockL0L1Device implements DeviceAdapter {
     }
 
     private void handleStream(HttpExchange ex) throws IOException {
+        if (cfg.networkLatencyMs > 0) {
+            try { Thread.sleep(cfg.networkLatencyMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+        if (!cfg.streamingSupported) {
+            byte[] err = "{\"error\":\"UNSUPPORTED_OPERATION\",\"message\":\"L0 devices do not support /stream\"}".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(405, err.length);
+            try (OutputStream os = ex.getResponseBody()) { os.write(err); }
+            return;
+        }
         ex.getResponseHeaders().set("Content-Type", "multipart/x-mixed-replace; boundary=mosipframe");
         ex.sendResponseHeaders(200, 0); // chunked / unbounded body
         long intervalNanos = 1_000_000_000L / Math.max(1, cfg.fps);
         long nextDeadline = System.nanoTime();
+        long streamFrames = 0;
         try (OutputStream os = ex.getResponseBody()) {
             while (state != State.CLOSED) {
+                streamFrames++;
+                if (cfg.disconnectAfterFrames > 0 && streamFrames > cfg.disconnectAfterFrames) {
+                    break;
+                }
+                if (cfg.corruptEveryNthFrame > 0 && streamFrames % cfg.corruptEveryNthFrame == 0) {
+                    byte[] corruptData = "CORRUPTED_FRAME_PAYLOAD_NOT_JPEG".getBytes(StandardCharsets.US_ASCII);
+                    os.write("--mosipframe\r\n".getBytes(StandardCharsets.US_ASCII));
+                    os.write(("Content-Type: image/jpeg\r\nContent-Length: " + corruptData.length + "\r\n\r\n")
+                            .getBytes(StandardCharsets.US_ASCII));
+                    os.write(corruptData);
+                    os.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+                    os.flush();
+                    nextDeadline += intervalNanos;
+                    sleepUntil(nextDeadline);
+                    continue;
+                }
                 BufferedImage img = scene.nextFrame(System.currentTimeMillis());
                 ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
                 if (!ImageIO.write(img, "jpg", jpeg)) {
@@ -304,6 +358,39 @@ public final class MockL0L1Device implements DeviceAdapter {
             }
         } catch (IOException expected) {
             // client disconnected — normal when the consumer stops
+        }
+    }
+
+    private void handleConfig(HttpExchange ex) throws IOException {
+        String query = ex.getRequestURI().getQuery();
+        if (query != null && !query.isBlank()) {
+            for (String param : query.split("&")) {
+                String[] kv = param.split("=", 2);
+                if (kv.length == 2) {
+                    String k = kv[0].trim();
+                    String v = kv[1].trim();
+                    switch (k) {
+                        case "corruptEveryNthFrame" -> cfg.corruptEveryNthFrame(Integer.parseInt(v));
+                        case "disconnectAfterFrames" -> cfg.disconnectAfterFrames(Integer.parseInt(v));
+                        case "failOnOpen" -> cfg.failOnOpen = Boolean.parseBoolean(v);
+                        case "jitterMs" -> cfg.jitterMs(Long.parseLong(v));
+                        case "networkLatencyMs" -> cfg.networkLatencyMs(Long.parseLong(v));
+                        case "deviceSubType" -> cfg.deviceSubType(v);
+                        case "fps" -> cfg.fps(Integer.parseInt(v));
+                    }
+                }
+            }
+        }
+        String json = "{\"status\":\"ok\",\"deviceId\":\"" + cfg.deviceId + "\",\"deviceSubType\":\"" + cfg.deviceSubType
+                + "\",\"corruptEveryNthFrame\":" + cfg.corruptEveryNthFrame
+                + ",\"disconnectAfterFrames\":" + cfg.disconnectAfterFrames
+                + ",\"failOnOpen\":" + cfg.failOnOpen
+                + ",\"networkLatencyMs\":" + cfg.networkLatencyMs + "}";
+        byte[] body = json.getBytes(StandardCharsets.UTF_8);
+        ex.getResponseHeaders().set("Content-Type", "application/json");
+        ex.sendResponseHeaders(200, body.length);
+        try (OutputStream os = ex.getResponseBody()) {
+            os.write(body);
         }
     }
 

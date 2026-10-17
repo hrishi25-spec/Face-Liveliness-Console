@@ -40,6 +40,7 @@ public class SessionResponse {
     private Boolean online;
     private Boolean finalResult;
     private String failureReason;
+    private String nonce;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
     private OffsetDateTime closedAt;

@@ -73,4 +73,25 @@ class ChallengeSelectorTest {
         assertThrows(IllegalArgumentException.class,
                 () -> selector.next(Set.of(), 1));
     }
+
+    @Test
+    void noContradictoryConsecutiveChallengesWhenAlternativesExist() {
+        ChallengeSelector selector = new ChallengeSelector(5000);
+        ChallengeType last = null;
+        for (int i = 0; i < 500; i++) {
+            ChallengeType current = selector.next(POOL, i).type();
+            if (last != null) {
+                // Assert no contradictory back-to-back sequences
+                boolean isContradictory =
+                        (last == ChallengeType.TURN_HEAD_LEFT && current == ChallengeType.TURN_HEAD_RIGHT)
+                        || (last == ChallengeType.TURN_HEAD_RIGHT && current == ChallengeType.TURN_HEAD_LEFT)
+                        || (last == ChallengeType.LOOK_LEFT && current == ChallengeType.LOOK_RIGHT)
+                        || (last == ChallengeType.LOOK_RIGHT && current == ChallengeType.LOOK_LEFT)
+                        || (last == ChallengeType.LOOK_UP && current == ChallengeType.LOOK_DOWN)
+                        || (last == ChallengeType.LOOK_DOWN && current == ChallengeType.LOOK_UP);
+                assertTrue(!isContradictory, "contradictory consecutive challenges: " + last + " -> " + current);
+            }
+            last = current;
+        }
+    }
 }

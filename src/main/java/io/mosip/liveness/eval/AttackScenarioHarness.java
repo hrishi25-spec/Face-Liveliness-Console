@@ -231,7 +231,7 @@ public final class AttackScenarioHarness {
                         ? PadVerdict.attack(PadAttackType.OTHER, 0.60)     // false positive
                         : PadVerdict.bonaFide(0.97);
             }
-            case PRINTED_PHOTO, SCREEN_REPLAY, VIDEO_REPLAY -> {
+            case PRINTED_PHOTO, SCREEN_REPLAY, VIDEO_REPLAY, MASK, THREE_D -> {
                 if (rng.nextDouble() < SIMULATED_ATTACK_MISS_RATE) {
                     // Attack evades the PAD classifier — looks like a decent capture
                     subject.livenessScore = 0.88;
@@ -242,6 +242,8 @@ public final class AttackScenarioHarness {
                     PadAttackType type = switch (label) {
                         case PRINTED_PHOTO -> PadAttackType.PRINTED_PHOTO;
                         case SCREEN_REPLAY -> PadAttackType.SCREEN_REPLAY;
+                        case MASK -> PadAttackType.MASK;
+                        case THREE_D -> PadAttackType.THREE_D;
                         default -> PadAttackType.VIDEO_REPLAY;
                     };
                     subject.attack(type, confidence);

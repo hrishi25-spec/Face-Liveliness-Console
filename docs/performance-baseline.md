@@ -683,3 +683,131 @@ Same fixtures, same requests, decision fields compared before/after
 these changes, booted with `--spring.profiles.active=dev`; the cap rows boot it
 with `--mosip.liveness.analysis-max-dimension=640` and `=480`, and the refusal
 with `=32`.
+
+---
+
+## 11. Change report — console delivery and process startup (2026-10-16)
+
+The report behind this section was "the console takes a long time to load".
+Measured, the page was *not* the slow part: on this host a warm navigation
+reached `DOMContentLoaded` in 0.26–0.66 s, while a `dev` start took **20.9 s** to
+answer `/health`. One real delivery defect was found (the service's 113 KB script
+crossed the wire uncompressed, on every load, for every user) and fixed; three
+startup knobs were measured and **rejected** because they paid nothing; and a
+search for dead console code found none to delete.
+
+### 11.1 What changed
+
+1. **`text/javascript` was missing from `server.compression.mime-types`.** That
+   list *replaces* Spring Boot's default set, and the default is where
+   `text/javascript` came from — and `text/javascript` is the type Spring serves
+   a `.js` resource as (RFC 9239). The console's script was therefore the one
+   asset that was never compressed. The list now carries both spellings, so the
+   script is compressed whichever the framework or a reverse proxy reports it as.
+2. **The console's three files carry `Cache-Control` now**
+   (`spring.web.resources.cache.cachecontrol`: `max-age=600, must-revalidate,
+   public`). They carried none before, so every reload re-fetched or revalidated
+   ~190 KB of markup, CSS and script that cannot have changed. `must-revalidate`
+   keeps `Last-Modified`, so the cost after the window is one conditional `304`
+   per file.
+3. **Nothing else.** No minifier, no bundler, no build step, no new dependency:
+   gzip removes the bytes and the comments carry the reasoning (§11.5).
+
+### 11.2 Before / after
+
+Wire bytes for one *cold* load of the console (no cache), measured with `curl
+-H 'Accept-Encoding: gzip'` against the running service:
+
+| Asset | Before | After | Change |
+| --- | --- | --- | --- |
+| `/console.js` | 115 565 | **32 766** | −71.6 % (it was not compressed at all) |
+| `/console.css` | 9 992 | 9 992 | unchanged (already compressed) |
+| `/` (`index.html`) | 8 295 | 8 295 | unchanged (already compressed) |
+| **Total** | **133 852** | **51 053** | **−61.9 %** |
+
+For reference, the same three files uncompressed are 197 613 bytes.
+
+Repeat load, from Blink's resource timing on a fresh navigation to `/`
+(loopback, warm): `console.css` and `console.js` both report `transferSize: 0` —
+served from the memory cache with **no request at all**, which is the two round
+trips this removes from every reload. The page itself: `responseStart` 18 ms,
+`DOMContentLoaded` 264 ms, `load` 265 ms.
+
+### 11.3 Measured and rejected — three knobs that did not pay
+
+Each row is this host, `dev` profile, one run per configuration, stopped at
+`/health`.
+
+| Candidate | Total to `/health` | Spring's own "Started in" | Verdict |
+| --- | --- | --- | --- |
+| baseline (`./mvnw spring-boot:run`) | 20 860 ms | 10.07 s | — |
+| `spring.main.lazy-initialization=true` | 21 079 ms | 9.77 s | **rejected**: inside run-to-run noise, and it moves a wiring failure from boot to the first request |
+| `-XX:TieredStopAtLevel=1 -Xshare:auto` | 21 572 ms | 10.06 s | **rejected**: no change — the cost is class loading and Hibernate, not JIT |
+| `java -jar` (built fat jar) | 30 159 ms | 26.05 s | **rejected**: *worse* — nested-jar class loading over a 244 MB file |
+
+### 11.4 What the ~21 s start is actually made of
+
+| Phase | Time |
+| --- | --- |
+| Maven bootstrap on its own (`./mvnw -o -q validate`) | 5.6 s |
+| `compile` + `resources` (exploded classes) | ~5 s |
+| Spring: banner → Tomcat initialized (component scan over 139 jars) | 2.8 s |
+| Spring: Tomcat initialized → started — Hibernate metamodel + schema 3.4 s, OpenCV native load 0.23 s, remaining bean init ~2.8 s | 7.2 s |
+
+The wait is JVM class loading, Maven and Hibernate. Cutting it would need one of
+those three, and the three candidates in §11.3 do not. A `dev` start is therefore
+unchanged by this report, and the useful operational note is that static-file
+edits do not need a restart at all: `./mvnw resources:resources` copies them into
+`target/classes`, which the running service already serves.
+
+### 11.5 What was searched for and not found
+
+"Remove unnecessary stuff" was checked rather than assumed, on the console's own
+three files:
+
+- **`console.js` — 79 functions, every one referenced.** No dead function, no
+  unreachable branch, nothing defined for a caller that does not exist.
+- **`console.css` — 185 class selectors, 172 referenced literally.** The other 13
+  look dead to a grep because they are composed at runtime
+  (`className = "pill " + kind`, `"verdict " + kind`); deleting them would break a
+  visual state, not remove weight.
+- **`index.html` — 174 ids, 27 of them invisible to a grep** for the same reason
+  (`$("tab-" + t)`, `$("s" + n)`, `$("panel-" + …)`).
+
+So there was nothing dead to delete. The files are large because they are a whole
+console plus the comments that explain its guards, and gzip is what takes those
+comments off the wire without deleting the reasoning from the source.
+
+### 11.6 How these numbers were taken, and what they do not say
+
+- **Host load:** load average 3.3 / 4.5 / 5.0 during the run on the §2 machine, so
+  the startup milliseconds are pessimistic and noisy. The transfer bytes are
+  exact and repeatable; the startup deltas are quoted only to reject a knob
+  (all four configurations land within 0.7 s of each other, except the jar row).
+- **One run per configuration.** The rejection of lazy initialisation and of the
+  tiered-compilation flags rests on a *single* sample each that landed inside the
+  same spread as the baseline. A knob worth 2 s here would have shown.
+- **These are warm-cache starts, not §5.1's cold-cache CI parity number** (58.3 s
+  median on this same host with the OpenCV native cache cleared before every
+  boot). Do not compare the two tables.
+- **The cache window is a trade, not a free win:** a browser that has already
+  loaded the console can be up to 10 minutes behind a restarted service's static
+  files. Ten minutes was chosen as the point where a reload stops re-fetching
+  160 KB and a console can still not outlive an update by more than one coffee.
+- **The page timings are loopback in Chromium on this host.** They say nothing
+  about a 2-core registration station on a LAN beyond the transfer bytes, which
+  are exact, and they do not isolate how much of the remaining ~250 ms is script
+  parse versus layout.
+
+### 11.7 Files changed for this report
+
+| File | Change |
+| --- | --- |
+| `src/main/resources/application.yml` | `text/javascript` added to `server.compression.mime-types`; `spring.web.resources.cache.cachecontrol` (`max-age: 10m`, `public`, `must-revalidate`) |
+| `docs/performance-baseline.md` | this section |
+| `CHANGELOG.md` | the entry for this change |
+
+**On which artifact the numbers above were taken:** `./mvnw spring-boot:run` with
+`SPRING_PROFILES_ACTIVE=dev` on the §2 host, warm Maven repository, warm OpenCV
+native cache and warm page cache — the configuration this report measured is the
+configuration it changed.

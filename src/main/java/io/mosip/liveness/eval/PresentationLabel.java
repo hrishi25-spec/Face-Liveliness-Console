@@ -5,5 +5,7 @@ public enum PresentationLabel {
     BONA_FIDE,
     PRINTED_PHOTO,
     SCREEN_REPLAY,
-    VIDEO_REPLAY
+    VIDEO_REPLAY,
+    MASK,
+    THREE_D
 }

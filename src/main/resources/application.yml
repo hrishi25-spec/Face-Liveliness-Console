@@ -9,9 +9,14 @@ server:
     include-message: never
 
   # Gzip JSON/HTML — lower bandwidth for thin client connections.
+  # `text/javascript` is the type Spring serves a .js resource as (RFC 9239),
+  # and it is why the console's 113 KB script used to cross the wire raw: the
+  # list below replaces Spring Boot's default set, and the default is where
+  # `text/javascript` came from. Both spellings are listed so the script is
+  # compressed whichever the framework or a proxy reports it as.
   compression:
     enabled: true
-    mime-types: application/json,text/html,text/css,application/javascript
+    mime-types: application/json,text/html,text/css,text/javascript,application/javascript,text/plain,application/xml
     min-response-size: 1024
 
   tomcat:
@@ -23,6 +28,20 @@ server:
 spring:
   application:
     name: pad-liveness-backend
+
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          # Without this the console's three files carry no Cache-Control at all,
+          # so every reload re-fetches ~190 KB of markup, CSS and script that
+          # cannot have changed. `must-revalidate` still sends Last-Modified, so
+          # a reload after the window costs one conditional 304 per file, and a
+          # client can never be more than this window behind a restarted
+          # service that ships new files.
+          max-age: 10m
+          cache-public: true
+          must-revalidate: true
 
   # ---- PostgreSQL ----
   datasource:

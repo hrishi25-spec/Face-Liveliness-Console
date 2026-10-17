@@ -29,11 +29,8 @@ target/
 .env
 !.env.example
 
-<<<<<<< Updated upstream
+# Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
 
-#Ignore vscode AI rules
-.github\instructions\codacy.instructions.md
-=======
 # Local README preview output — regenerate with python .readme-preview/build_preview.py
 .readme-preview/readme.html
->>>>>>> Stashed changes

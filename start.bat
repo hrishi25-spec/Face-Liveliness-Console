@@ -21,11 +21,8 @@ set "DO_BUILD=1"
 set "DO_CLEAN=0"
 set "RUN_TESTS=0"
 set "OPEN_BROWSER=1"
-<<<<<<< Updated upstream
 set "DOCTOR=0"
-=======
 set "LOWMEM=0"
->>>>>>> Stashed changes
 set "JAR=target\pad-liveness-backend-1.0.0-SNAPSHOT.jar"
 set "CDS=target\lowmem-cds.jsa"
 set "LOG=target\mossip-startup.log"
@@ -54,11 +51,8 @@ if /i "%~1"=="--no-build" ( set "DO_BUILD=0" & shift & goto parse )
 if /i "%~1"=="--rebuild"  ( set "DO_BUILD=1" & set "DO_CLEAN=1" & set "RUN_TESTS=1" & shift & goto parse )
 if /i "%~1"=="--test"     ( set "RUN_TESTS=1" & shift & goto parse )
 if /i "%~1"=="--no-browser" ( set "OPEN_BROWSER=0" & shift & goto parse )
-<<<<<<< Updated upstream
-if /i "%~1"=="--doctor"    ( set "DOCTOR=1" & shift & goto parse )
-=======
-if /i "%~1"=="--lowmem" ( set "LOWMEM=1" & shift & goto parse )
->>>>>>> Stashed changes
+if /i "%~1"=="--doctor"     ( set "DOCTOR=1" & shift & goto parse )
+if /i "%~1"=="--lowmem"     ( set "LOWMEM=1" & shift & goto parse )
 echo [X] Unknown option: %~1  (try start.bat --help)
 exit /b 2
 :parsed
@@ -73,10 +67,20 @@ if not exist "target" mkdir "target"
 
 rem ------------------------------------------------------------------ 1. find JDK
 echo [.] Looking for a JDK 17 or newer...
-if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+if defined JAVA_HOME (
+  if "%JAVA_HOME:~-1%"=="\" set "JAVA_HOME=%JAVA_HOME:~0,-1%"
+  if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+)
 if not defined JAVA_BIN (
   for %%i in (java.exe) do if not "%%~$PATH:i"=="" set "JAVA_BIN=%%~$PATH:i"
 )
+if not defined JAVA_BIN for /d %%d in ("%ProgramFiles%\Eclipse Adoptium\jdk*") do (
+  if not defined JAVA_BIN if exist "%%~fd\bin\java.exe" set "JAVA_BIN=%%~fd\bin\java.exe"
+)
+if not defined JAVA_BIN for /d %%d in ("%ProgramFiles%\Java\jdk*") do (
+  if not defined JAVA_BIN if exist "%%~fd\bin\java.exe" set "JAVA_BIN=%%~fd\bin\java.exe"
+)
+if not defined JAVA_BIN if exist "C:\openjdk\bin\java.exe" set "JAVA_BIN=C:\openjdk\bin\java.exe"
 
 if not defined JAVA_BIN (
   echo [X] No Java found on PATH and JAVA_HOME is not set.
@@ -90,7 +94,7 @@ rem a pipe inside for /f: cmd.exe strips the quotes around the executable when a
 rem for /f command contains a pipe, so a JDK under "C:\Program Files" is read as
 rem the path "C:\Program" and the version cannot be determined.
 set "JVER="
-set "JVERFILE=target\java-version.txt"
+set "JVERFILE=%TEMP%\mossip-start-java-version.txt"
 "%JAVA_BIN%" -version > "%JVERFILE%" 2>&1
 for /f "tokens=3" %%v in ('findstr /i "version" "%JVERFILE%"') do if not defined JVER set "JVER=%%v"
 del "%JVERFILE%" >nul 2>&1
@@ -205,7 +209,7 @@ set "READY=0"
 for /l %%i in (1,1,120) do (
   if "!READY!"=="0" (
     if defined HAVECURL (
-      curl -s -f -m 2 "http://127.0.0.1:%PORT%/health" >nul 2>&1
+      curl --noproxy "*" -s -f -m 2 "http://127.0.0.1:%PORT%/health" >nul 2>&1
       if not errorlevel 1 set "READY=1"
     ) else (
       rem No curl (pre-1803 Windows): fall back to a fixed wait.
@@ -232,7 +236,7 @@ if not "!READY!"=="1" (
 
 set "ENGINE=unknown"
 if defined HAVECURL (
-  for /f "delims=" %%E in ('curl -s -f -m 2 "http://127.0.0.1:%PORT%/health" 2^>nul') do set "HEALTHJSON=%%E"
+  for /f "delims=" %%E in ('curl --noproxy "*" -s -f -m 2 "http://127.0.0.1:%PORT%/health" 2^>nul') do set "HEALTHJSON=%%E"
   echo !HEALTHJSON! | findstr /c:"\"engine\":\"available\"" >nul 2>&1 && set "ENGINE=available"
   echo !HEALTHJSON! | findstr /c:"\"engine\":\"unavailable\"" >nul 2>&1 && set "ENGINE=unavailable"
 )
@@ -242,6 +246,9 @@ echo [ok] Service is up
 echo    Console      http://localhost:%PORT%/
 echo    API docs     http://localhost:%PORT%/swagger-ui/index.html
 echo    Health       http://localhost:%PORT%/health
+if /i "%PROFILE%"=="dev" (
+  echo    Sign in      supervisor / supervisor123
+)
 if "%LOWMEM%"=="1" (
   echo    Lowmem       !JVM_OPTS!
   echo    Profile      !PROFILE_ARG!   class-data sharing: !CDS_NOTE!
@@ -308,7 +315,7 @@ rem Something is listening. Ask it whether it is this service: only our own
 rem /health answers with an "engine" field, so any other HTTP app holding the
 rem port must be reported as a conflict, not as a running instance.
 set "HEALTHJSON="
-for /f "delims=" %%E in ('curl -s -f -m 2 "http://127.0.0.1:%PORT%/health" 2^>nul') do if not defined HEALTHJSON set "HEALTHJSON=%%E"
+for /f "delims=" %%E in ('curl --noproxy "*" -s -f -m 2 "http://127.0.0.1:%PORT%/health" 2^>nul') do if not defined HEALTHJSON set "HEALTHJSON=%%E"
 set "ISOURS="
 echo !HEALTHJSON! | findstr /c:"engine" >nul 2>&1 && set "ISOURS=1"
 if not defined ISOURS (

@@ -299,51 +299,114 @@ the pipeline rather than inside the scorer.
 
 ---
 
-## 7. Sequence Diagram: Full Liveness Check
+## 7. Sequence Diagrams
+
+### 7.1 Resident Registration Flow (High Assurance: Passive + Active Escalation & Anti-Replay)
 
 ```
-Host                Engine              Backend           Audit
-  │                   │                   │                 │
-  │─ initSession() ──▶│                   │                 │
-  │                   │─ initialize() ───▶│                 │
-  │                   │◀──────────────────│                 │
-  │◀── sessionId ─────│                   │                 │
-  │                   │─────────────────────────────────log─▶
-  │                   │                   │                 │
-  │─ pushFrame(f1) ──▶│                   │                 │
-  │                   │─ analyzeFrame() ─▶│                 │
-  │                   │◀── signals ───────│                 │
-  │                   │─ assessPad() ────▶│                 │
-  │                   │◀── verdict ───────│                 │
-  │                   │─ scorePassive() ─▶│                 │
-  │                   │◀── 0.92 ──────────│                 │
-  │◀── SCORING ───────│                   │                 │
-  │                   │                   │                 │
-  │  ... (repeat pushFrame) ...           │                 │
-  │                   │                   │                 │
-  │◀── ESCALATED ─────│                   │                 │
-  │                   │─────────────────────────────────log─▶
-  │                   │                   │                 │
-  │─ requestChallenge()▶                  │                 │
-  │◀── Challenge(BLINK)│                  │                 │
-  │                   │─────────────────────────────────log─▶
-  │                   │                   │                 │
-  │─ validateChallenge(frames)──▶          │                 │
-  │                   │─ analyzeFrame() ─▶│                 │
-  │                   │─ assessPad() ────▶│                 │
-  │                   │─ evaluate() ──────│                 │
-  │◀── partialPass(1) │                   │                 │
-  │                   │                   │                 │
-  │─ requestChallenge()▶                  │                 │
-  │◀── Challenge(SMILE)│                  │                 │
-  │                   │                   │                 │
-  │─ validateChallenge(frames)──▶          │                 │
-  │◀── finalPass ─────│                   │                 │
-  │                   │─────────────────────────────────log─▶
-  │                   │                   │                 │
-  │─ closeSession() ─▶│                   │                 │
-  │◀── SessionSummary │                   │                 │
-  │                   │─────────────────────────────────log─▶
+Resident / UI          Host Client           Liveness Engine        Backend/Model       Server / Verifier
+      │                     │                       │                     │                     │
+      │── Start Capture ───▶│                       │                     │                     │
+      │                     │── POST /sessions ────────────────────────────────────────────────▶│ (init session,
+      │                     │◀─ session {id, nonce} ────────────────────────────────────────────│  issue nonce)
+      │                     │── initSession(type, nonce)─▶                │                     │
+      │                     │◀─ ready ──────────────│                     │                     │
+      │                     │                       │                     │                     │
+      │   [Passive Phase: Frames streamed with monotonic sequence & timestamps]                 │
+      │                     │── pushFrame(f1, seq=1, nonce)─▶             │                     │
+      │                     │                       │── analyzeFrame() ──▶│                     │
+      │                     │                       │── assessPad() ─────▶│                     │
+      │                     │                       │── scorePassive() ──▶│                     │
+      │                     │◀─ SCORING ────────────│                     │                     │
+      │                     │                       │                     │                     │
+      │   [Low-quality genuine capture triggers active challenge escalation]                    │
+      │                     │── pushFrame(fN) ─────▶│                     │                     │
+      │                     │◀─ ESCALATED_ACTIVE ───│                     │                     │
+      │◀─ Prompt Challenge ─│                       │                     │                     │
+      │                     │── requestChallenge() ─▶                     │                     │
+      │                     │◀─ Challenge(BLINK) ───│                     │                     │
+      │                     │                       │                     │                     │
+      │   [Resident performs action; frames collected & submitted]                              │
+      │                     │── validateChallenge(frames, nonce) ────────▶│                     │
+      │                     │◀─ PASSED ─────────────│                     │                     │
+      │                     │                       │                     │                     │
+      │                     │── closeSession() ────▶│                     │                     │
+      │                     │◀─ Signed Evidence ────│                     │                     │
+      │                     │                                                                   │
+      │                     │── POST /sessions/{id}/evidence (evidence token) ─────────────────▶│ (verify nonce,
+      │                     │◀─ 200 OK (evidenceVerified=true) ─────────────────────────────────│  timestamps, sig)
+      │◀─ Success Overlay ──│                                                                   │
+```
+
+### 7.2 Operator Authentication Flow (Fast Passive Match, Strict Single-Person Check)
+
+```
+Operator UI            Host Client           Liveness Engine        Backend/Model           Local Audit
+     │                      │                       │                     │                      │
+     │── Authenticate ─────▶│                       │                     │                      │
+     │                      │── initSession(OPERATOR_AUTH) ──────────────▶│                      │
+     │                      │◀─ sessionId ──────────│                     │                      │
+     │                      │                       │───────────────────────────────────────────▶│ AUDIT: INIT
+     │                      │── pushFrame(frame, seq=1) ─────────────────▶│                      │
+     │                      │                       │── analyzeFace() ───▶│                      │
+     │                      │                       │◀─ faceCount=1, qual │                      │
+     │                      │                       │── assessPad() ─────▶│                      │
+     │                      │                       │◀─ bonaFide=0.98 ────│                      │
+     │                      │                       │── scorePassive() ──▶│                      │
+     │                      │                       │◀─ score=0.96 ───────│                      │
+     │                      │◀─ PASSED (Fast Path) ─│                     │                      │
+     │                      │                       │───────────────────────────────────────────▶│ AUDIT: PASSED
+     │                      │── closeSession() ────▶│                                            │
+     │                      │◀─ Evidence Summary ───│                                            │
+     │◀─ Unlock Terminal ───│                                                                    │
+```
+
+### 7.3 Supervisor Dual-Control Authorization Flow
+
+```
+Supervisor UI          Host Client           Liveness Engine         Auth Service           Audit Trail
+      │                     │                       │                      │                     │
+      │── Override Request ─▶                       │                      │                     │
+      │                     │── initSession(SUPERVISOR_OVERRIDE) ──────────│                     │
+      │                     │◀─ sessionId ──────────│                      │                     │
+      │                     │                       │                      │                     │
+      │   [Dual-control supervisor biometric verification]                 │                     │
+      │                     │── pushFrame(supvFrame)──────────────────────▶│                     │
+      │                     │◀─ PASSED ─────────────│                      │                     │
+      │                     │── closeSession() ────▶│                      │                     │
+      │                     │◀─ SupvEvidence ───────│                      │                     │
+      │                     │                                              │                     │
+      │                     │── POST /api/v1/auth/supervisor-override ────▶│                     │
+      │                     │   (with SupvEvidence, StationId, Reason)     │── Verify Token ────▶│
+      │                     │◀─ 200 OK (Signed Authorization Grant) ───────│                     │
+      │                     │                                              │── Log Override ────▶│
+      │◀─ Override Granted ─│                                                                    │
+```
+
+### 7.4 Offline / Degraded-Mode Flow (Autonomous Device Operation)
+
+```
+Field Device UI        Host / Native         Local Liveness Engine  Local ONNX Engine     Encrypted Offline Store
+      │                     │                       │                     │                        │
+      │  [NO NETWORK CONNECTION AVAILABLE]          │                     │                        │
+      │── Start Enrollment ─▶                       │                     │                        │
+      │                     │── initSession(RESIDENT, offlineMode=true) ─▶│                        │
+      │                     │◀─ sessionId (Local) ──│                     │                        │
+      │                     │                       │                     │                        │
+      │   [Continuous camera frames processed strictly in-process]        │                        │
+      │                     │── pushFrame(f1) ─────▶│                     │                        │
+      │                     │                       │── evalMiniFASNet() ─▶                        │
+      │                     │                       │◀─ liveness=0.94 ────│                        │
+      │                     │◀─ PASSED ─────────────│                     │                        │
+      │                     │                       │                                              │
+      │                     │── closeSession() ────▶│                                              │
+      │                     │◀─ Signed Evidence ────│                                              │
+      │                     │   (Local KeyPair)     │                                              │
+      │                     │                       │── Spool Signed Event Record ────────────────▶│
+      │                     │                       │   (sealed hash chain, offline queue)         │
+      │◀─ Enrollment OK ────│                                                                      │
+      │                     │                                                                      │
+      │  [LATER: When connectivity is restored, queued audit records & evidence sync upstream]     │
 ```
 
 ---
