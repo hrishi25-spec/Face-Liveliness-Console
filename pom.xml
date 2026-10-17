@@ -33,7 +33,7 @@
     <revision>1.0.0-SNAPSHOT</revision>
     <!-- Desktop (JavaFX) overlay UI. Provided by the MOSIP Registration Client
          host at runtime — see the javafx-controls dependency below. -->
-    <javafx.version>17.0.10</javafx.version>
+    <javafx.version>21.0.2</javafx.version>
   </properties>
 
   <dependencies>
