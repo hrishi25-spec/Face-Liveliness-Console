@@ -209,7 +209,7 @@ APP_PID=$!
 
 http_ok() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fs -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1
+    curl --noproxy "*" -fs -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1
   else
     (exec 3<>"/dev/tcp/127.0.0.1/$PORT") >/dev/null 2>&1
   fi
@@ -236,7 +236,7 @@ if [ "$READY" != 1 ]; then
   exit 1
 fi
 
-ENGINE="$(curl -fs -m 2 "http://127.0.0.1:$PORT/health" 2>/dev/null | sed -n 's/.*"engine":"\([^"]*\)".*/\1/p')"
+ENGINE="$(curl --noproxy "*" -fs -m 2 "http://127.0.0.1:$PORT/health" 2>/dev/null | sed -n 's/.*"engine":"\([^"]*\)".*/\1/p')"
 [ -n "$ENGINE" ] || ENGINE="unknown"
 
 URL="http://localhost:$PORT/"
@@ -245,6 +245,9 @@ ok "Service is up (started in $(( $(date +%s) - START_TS ))s)"
 say "  ${B}Console${OFF}      $URL"
 say "  API docs${OFF}     http://localhost:$PORT/swagger-ui/index.html"
 say "  Health${OFF}       http://localhost:$PORT/health"
+if [ "$PROFILE" = "dev" ]; then
+  say "  ${B}Sign in${OFF}      supervisor / supervisor123"
+fi
 if [ "$LOWMEM" = 1 ]; then
   say "  Lowmem${OFF}       ${JVM_OPTS[*]}"
   say "  ${DIM}profile $PROFILE_ARG${OFF}"

@@ -120,6 +120,25 @@ class ThresholdSweepTest {
         }
     }
 
+    @Test
+    void bpcerAtApcerDerivedWhenAttackDataPresent() {
+        ThresholdSweep.Result r = ThresholdSweep.run(
+                windows(10, 0.90), windows(5, 0.30),
+                MIN_FRAMES, WINDOW, 0.02, "test-scorer", false);
+
+        assertNotNull(r.bpcerAtApcer());
+        assertEquals(3, r.bpcerAtApcer().size());
+        assertEquals(0.0, r.bpcerAtApcer().get("bpcerAtApcer01"), 1e-9);
+        assertEquals(0.0, r.bpcerAtApcer().get("bpcerAtApcer05"), 1e-9);
+        assertEquals(0.0, r.bpcerAtApcer().get("bpcerAtApcer10"), 1e-9);
+
+        // Without attack data, bpcerAtApcer should be empty
+        ThresholdSweep.Result noAttack = ThresholdSweep.run(
+                windows(10, 0.90), List.of(),
+                MIN_FRAMES, WINDOW, 0.02, "test-scorer", false);
+        assertTrue(noAttack.bpcerAtApcer().isEmpty());
+    }
+
     private static ThresholdSweep.Row row(ThresholdSweep.Result r, double threshold) {
         return r.rows().stream()
                 .filter(row -> Math.abs(row.threshold() - threshold) < 1e-9)

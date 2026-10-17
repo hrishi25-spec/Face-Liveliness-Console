@@ -6,8 +6,7 @@
 # requirements, and the workflow actions themselves.
 #
 # Deliberately NOT covered: android_client/ (its Flutter 3.10.4 toolchain and
-# locked pub dependencies are pinned on purpose — see its README) and
-# vendor/github setup/ (a third-party workspace outside this repository's CI).
+# locked pub dependencies are pinned on purpose — see its README).
 #
 # A Dependabot PR runs the same CI as any other change, so a bump that breaks
 # the build turns red rather than landing silently.

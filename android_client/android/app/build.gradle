@@ -69,6 +69,7 @@ android {
                 'io/mosip/liveness/audit/MetricsSnapshot.java',
                 'io/mosip/liveness/backend/LivenessBackend.java',
                 'io/mosip/liveness/diagnostics/DiagnosticsSnapshot.java',
+                'io/mosip/liveness/shared/**',
                 'io/mosip/liveness/dto/FrameProcessResult.java',
                 'io/mosip/liveness/models/enums/LivenessStage.java',
             ])

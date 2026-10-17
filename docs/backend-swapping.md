@@ -24,9 +24,56 @@ The engine **never** calls vendor SDKs directly. Swap the backend by implementin
 
 ---
 
+## Selecting a backend
+
+One key picks the implementation, and it applies to **both** wiring paths — the
+HTTP scorer (`PassiveScoringService`) and the SPI bean the engine consumes — so the
+two cannot diverge:
+
+| `mosip.liveness.backend` | HTTP scoring path | SPI bean |
+|---|---|---|
+| `auto` (default) | bundled ONNX MiniFASNet-V2 when it loads, OpenCV quality heuristic otherwise | scripted `MockLivenessBackend` |
+| `heuristic` | OpenCV quality heuristic | scripted mock |
+| `mock` | scripted mock | scripted mock |
+| `onnx-minifasnet-v2` | ONNX MiniFASNet-V2 | ONNX MiniFASNet-V2 |
+| `mediapipe-facemesh` | MediaPipe FaceMesh | MediaPipe FaceMesh |
+| `tflite-minifasnet` | TFLite MiniFASNet | TFLite MiniFASNet |
+
+An explicit id never falls back to another scorer: an unavailable backend is a
+coded, fail-closed error (the engine maps it to its device error), and an unknown
+value stops startup rather than quietly choosing something else.
+
+---
+
 ## Built-in Backends
 
-### 1. `MockLivenessBackend` (testing/CI)
+### 1. `OnnxMiniFasNetBackend` (real PAD, the default on desktop)
+
+- MiniFASNet-V2 exported to ONNX, run on `com.microsoft.onnxruntime:onnxruntime`
+  — the only real scorer that works on a desktop JVM.
+- The model (`models/minifasnet_v2.onnx`, ~1.7 MB) is bundled and SHA-256
+  verified on load; a custom model can be supplied instead.
+- Input is the raw 0–255 BGR face crop (no `/255` normalization) and the **live**
+  class is output index 1 — both details the model card gets wrong.
+- Face detection uses the vendored OpenCV Haar cascade.
+
+```java
+Map<String, String> options = Map.of(
+    "intraOpThreads", "0"      // 0 derives max(1, cores/2) — one thread on the 2-core target
+);
+
+OnnxMiniFasNetBackend backend = new OnnxMiniFasNetBackend();
+backend.initialize(options);
+
+FaceLivenessEngine engine = new FaceLivenessEngine(config, backend);
+```
+
+Other options: `modelPath` (takes precedence over the bundled resource),
+`modelResource`, `expectedSha256`, `faceCascadePath`, `temperature` (de-saturates a
+near-`1.0` confidence). The measured comparison with the mock and MediaPipe
+backends is in [`backend-interoperability-report.md`](backend-interoperability-report.md).
+
+### 2. `MockLivenessBackend` (testing/CI)
 
 - Fully scriptable — tests drive a `Subject` to simulate face presence, blink, smile, head pose, gaze, and PAD verdicts.
 - No model loading, no native dependencies.
@@ -41,10 +88,13 @@ mock.subject().padVerdict = PadVerdict.bonaFide(0.97);
 FaceLivenessEngine engine = new FaceLivenessEngine(config, mock);
 ```
 
-### 2. `TfLiteMiniFasNetBackend` (real PAD)
+### 3. `TfLiteMiniFasNetBackend` (Android/embedded real PAD)
 
 - Backed by [Silent-Face-Anti-Spoofing](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing) MiniFASNet model (~1-2 MB INT8).
 - Uses TensorFlow Lite via reflection (zero compile-time dependency on TFLite).
+- **Not usable on a desktop JVM:** the only official runtime is an Android-only
+  AAR with ARM natives, so `initialize()` throws there. This is why the bundled
+  desktop default is the ONNX backend above.
 - Activate by adding `org.tensorflow:tensorflow-lite` to the classpath and providing the `.tflite` model file.
 - Supports NNAPI/GPU delegates on Android.
 
@@ -65,7 +115,7 @@ FaceLivenessEngine engine = new FaceLivenessEngine(config, backend);
 
 Uses OpenCV `CascadeClassifier` for face detection + eye detection, with geometric landmark estimation for EAR, pose, and gaze.
 
-### 3. `MediaPipeFaceMeshBackend` (high-fidelity landmarks)
+### 4. `MediaPipeFaceMeshBackend` (high-fidelity landmarks)
 
 - Runs the MediaPipe FaceMesh TFLite model directly (468-point 3D landmark extraction).
 - No MediaPipe Java SDK dependency — uses TFLite runtime + OpenCV for face detection.
@@ -217,10 +267,11 @@ For offline operation on Android:
 
 ## Backend Selection Matrix
 
-| Backend | Offline | PAD Types | Model Size | Latency (mobile) | License |
-|---------|---------|-----------|------------|-------------------|---------|
+| Backend | Offline | PAD Types | Model Size | Latency | License |
+|---------|---------|-----------|------------|---------|---------|
+| OnnxMiniFasNetBackend | ✓ | printed, screen, replay | ~1.7 MB | ~62 ms/frame on the 2-core reference host (`docs/performance-baseline.md`) | Apache-2.0 |
 | MockLivenessBackend | ✓ | scripted | 0 MB | <1ms | Apache-2.0 |
-| TfLiteMiniFasNetBackend | ✓ | printed, screen | ~1.5 MB | 5-15ms | Apache-2.0 |
+| TfLiteMiniFasNetBackend | ✓ | printed, screen | ~1.5 MB | 5-15ms on Android | Apache-2.0 |
 | MediaPipeFaceMeshBackend | ✓ | printed, screen | ~5 MB | 8-20ms | Apache-2.0 |
 | Vendor SDK (licensed) | depends | all | varies | 10-50ms | commercial |
 
@@ -237,8 +288,8 @@ The attack-scenario harness works with any backend. To evaluate a real model:
 
 ```java
 // Example: evaluate real model with recorded captures
-LivenessBackend realBackend = new TfLiteMiniFasNetBackend();
-realBackend.initialize(Map.of("modelPath", modelPath));
+LivenessBackend realBackend = new OnnxMiniFasNetBackend();
+realBackend.initialize(Map.of("modelPath", modelPath));   // omit to use the bundled, SHA-verified model
 
 LivenessConfig config = LivenessConfig.builder().build();
 AttackScenarioHarness harness = new AttackScenarioHarness(config, seed);

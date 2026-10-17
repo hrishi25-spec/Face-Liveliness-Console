@@ -30,6 +30,7 @@ public class FramesController {
     private final DecisionEngineService decisionEngine;
     private final ImageUtils imageUtils;
     private final DiagnosticsService diagnostics;
+    private final io.mosip.liveness.security.AntiReplayValidator antiReplayValidator;
 
     /**
      * Frames are the session's biometrics: {@link SessionOwnershipFilter} has
@@ -47,13 +48,16 @@ public class FramesController {
         if (session.getStatus() != SessionStatus.ACTIVE) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Session is not active (status=" + session.getStatus() + ")");
-        }        // Timed end to end so the phases have something to be compared against —
+        }
+
+        // Timed end to end so the phases have something to be compared against —
         // see PipelineTimers.TOTAL. Includes the DB round trip, which is why it
         // is deliberately larger than the sum of the pipeline phases.
         long diagnosticsStart = System.nanoTime();
         FrameProcessResult result = PipelineTimers.timed(PipelineTimers.TOTAL, () -> {
             Mat frame = imageUtils.decodeBase64Frame(req.getFrameBase64());
             try {
+                antiReplayValidator.validateFrame(session, req, frame);
                 return decisionEngine.processFrame(session, frame, imageUtils);
             } finally {
                 frame.release();

@@ -582,4 +582,58 @@ class DeviceAdapterTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new DeviceCapabilities("", "MOCK", true, true, Set.of(), 15));
     }
+
+    @Test
+    @Timeout(10)
+    void mockL0ProfileCapabilitiesAndHttpInfo() throws Exception {
+        MockL0L1Device mockL0 = track(MockL0L1Device.create(
+                new MockL0L1Device.Config().l0().deviceId("mock-l0-device").width(160).height(120).fps(15)));
+
+        assertTrue(mockL0.capabilities().isL0());
+        assertFalse(mockL0.capabilities().isL1());
+        assertFalse(mockL0.capabilities().streamingSupported());
+        assertEquals("MOCK_L0_FACE", mockL0.capabilities().deviceSubType());
+
+        int port = mockL0.serve(0);
+        java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+        java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + port + "/info"))
+                .GET().build();
+        java.net.http.HttpResponse<String> resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, resp.statusCode());
+        assertTrue(resp.body().contains("\"deviceSubType\":\"MOCK_L0_FACE\""));
+        assertTrue(resp.body().contains("\"spec\":[\"BURST\"]"));
+
+        // Burst adapter can capture from this L0 device captureSource
+        BurstRCaptureDeviceAdapter burstAdapter = track(BurstRCaptureDeviceAdapter.create(
+                mockL0.captureSource(),
+                new BurstRCaptureDeviceAdapter.Options().deviceId("burst-from-l0").targetFps(15)));
+        burstAdapter.open();
+        CountDownLatch latch = new CountDownLatch(2);
+        burstAdapter.startCapture(f -> latch.countDown());
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        burstAdapter.stopCapture();
+    }
+
+    @Test
+    @Timeout(10)
+    void httpFailureInjectionOverTheWire() throws Exception {
+        MockL0L1Device mockDevice = track(MockL0L1Device.create(
+                new MockL0L1Device.Config().deviceId("mock-wire-fail").width(160).height(120)));
+        int port = mockDevice.serve(0);
+
+        java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+
+        // Dynamically inject failure parameters over /config endpoint
+        java.net.http.HttpRequest cfgReq = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + port + "/config?corruptEveryNthFrame=2&disconnectAfterFrames=5&networkLatencyMs=10"))
+                .GET().build();
+        java.net.http.HttpResponse<String> cfgResp = client.send(cfgReq, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, cfgResp.statusCode());
+        assertTrue(cfgResp.body().contains("\"corruptEveryNthFrame\":2"));
+        assertTrue(cfgResp.body().contains("\"disconnectAfterFrames\":5"));
+        assertTrue(cfgResp.body().contains("\"networkLatencyMs\":10"));
+    }
 }

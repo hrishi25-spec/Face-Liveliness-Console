@@ -4,7 +4,7 @@
 [MOSIP](https://mosip.io/) Registration Client
 **Artifact:** `io.mosip.liveness:pad-liveness-backend` (Spring Boot fat jar / Docker image)
 **Version:** `${revision}`, `1.0.0-SNAPSHOT` by default; release tags stamp the version
-**Runtime:** Java 25, Spring Boot 3.3.3, native OpenCV, optional ONNX / MediaPipe / TFLite backends (artifact bytecode remains Java 17-compatible for the MOSIP Android host)
+**Runtime:** Java 17+ (CI builds and tests on 17; the Mockito/ByteBuddy test stack does not run on 25 yet), Spring Boot 3.3.3, native OpenCV, optional ONNX / MediaPipe / TFLite backends (artifact bytecode remains Java 17-compatible for the MOSIP Android host)
 **Default branch:** `development`
 
 This document is a **self-contained product requirements and system reference**: what the
@@ -146,21 +146,21 @@ Three integration surfaces exist:
 
 ## 3. What the repository contains
 
-Six independent projects plus repository tooling. Full details in §13–§17.
+Five independent projects plus repository tooling. Full details in §13–§17.
 
 | Path | Kind | What it is |
 | --- | --- | --- |
-| `src/`, `pom.xml` | Java / Maven | The service and shared engine. **The active codebase.** 156 main classes, 76 test classes. |
+| `src/`, `pom.xml` | Java / Maven | The service and shared engine. **The active codebase.** 190 main classes, 88 test classes (751 tests). |
 | `pad_liveness_backend/` | Python / FastAPI | Independent PostgreSQL-backed reference implementation of the same decision flow, with Alembic migrations and real-PostgreSQL tests. Its own service, not wired into the Java build. |
 | `android_client/` | Flutter + Android | Pinned Flutter 3.10.4 build harness, Pigeon bindings, CameraX frame source, keystore evidence signer. Not the full Registration Client. |
 | `docs/` | Markdown | Cross-project documentation (this file included). |
 | `training/` | Python / TensorFlow | Synthetic-data training pipeline for the MiniFASNet liveness model. Runs on a workstation; **not** covered by CI and not wired into the service. |
-| `vendor/github setup/` | Node | Separate vendored third-party workspace. Neither built nor tested by this repository's CI. |
-| `scripts/` | Shell + Node | Repository gates: boundary check, jar smoke, jar size, cold-boot median, Docker smoke, `start.sh` / `start.bat`. |
+| `scripts/` | Shell + Node | Repository gates: secret scan, boundary check, Java import and package layout, jar smoke, jar size, cold-boot median, Docker and Windows-launcher smoke, `start.sh` / `start.bat`. |
 
-Size at a glance: **703 tracked files**, 156 Java main classes, 76 Java test classes (six more
-files under `src/test/java` are support helpers) with 596 `@Test` methods, 46 Python tests,
-10 Flyway migrations, 13 CI jobs, 6 repository gate scripts.
+Size at a glance: 190 Java main classes, 88 Java test classes (seven more
+files under `src/test/java` are support helpers) running 751 tests, 49 Python tests,
+12 Flyway migrations (V1–V13; one number in the range was never used), 15 CI jobs,
+9 repository gate scripts.
 
 ---
 
@@ -396,6 +396,8 @@ are under `/api/v1`.
 | `POST` | `/api/v1/sessions/{id}/close` | Close an active session; returns a summary (counters, duration). |
 | `POST` | `/api/v1/sessions/{id}/frames` | Submit one base64 frame; returns the verdict. |
 | `POST` | `/api/v1/sessions/{id}/challenges/validate` | Validate a frame burst against the issued challenge. |
+| `POST` | `/api/v1/sessions/{id}/active-liveness` | Issue a challenge for an extra active check. `201` with the challenge; `409` when the session has not passed, the workflow disables active liveness or has no challenge types. An already-open challenge is returned unchanged. |
+| `POST` | `/api/v1/sessions/{id}/evidence` | Check liveness evidence from an online client gate (`EvidenceVerificationRequest` → `EvidenceVerificationResponse`): session status, nonce binding, timestamp order and challenge results. Rejections are `verified: false` with a reason; a missing signature is reported as a warning, not a rejection (`LivenessEvidenceVerifier`). |
 | `GET` | `/api/v1/sessions/{id}/audit` | The session's audit trail. |
 | `GET` | `/api/v1/rejections` | Recent failed sessions plus their `PAD_REJECTED`/`CHALLENGE_FAILED` events, newest first. **Requires the operator API key or a signed-in session.** |
 | `GET` | `/api/v1/metrics` | Anonymised operational metrics. |
@@ -419,8 +421,9 @@ are under `/api/v1`.
 **Key response shapes** (DTOs in `io.mosip.liveness.dto`):
 
 - `SessionResponse` — `id`, `workflowType`, `deviceId`, `status`, `currentStage`,
-  `retryCount`, `online`, `finalResult`, `failureReason`, `createdAt`, `updatedAt`,
-  `closedAt`, plus the effective `policy`.
+  `retryCount`, `online`, `finalResult`, `failureReason`, `nonce` (the anti-replay
+  nonce every frame, challenge and evidence payload is bound to), `createdAt`,
+  `updatedAt`, `closedAt`, plus the effective `policy`.
 - `FrameProcessResult` — `sessionId`, `stage`, `faceDetected`, `multipleFaces`,
   `faceQuality`, `livenessScore`, `padFlag`, `padAttackType`, `action`
   (`proceed` / `escalate_to_active` / `retry_passive` / `reject`), optional
@@ -496,15 +499,15 @@ Checked-in revisions: `V1__init_schema`, `V2__unify_passive_threshold`,
 `V3__challenge_window_15s`, `V4__session_policy_snapshot`, `V5__init_audit_table`,
 `V7__config_change_audit`, `V8__audit_logs_workflow_type`, `V9__audit_chain_immutability`,
 `V10__drop_unused_audit_log_table`, `V11__challenge_manual_flag`,
-`V12__auth_users_and_tokens`.
+`V12__auth_users_and_tokens`, `V13__session_anti_replay`.
 **Gap:** there are missing migration files in the version sequence; the numbering has gaps
 (one number in the range was never used).
 
 | Table | Holds | Notable columns |
 | --- | --- | --- |
-| `liveness_sessions` | One verification attempt. | `workflow_type` (enum name, indexed), `device_id`, `subject_ref`, `status`, `current_stage`, `retry_count`, `online`, `final_result`, `failure_reason`, timestamps + `closed_at`, policy snapshot. |
+| `liveness_sessions` | One verification attempt. | `workflow_type` (enum name, indexed), `device_id`, `subject_ref`, `status`, `current_stage`, `retry_count`, `online`, `final_result`, `failure_reason`, timestamps + `closed_at`, policy snapshot, `nonce` + `last_frame_seq` (V13, anti-replay). |
 | `frame_events` | One row per evaluated frame. | `stage`, `face_detected`, `multiple_faces`, `face_quality`, `liveness_score`, `pad_flag`, `pad_attack_type`, `pad_confidence`. |
-| `challenges` | One issued active challenge. | `challenge_type`, `status`, `attempt_number`, `timeout_ms`, `issued_at`, `completed_at`. |
+| `challenges` | One issued active challenge. | `challenge_type`, `status`, `attempt_number`, `timeout_ms`, `manual` (V11: requested by hand rather than by escalation), `issued_at`, `completed_at`. |
 | `config_policies` | Per-workflow policy (unique on workflow). | thresholds, `challenge_types` (JSON text), retries, `on_repeated_failure`. |
 | `audit_logs` | Append-only decision trail. | `event_type`, `details` (JSON text), `workflow_type`, `prev_hash` / `entry_hash` chain fields. |
 | `auth_users` | One account (V12). | `username` (unique, stored lower-cased), `password_hash` (BCrypt, never a password), `role`, `must_change_password`, `disabled`, `failed_attempts`, `locked_until` (a timestamp, so a lock expires by itself), `password_changed_at`. |
@@ -743,8 +746,9 @@ Metrics are aggregates. Frames are not persisted; only derived numeric fields ar
 - Pigeon bindings are **checked in** and regenerated by `tool/generate_pigeon.sh`; CI
   regenerates them and fails if the output differs, then checks Dart formatting, runs
   `flutter analyze`, and builds a debug APK.
-- **Gap:** the README's "349 green" test-count claim was not reproducible in the last audit;
-  treat the number as stale.
+- The Android README's shared-suite figure is now the measured one: 751 Java tests green
+  (`./mvnw --batch-mode test`, 2026-10-17), with 13 of them in
+  `AndroidLivenessOrchestratorTest`.
 
 ### 14.2 Desktop overlay and web console
 - **Desktop:** `LivenessChallengeOverlay` is a JavaFX overlay (FXML + CSS) driven by
@@ -806,9 +810,6 @@ A **workstation-only** synthetic-data pipeline for MiniFASNet: `generate_synthet
   measured.
 - Deliberately **not** covered by CI (`boundary-allow-no-ci`): there are no tests.
 
-### 15.3 Vendor workspace (`vendor/github setup/`)
-A separate vendored Node/React app with its own `AGENTS.md`. Neither built nor tested by this
-repository's CI.
 
 ---
 
@@ -823,10 +824,10 @@ repository's CI.
 | PostgreSQL schema | `PostgresSchemaTest` — entities vs Flyway migrations on real PostgreSQL via Testcontainers | `./mvnw --batch-mode test -Dtest='PostgresSchemaTest'` |
 | Cross-backend contract | `CrossBackendContractTest` — one spent retry budget driven on both services, terminal verdicts compared | `./mvnw --batch-mode test -Dtest='CrossBackendContractTest'` (needs `PAD_LIVENESS_PYTHON`) |
 | Console DOM | Real `index.html` + `console.js` guards in a DOM | `node src/test/js/console-guards.test.mjs` |
-| Python backend | 46 tests (SQLite behaviour, OpenCV fixtures, imports, PostgreSQL migrations, persistence, the cross-backend scenario script) | `python -m pytest -q` in `pad_liveness_backend/` |
+| Python backend | 49 tests (SQLite behaviour, OpenCV fixtures, imports, PostgreSQL migrations, persistence, the cross-backend scenario script) | `python -m pytest -q` in `pad_liveness_backend/` |
 | Android client | Locked dependency resolution, binding regeneration + diff, formatting, analyse, APK build | see [android_client/README.md](../android_client/README.md) |
 
-76 Java test classes / 596 `@Test` methods. The unit and integration suites run as two
+88 Java test classes / 751 tests. The unit and integration suites run as two
 parallel, independent jobs so one failure cannot cancel the other.
 
 ### 16.2 Repository gates
@@ -834,6 +835,9 @@ parallel, independent jobs so one failure cannot cancel the other.
 | Gate | Script | Enforces |
 | --- | --- | --- |
 | Project boundaries | `node scripts/check-project-boundaries.mjs` | Guidance per project, project-map entries, no cross-scope toolchain instructions, **every documented verification command actually runs in CI**, and **every CI gate is documented**. |
+| Java imports | `node scripts/check-java-imports.mjs` | Every `io.mosip.liveness.*` import under `src` names a source file that declares it, annotated with the commit that removed the class and a `git show` restore command. |
+| Java packages | `node scripts/check-java-packages.mjs` | Every Java file's declared package matches its directory; a package declaration at a source root is rejected. |
+| Secret scan | `./scripts/check-secrets.sh` | The checkout and its history carry no committed credential, private key or production identifier. |
 | Packaged jar boots | `./scripts/smoke-jar.sh` | The fat jar boots and reports the engine available. |
 | Windows launcher | `pwsh -NoProfile -File ./scripts/smoke-windows-launcher.ps1` | The full jar boots through `start.bat` on Windows — JDK probe, port check, `/health` wait and engine report — with a JDK under a path with a space. |
 | Jar size | `./scripts/check-jar-size.sh 'target/pad-liveness-backend-*-slim.jar' 110 'slim jar'` | Size ceilings (110 MiB slim / 245 MiB full — pass the pattern, ceiling and label). |
@@ -845,13 +849,14 @@ declares it in the root map with `boundary-allow-no-ci: <reason>`; a single line
 `boundary-allow: <reason>` to exempt a legitimate exception. Both are printed with their
 reason on every run, so escapes stay visible instead of silently weakening the gate.
 
-### 16.3 CI jobs (14)
+### 16.3 CI jobs (15)
 
-`test` (Unit / Integration matrix) · `console` · `boundaries` · `secrets` · `python-backend` ·
-`cross-backend` · `android-client` · `package` (full + slim matrix) · `windows-launcher` ·
-`docker` · `boot-time` · `schema` · `release` (tag only) · `docker-release` (tag only).
+`test` (Unit / Integration matrix) · `console` · `boundaries` · `imports` (*Java source
+layout*: imports and packages) · `secrets` · `python-backend` · `cross-backend` ·
+`android-client` · `package` (full + slim matrix) · `windows-launcher` · `docker` ·
+`boot-time` · `schema` · `release` (tag only) · `docker-release` (tag only).
 
-Every push and pull request runs the first twelve (`release` and `docker-release` are gated on a
+Every push and pull request runs the first thirteen (`release` and `docker-release` are gated on a
 `refs/tags/v*` ref); tags additionally publish a GitHub Release with both jars plus `.sha256`
 checksums, and a `ghcr.io` image. Artifact uploads are gated on the
 default branch or a `v*` tag, so no fork can write to storage.
@@ -937,11 +942,10 @@ smoke tests.
   configured while historical hashes need it. *Gap.*
 - The Android client is a harness, not the real Registration Client, so host integration is
   **unvalidated** end to end. *Assumed.*
-- The Android README's "349 green" test-count claim is stale/unverifiable. *Gap.*
+- The Android README's shared-suite count was re-verified against a full run (751 tests).
 
-**Deliberately out of CI** — `training/` (no tests; workstation TensorFlow environment) and
-`vendor/github setup/` (vendored third-party). Both are declared via `boundary-allow-no-ci` in
-the root project map.
+**Deliberately out of CI** — `training/` (no tests; workstation TensorFlow environment),
+declared via `boundary-allow-no-ci` in the root project map.
 
 ---
 

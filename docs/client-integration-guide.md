@@ -16,7 +16,10 @@ Android Flutter) to the face liveness + PAD engine via the REST API or in-proces
 
 ## 1. REST API Endpoints (HTTP Service)
 
-The Spring Boot backend exposes these endpoints:
+These are the routes a Registration Client actually calls. The full surface — 28
+routes across the client-facing, authenticated, operator-keyed and supervisor-keyed
+tiers — is in [PRD §7](PRD.md#7-api-reference) and
+[docs/api-documentation.json](api-documentation.json).
 
 ### Session Lifecycle
 ```
@@ -33,6 +36,16 @@ POST   /api/v1/sessions/{id}/frames         → Submit a frame (base64 JPEG)
 ### Challenge Validation
 ```
 POST   /api/v1/sessions/{id}/challenges/validate → Validate challenge frames
+POST   /api/v1/sessions/{id}/active-liveness     → Request an extra manual challenge
+POST   /api/v1/sessions/{id}/evidence            → Submit liveness evidence for verification
+```
+
+### Authentication
+```
+POST   /api/v1/auth/login                    → Sign in (HttpOnly session cookie)
+GET    /api/v1/auth/me                       → The signed-in account
+POST   /api/v1/auth/change-password          → Replace the caller's own password
+POST   /api/v1/auth/logout                   → End the session
 ```
 
 ### Configuration
@@ -689,8 +702,9 @@ An HTTP refusal is a `LivenessClientException` whose message carries the status 
 the service's own explanation — a 403 reads as a refusal, not as a broken response.
 
 This isolates honest clients from each other; it is not authentication. There is no
-identity provider behind it, a subject reference is not a secret, and MOSIP subject
-ids are predictable — so keep the service bound to loopback (`SERVER_ADDRESS`, the
+identity provider behind the header — the account system (`/auth/login`) authenticates
+supervisors and operators for the privileged surface, not session ownership — a
+subject reference is not a secret, and MOSIP subject ids are predictable — so keep the service bound to loopback (`SERVER_ADDRESS`, the
 default) or behind the host's own authenticated transport, and treat this header as
 the claim it is.
 

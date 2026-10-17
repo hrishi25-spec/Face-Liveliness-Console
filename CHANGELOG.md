@@ -2,11 +2,174 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-10-11
+## [Unreleased] - 2026-10-17
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
+### Added — Anti-replay protection, evidence verification, and unified localisation
+
+- **Session anti-replay validation (`AntiReplayValidator` + `V13__session_anti_replay.sql`)**: Sessions now generate cryptographically secure 256-bit nonces bound to `liveness_sessions.nonce`. Prevents replay attacks across capture attempts.
+- **Client evidence verification endpoint (`POST /api/v1/sessions/{sessionId}/evidence`)**: Checks evidence produced by online client gates (`EvidenceVerificationRequest`, `EvidenceVerificationResponse`, `LivenessEvidenceVerifier`). Rejects a session that is not `ACTIVE`/`PASSED`, a nonce that does not match the session's (`V13`), timestamps in the wrong order, and any failed challenge result; warns on a bypassed gate or a missing signature. The endpoint checks that `signatureHex` is present, **not** that it verifies — client-side signing and verification exist (`LivenessEvidenceBinding`, `EvidenceSigner`) but server-side cryptographic verification is not wired in yet.
+- **Unified localisation message catalog (`LivenessMessageKeys` + `app_en.arb`)**: Centralised all user-facing guidance and error keys across Java and Flutter/Android. Enforced by `LocalisationKeyGateTest`, ensuring all message keys map to valid localized text without exposing internal error or model details.
+- **Repository cleanup**: Removed obsolete third-party workspace (`vendor/github setup/`) and design mockups (`stitch_markdown_ui_page_designer/`), keeping the repository focused strictly on the active MOSIP liveness and PAD implementation. Updated repository guidance (`AGENTS.md`, `README.md`, `PRD.md`) to reflect the 5 active project trees.
+- **Build hardening (`scripts/check-java-imports.mjs`)**: Restored the thirteen classes lost when `0824f02` deleted `src/` — the engine primitives, backend SPI and test helpers that the remaining files still imported — so `./start.sh` builds and boots again. A new CI job fails whenever an `io.mosip.liveness.*` import under `src` names no source file that declares it, so a partial source-tree restore is a one-line diagnosis instead of pages of `cannot find symbol` against the wrong files.
+
+### Fixed — the CI jobs that were red on every push
+
+- **A JDK 25 runner broke every Mockito-backed suite.** Commit `6506a40` raised every job from JDK 17 to 25, but the Mockito/ByteBuddy pair Spring Boot 3.3.x manages cannot instrument JDK 25 class files. Reproduced locally on Temurin 25.0.4.1: 732 tests, 231 errors, every one `Mockito cannot mock this class` before an assertion ran — which is what the Unit, Integration, PostgreSQL-schema and Cross-backend jobs were reporting. The workflow is back on JDK 17 (the version `<java.version>` targets), the Windows launcher keeps its own JDK 21 install, and `actions/setup-java` moves to v5, the version the runner's deprecation notice asks for.
+- **The Android job could not compile the engine it embeds.** `android/app/build.gradle` compiles a hand-picked subset of `src/main/java`, and `io/mosip/liveness/shared/**` was missing from it even though `EffectivePolicy`, `FaceLivenessEngine`, `AndroidLivenessOrchestrator` and `LivenessGatePolicy` all import `RepeatedFailureAction` from there. The include list now carries the package: the subset compiles under `javac` on 17, and deleting the entry again reproduces the CI error (`package io.mosip.liveness.shared.definitions does not exist`).
+- **The secret scan found 52 findings.** Forty are `curl -H` samples copied from a third-party NOAA API guide into vendored agent-skill trees (`.agents/`, `.claude/`, …, since removed — but the gate reads history), and twelve are the API tests' deliberately fake operator keys (`synthetic-operator-key-…`, `integration-operator-key-…`). `.gitleaks.toml` allowlists exactly those two families — the curl rule only under that one guide's path, the generic rule only on lines carrying those prefixes — and the scan is green again. Verified the same value outside `vendor/` still fails, so the historical allowlist has not gone blind.
+- `QUICKSTART.md` and `docs/PRD.md` said JDK 25 is the runtime; they now state the JDK 17+ the build and its tests actually require.
+- **The Java layout gates gained their second half.** `scripts/check-java-imports.mjs` proves every import names a source file that declares it, but a file moved to the wrong directory — or a package declaration edited to one the filesystem does not support — still resolves by path, so that gate stays green while `javac` fails for every consumer. `scripts/check-java-packages.mjs` now compares each file's declared package with its directory (and rejects a package declaration at a source root, where only the default package belongs); both run in one *Java source layout* job. An unresolved import is also annotated with its history: the commit that removed the class and the `git show <sha>^:<path>` command that restores it, or, when the path never held it, the last commit to touch a file of that name anywhere — so the repair starts from the deletion instead of a search. Outside a git checkout the annotation is simply omitted.
+
+### Changed — The console implements the reference design system, and the review fixed what only looked right
+
+- `src/main/resources/static/` now implements the modern institutional enterprise design system:
+  the palette (cobalt `#1E56D0` over a `#F8FAFC` canvas in white containers, `#E2E8F0` borders, the four status triads), a 32px display heading,
+  the two-line MOSIP / Liveness Console identity, the 1440px content cap, a split
+  capture layout (preview beside its controls — the old single column pushed Run
+  and Stop below the fold on a laptop), the hardened `#020617` camera surface with
+  a dashed guide, calibration ticks and a monospace HUD, and a footer strip.
+  Inter and JetBrains Mono are used when the workstation has them; no font or CSS
+  CDN is loaded, because the console ships under `style-src 'self'`.
+- The viewfinder reports facts rather than decoration: the HUD's left side is the
+  capture budget actually in force (`window.CAPTURE_BUDGET`) and its right side the
+  stream's own state, the card's pill flips **Camera ready → Camera live** with the
+  stream, and the guide's colour follows the verdict the server returned (white
+  dashed → cobalt while analysing → amber while a challenge is open → green on a
+  pass, red on a rejection). The resident "Current step" card is driven by the run
+  (title, note, progress, `Stage n of 3` row) instead of sitting on fixed markup,
+  and a capture-facts card shows the same frozen budget object the capture loop
+  reads.
+- **Fixed: `[hidden]` did nothing.** The component rules set `display` on the same
+  elements, so the author rule beat the user-agent's `[hidden] { display: none }`.
+  The repair commit's own restyle is what introduced it, and it put an operator in
+  front of the supervisor-only *Load policy* / *Sign out* buttons and every admin
+  tab — Policy, Users, Metrics, Diagnostics, Chain, Sweep — none of which their
+  role exposes. One base rule restores the switch, and the operator tab row is the
+  four read-only views again.
+- **Fixed: the Sessions table invented its columns.** Rows were defaulted to
+  `PASSED` / `0` / `—` whenever the tab knew nothing. The creation response's
+  status is kept, `GET /sessions/{id}` fills status, retries and reason after a run
+  settles and on Refresh, a close records the status it returned, and a column with
+  nothing known says `UNKNOWN`. The design's populated table is still what a fresh
+  page shows — as placeholder rows, each tagged `SAMPLE`, its Open action disabled,
+  with a footnote saying the service has no session-list endpoint.
+- **Fixed: "Switch role" / "Log out" left the workstation running.** The button
+  called `signOut()`, so an open camera kept streaming and an open session stayed
+  `ACTIVE` server-side; `switchRole()` — written for exactly this and previously
+  unreferenced — now runs: camera released, session closed ("closed on role
+  switch: status=EXPIRED"), run state discarded.
+- **Fixed: a declined first password change bricked the page.** Signing in on an
+  account that still owes its first password change and refusing the prompt left a
+  session the service confines to the change-password route, so every later request
+  — including the document itself — answered `403`, and the console could not be
+  reopened from that browser until the cookie expired. The refusal now ends the
+  session and says what is needed.
+- **The console asks for a credential in its own dialog.** Every `window.prompt()`
+  is gone (the guards fail if one comes back): authorising a policy save and
+  setting a first password both open `#auth-modal`, the screen the reference
+  actually drew — lock chip, an account that is read-only once it is known, the
+  password field with a "Session re-auth required" hint, Cancel and a
+  **Confirm & Apply Policy** / **Set password and continue** primary. It matters
+  beyond looks: a platform prompt cannot say what it is asking for, returns the
+  same empty string for "cancelled" and "typed nothing", and some embedded
+  webviews suppress it entirely — which is how a first-time supervisor could be
+  asked nothing and then told to sign in again. A too-short or unchanged new
+  password is answered in the dialog before any request; the password is cleared
+  from the field on close and never stored. Verified in a browser end to end:
+  bootstrapped `supervisor` signing in from the role picker sets its password in
+  the dialog and lands on Policy, and a save after the session is dropped opens
+  the dialog and then reports `Saved RESIDENT policy.` The policy sidebar's
+  credential note is now the neutral slate card with a lock icon, matching the
+  mock, rather than an amber warning about a flow that is no longer unusual.
+- `src/main/resources/static/console.css`: the policy/form notes read neutral
+  slate rather than amber — DESIGN.md keeps amber for *active / checking* — and the
+  tab row no longer spawns native scrollbar arrows over the last tab (a 1px
+  descender overhang under `overflow: auto`; the row is one line, so the axis is
+  hidden).
+- **Fixed: the Users tab did nothing.** `users` was missing from the console's
+  tab list, so the tab had no click handler and its panel never opened — and the
+  panel was only two paragraphs of placeholder text. It now switches and lists the
+  accounts the service holds (`GET /api/v1/users`) with each account's own role and
+  state flags (disabled outranks an owed password change) and its creation time,
+  and it says that create / role change / disable / reset are not wired into the
+  table, rather than offering buttons that do nothing.
+- `src/test/js/console-guards.test.mjs` grew to **133 assertions** (from 96),
+  pinning the two honesty rules — placeholders are tagged and unopenable, and the
+  status, retry count and reason columns come back from `GET /sessions/{id}` rather
+  than from a default — and, in two new sections, the credential dialog: no
+  `window.prompt` in the code (comments naming the removed call are stripped before
+  the check), an open dialog sends nothing, Cancel sends nothing and aborts the
+  save, the answer typed in is what goes on the wire, a first sign-in asks for the
+  new password and refuses a too-short one locally, and the password is cleared
+  from the field and appears nowhere in the page's text afterwards. The harness's
+  DOM now honours the bare `hidden` attribute, as a browser does, so an assertion
+  about a dialog's starting state is meaningful. `docs/ui-ux-design.md` §7
+  documents the design system, the truth-in-UI rules, the divergences from the
+  mocks, and (§7.7) the single dialog and why nothing is asked through a platform
+  prompt.
+
+### Docs — the reference documents were reconciled with the tree
+
+A full documentation pass re-checked every count, route and backend claim against
+the code and the current test run. `docs/PRD.md` now states the real sizes (190
+main classes, 88 test classes, 751 Java tests, 49 Python tests, 12 migrations, 15
+CI jobs, 9 gate scripts), lists `POST /sessions/{id}/active-liveness`, `/evidence`
+and `/auth/login` in §7, and includes the import, package and secret gates in the
+repository-gate table; the CI job list gains the *Java source layout* job.
+`docs/status-report.md` (190 files, ONNX as the default backend, accounts and
+anti-replay rows) and `docs/brain.md` (inventory, test counts, schema through V13,
+an evidence-endpoint section) describe what exists rather than the phase-1 library.
+`README.md` documents the missing routes and the corrected project layout,
+`QUICKSTART.md` states the container's real layer size, `docs/backend-swapping.md`
+documents `OnnxMiniFasNetBackend` as the desktop default with the selection table,
+and `docs/known-quirks.md` records that its characterization tests are gone. The
+evidence endpoint is described for what it checks: signature **presence**, not
+validity (client-side signing exists; server-side verification is not wired in).
+
+### Performance — the console's script crosses the wire compressed, and three startup knobs were measured out
+
+A report that the console "takes a long time to load" was measured before
+anything was changed, and the page was not the slow part: on this host a warm
+navigation reached `DOMContentLoaded` in **0.26–0.66 s**, while a `dev` start took
+**20.9 s** to answer `/health`. One real delivery defect was found and fixed; the
+startup knobs were measured and mostly rejected; the dead-code search came back
+empty.
+
+- **Fixed: the console's 113 KB script was served uncompressed, on every load.**
+  `server.compression.mime-types` *replaces* Spring Boot's default set, and the
+  default is where `text/javascript` came from — which is the type Spring serves a
+  `.js` resource as (RFC 9239). Both spellings are now listed. Measured on a cold
+  load: `/console.js` **115 565 → 32 766 bytes** (−71.6 %), and the console's three
+  files together **133 852 → 51 053 bytes** (−61.9 %; uncompressed they are
+  197 613).
+- **The console's files carry `Cache-Control` now**
+  (`spring.web.resources.cache.cachecontrol`: `max-age=600, must-revalidate,
+  public`). They carried none, so every reload re-fetched or revalidated
+  ~190 KB that cannot have changed. A repeat navigation now reports
+  `transferSize: 0` for both `console.css` and `console.js` — no request at all —
+  and `must-revalidate` keeps `Last-Modified`, so the cost after the window is one
+  conditional `304` per file. The window bounds a stale console to ten minutes
+  after a service restart that ships new files.
+- **No minifier, bundler, build step or dependency was added.** gzip removes the
+  bytes; the comments keep the reasoning in the source where it belongs.
+- **Three startup knobs were measured and rejected** (`dev`, one run each, stop at
+  `/health`): `spring.main.lazy-initialization=true` 21 079 ms against a 20 860 ms
+  baseline (inside noise, and it moves wiring failures to the first request),
+  `-XX:TieredStopAtLevel=1 -Xshare:auto` 21 572 ms (the cost is class loading and
+  Hibernate, not JIT), and `java -jar` on the built fat jar **30 159 ms — worse**,
+  because class loading goes through 244 MB of nested jar. The start is JVM + Maven
+  + Hibernate (5.6 s Maven bootstrap, ~5 s compile, 2.8 s component scan over 139
+  jars, 3.4 s Hibernate metamodel and schema), so none of them had anything to cut.
+- **Nothing dead was found to delete.** `console.js`: 79 functions, all
+  referenced. `console.css`: 185 class selectors, 172 referenced literally — the
+  other 13 are composed at runtime (`"pill " + kind`) and removing them would
+  break a state. `index.html`: 174 ids, 27 invisible to a grep for the same reason
+  (`$("tab-" + t)`).
+- `docs/performance-baseline.md` §11 records the before/after table, the rejected
+  knobs with their numbers, the startup breakdown and the limits of the
+  measurement (host load 3.3–5.0, one sample per configuration, warm caches — not
+  §5.1's cold-cache CI parity figure).
+
 ### Added — A low-resource launch (`--lowmem`) for the 2-core / 2 GB target
 
 - `./start.sh --lowmem` / `start.bat --lowmem` start the service the way the
@@ -47,7 +210,6 @@ All notable changes to this project will be documented in this file.
   newer than the jar, and say whether sharing is active; a missing or stale archive
   is a JVM warning, never a boot failure (verified).
 
->>>>>>> Stashed changes
 ### Changed — A capture budget on the browser console, and a configurable analysis cap
 
 - The console sent the camera's **native** frame: 1280x720 on a webcam that
@@ -130,7 +292,7 @@ All notable changes to this project will be documented in this file.
 - `BackendPerFrameLatencyTest` now measures two workloads (`repeated-frame`,
   `distinct-frames`) and labels them in the results line, because a memoized
   backend makes a repeated input measure nothing.
-=======
+
 ### Added — Windows launcher boot gate
 
 - Every gate in this repository ran on Linux, so the two things a Windows user
@@ -165,7 +327,6 @@ All notable changes to this project will be documented in this file.
   full jar with the same Maven command the packaging job runs, and boots it
   through the launcher. The README gate table lists the new job and the PRD
   moved to 14 jobs; the *Project boundaries* gate checks both sides.
->>>>>>> Stashed changes
 
 ### Changed — Session ownership moved into a filter, and a new session route cannot skip it
 

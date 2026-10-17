@@ -82,12 +82,14 @@ class OnnxBackendApcerTest {
         assertTrue(report.acer() >= 0.0 && report.acer() <= 1.0,
                 "ACER should be between 0 and 1: " + report.acer());
 
-        // Verify we have data for all three attack species
-        assertEquals(3, report.apcerBySpecies().size(),
-                "Should have APCER data for all three attack species");
+        // Verify we have data for all attack species
+        assertEquals(5, report.apcerBySpecies().size(),
+                "Should have APCER data for all attack species");
         assertTrue(report.apcerBySpecies().containsKey(PresentationLabel.PRINTED_PHOTO));
         assertTrue(report.apcerBySpecies().containsKey(PresentationLabel.SCREEN_REPLAY));
         assertTrue(report.apcerBySpecies().containsKey(PresentationLabel.VIDEO_REPLAY));
+        assertTrue(report.apcerBySpecies().containsKey(PresentationLabel.MASK));
+        assertTrue(report.apcerBySpecies().containsKey(PresentationLabel.THREE_D));
 
         // Clean up backend resources
         onnxBackend.shutdown();

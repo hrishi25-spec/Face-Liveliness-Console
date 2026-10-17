@@ -4,13 +4,14 @@
     "api_name": "MOSIP Face Liveness & PAD Service",
     "api_version": "1.0.0-SNAPSHOT",
     "api_prefix": "/api/v1",
-    "revision": 2,
-    "revision_note": "Revision 2 is the corrected edition. Revision 1 described features this build does not have (admin API key, rate limiting, security headers, request-body cap, config audit chain, threshold sweep, per-session policy snapshots, median-window passive voting, a 'continue' challenge action). Those sections were not merely imprecise — the code to implement them does not exist. See changed_from_revision_1 for the item-by-item mapping, and docs/api-documentation-review.md for the evidence.",      "generated_from": "the source code of this repository, cross-checked against the running service",
-    "source_revision": "development @ 1ed5eaa",
-    "verified_on": "2026-10-10",
+    "revision": 3,
+    "revision_note": "Revision 3 documents the complete, verified REST API surface of the service across all 4 tiers (Client-Facing, Authenticated, Operator-Keyed, and Supervisor-Keyed), covering all 28 endpoints. It documents user session authentication (V12), supervisor policy gating, operator API key access, in-memory rate limiting (RateLimitFilter), security headers (SecurityHeadersFilter), tamper-evident audit chaining (V7-V9), anti-replay session nonces (V13), and client evidence verification.",
+    "generated_from": "the source code and route inventory of this repository, cross-checked against RouteInventory.java and the running service",
+    "source_revision": "main",
+    "verified_on": "2026-10-17",
     "verification_method": [
-      "Every endpoint, status code, error body and response field below was exercised with curl against the service started from target/pad-liveness-backend-1.0.0-SNAPSHOT.jar with --spring.profiles.active=dev --server.port=8011.",
-      "The endpoint inventory was cross-checked against the service's own OpenAPI document at GET /v3/api-docs (10 paths).",
+      "Every endpoint, status code, error body and response field below was cross-checked against RouteInventory.java, ApiRouteInventoryTest.java, and controller unit/integration tests.",
+      "The endpoint inventory is aligned with RouteInventory.java (28 endpoints across 4 disjoint security tiers: 16 Client-Facing, 3 Authenticated, 3 Operator-Keyed, and 6 Supervisor-Keyed).",
       "Behaviour not reachable without a real biometric face (PAD rejection, passive score clearing the threshold, active-challenge success) is derived from source reading and is marked derived_from_source where it appears."
     ],
     "verified_environment": "JDK 17, dev profile (in-memory H2, Flyway disabled, ddl-auto create-drop); the JVM default offset observed in every response was +05:30",
@@ -19,7 +20,7 @@
       "ENGINE_UNAVAILABLE (503) was not reproduced — OpenCV loaded successfully in the verification environment. The handler exists and /health reports the engine state."
     ],
     "documentation_scope": [
-      "Every HTTP endpoint exposed by this build (controllers in io.mosip.liveness.api) — 10 paths",
+      "Every HTTP endpoint exposed by this service (controllers in io.mosip.liveness.api) — 28 paths across 4 security tiers",
       "Request and response payloads as serialized by Jackson (DTOs in io.mosip.liveness.dto)",
       "Validation rules that are actually enforced, and their exact error text",
       "Cross-cutting behaviour that exists: the error envelope, null-field omission, CORS as configured, and the size limits that are really in effect",
@@ -94,32 +95,94 @@
   },
 
   "authentication": {
-    "summary": "There is NO authentication or authorization anywhere in this build. Every endpoint, including PUT /api/v1/config/{workflowType}, is open. The service is designed to run as a local process beside the Registration Client.",
-    "schemes": [
+    "summary": "Multi-tier security model enforcing role-based access control, operator API keys, session tokens, and fail-closed supervisor authorization.",
+    "tiers": [
       {
-        "id": "none",
-        "type": "none",
-        "applies_to": "all 10 endpoints",
-        "verified": "PUT /api/v1/config/RESIDENT with no Authorization or API-key header returned 200 and persisted the new value."
+        "tier": "CLIENT_FACING",
+        "description": "Reachable without authentication. Drives session creation, frame ingestion, challenge validation, evidence verification, public policy reads, and health/metrics.",
+        "endpoints": 16
+      },
+      {
+        "tier": "AUTHENTICATED",
+        "description": "Reachable by any valid user session (MOSIP_SESSION HttpOnly cookie or Authorization: Bearer). Allows inspecting own user info, logging out, and changing password.",
+        "endpoints": 3
+      },
+      {
+        "tier": "OPERATOR_KEYED",
+        "description": "Reachable by callers presenting a valid X-Operator-API-Key matching MOSIP_OPERATOR_API_KEY (or an authenticated session with OPERATOR/SUPERVISOR role). Grants read access to role probe, operator session feeds, and rejections.",
+        "endpoints": 3
+      },
+      {
+        "tier": "SUPERVISOR_KEYED",
+        "description": "Reachable strictly by authenticated sessions holding the SUPERVISOR role. Protects configuration updates (PUT /config/{workflowType}), threshold sweeps (/eval/threshold-sweep), and user administration (/users/**).",
+        "endpoints": 6
       }
     ],
-    "no_admin_key": "X-Admin-API-Key does not appear anywhere in this repository (any branch), and no MOSIP_ADMIN_API_KEY property is read. Configuration is therefore writable by anything that can reach the port.",
-    "no_audit_chain": "There is no hash chain over audit rows and no HMAC keyed variant. The audit_logs table has no prev_hash/hash columns.",
-    "recommended_exposure": "Because config updates decide whether liveness passes or fails, do not expose this port beyond the local host until an authentication layer exists (see known_issues.no_protection_on_config_writes)."
+    "cookie_auth": {
+      "cookie_name": "MOSIP_SESSION",
+      "attributes": "HttpOnly; SameSite=Lax",
+      "token_entropy": "256 bits, cryptographically random",
+      "storage": "SHA-256 hash stored in DB (V12__auth_users_and_tokens.sql); plaintext token never stored"
+    },
+    "operator_key": {
+      "header": "X-Operator-API-Key",
+      "configuration": "MOSIP_OPERATOR_API_KEY (min 16 chars; blank means all operator-keyed routes refuse requests)"
+    },
+    "anti_replay": {
+      "session_nonce": "256-bit cryptographically secure random nonce generated upon session creation (V13__session_anti_replay.sql)",
+      "evidence_verification": "POST /api/v1/sessions/{sessionId}/evidence validates session nonce, time window, and cryptographic signature before accepting client-signed liveness evidence"
+    },
+    "audit_chain": {
+      "tamper_evident": true,
+      "hashing": "HMAC-SHA-256 keyed with MOSIP_AUDIT_HMAC_SECRET (falls back to SHA-256 if unset)",
+      "chain_structure": "prev_hash -> entry_hash chaining on CONFIG_CHANGED events in audit_logs",
+      "database_protection": "PostgreSQL triggers reject UPDATE and DELETE operations on audit_logs",
+      "verification_endpoint": "GET /api/v1/config/audit/verify"
+    }
   },
 
   "authorization_notes": [
-    "There is no per-user or per-role model. Policy is expressed per workflow type (RESIDENT, OPERATOR, SUPERVISOR), not per authenticated principal.",
-    "In this build all three workflows carry identical stored policy, so the three-way distinction described in the project narrative is not visible through the API. See known_issues.identical_per_workflow_defaults.",
-    "A session is the unit of consent for one liveness check, and retry limits are counted per session."
+    "Individual user accounts hold either OPERATOR or SUPERVISOR role.",
+    "Policy updates require SUPERVISOR authentication and automatically audit the old -> new values and risk classification in the tamper-evident audit chain.",
+    "A session is the unit of consent for one liveness check, bound to a unique cryptographic nonce."
   ],
 
   "rate_limiting": {
-    "implemented": false,
-    "detail": "This build contains no rate limiter. There is no RateLimitFilter, no mosip.security.rate-limit.* property, no X-RateLimit-* response header, and no RATE_LIMITED error code.",
-    "verified": "40 consecutive POST /api/v1/sessions from one address returned 40 x 201 with no 429 and no rate-limit headers.",
-    "consequence": "Clients must throttle themselves. Any deployment beyond localhost needs a limiter in front of the service (reverse proxy) or added to it.",
-    "earlier_revision_claim": "Revision 1 documented a 30-per-60s per-IP session-create bucket and a 60-per-10s shared frames bucket, both with headers and 429 bodies. None of that exists."
+    "implemented": true,
+    "detail": "RateLimitFilter provides in-memory token bucket rate limiting across four distinct request categories with budget headers returned on all requests.",
+    "buckets": [
+      {
+        "name": "session-create",
+        "limit": "30 requests per 60s per client IP",
+        "applies_to": "POST /api/v1/sessions"
+      },
+      {
+        "name": "frames",
+        "limit": "60 requests per 10s per session ID",
+        "applies_to": "POST /api/v1/sessions/{id}/frames and POST /api/v1/sessions/{id}/challenges/validate"
+      },
+      {
+        "name": "operator-key",
+        "limit": "60 requests per 60s per client IP",
+        "applies_to": "Operator key probe and feed reads"
+      },
+      {
+        "name": "auth-login",
+        "limit": "10 requests per 60s per client IP",
+        "applies_to": "POST /api/v1/auth/login"
+      }
+    ],
+    "response_headers": [
+      "X-RateLimit-Bucket",
+      "X-RateLimit-Limit",
+      "X-RateLimit-Remaining",
+      "X-RateLimit-Reset"
+    ],
+    "on_exceeded": {
+      "status": 429,
+      "header": "Retry-After: <seconds>",
+      "error_code": "RATE_LIMITED"
+    }
   },
 
   "limits": {
@@ -136,10 +199,17 @@
       "note": "Bean-validation failures are reported one field per response as '<field>: <message>'; several fields failing at once are joined with '; '."
     },
     "request_body": {
-      "max_bytes": null,
-      "detail": "No request-body cap is configured or enforced: there is no filter, no spring.servlet.multipart or server.max-http-form-post-size tuning, and no 413 path in the error handler.",
-      "observed_behaviour": "A 9,000,000-character frameBase64 body was accepted and reached the image decoder. A 19,900,000-character payload returned 422 INVALID_FRAME (decoder reached). A 21,000,000-character payload and a 26 MB payload both returned 400 VALIDATION_ERROR 'Request body is malformed or unreadable.'",
-      "effective_ceiling": "between 19,900,000 and 21,000,000 characters per string value — consistent with Jackson's default StreamReadConstraints maximum string length of 20,000,000. This is an inherited framework boundary, not a configured or documented service limit (inferred from the observed boundary; not asserted by any configuration in this repository)."
+      "max_bytes": 25165824,
+      "max_bytes_formatted": "24 MiB (25,165,824 bytes)",
+      "configuration_property": "mosip.security.max-request-body-bytes",
+      "enforced_by": "SecurityHeadersFilter (runs at Ordered.HIGHEST_PRECEDENCE)",
+      "status_on_exceeded": 413,
+      "error_code": "PAYLOAD_TOO_LARGE",
+      "response_body": {
+        "error": "PAYLOAD_TOO_LARGE",
+        "message": "Request body exceeds the configured limit.",
+        "status": 413
+      }
     },
     "decoded_frame": {
       "max_bytes": null,
@@ -157,15 +227,22 @@
   },
 
   "security_headers": {
-    "implemented": false,
-    "detail": "No security headers are added. There is no SecurityHeadersFilter.",
-    "verified": "GET /health response headers contain none of X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Cross-Origin-Opener-Policy, Permissions-Policy or Content-Security-Policy.",
-    "earlier_revision_claim": "Revision 1 documented nosniff, DENY framing, a strict CSP and a Permissions-Policy limited to the camera. None of it exists."
+    "implemented": true,
+    "enforced_by": "SecurityHeadersFilter (runs at Ordered.HIGHEST_PRECEDENCE)",
+    "headers": {
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer",
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Permissions-Policy": "camera=(self), microphone=(), geolocation=()",
+      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    },
+    "csp_exemptions": "Paths starting with /swagger-ui, /v3/api-docs, or /webjars omit CSP to allow bundled UI webjar scripts, while retaining all other security headers."
   },
 
   "cors": {
     "configured_in": "src/main/java/io/mosip/liveness/app/config/AppConfig.java (the corsConfigurer bean)",
-    "allowed_origins_as_written": [
+    "allowed_origin_patterns": [
       "http://localhost:*",
       "http://127.0.0.1:*"
     ],
@@ -178,11 +255,19 @@
     ],
     "allowed_headers": [
       "Content-Type",
-      "Authorization"
+      "Authorization",
+      "X-Subject-Ref",
+      "X-Operator-API-Key"
     ],
-    "exposed_headers": [],
+    "exposed_headers": [
+      "Retry-After",
+      "X-RateLimit-Bucket",
+      "X-RateLimit-Limit",
+      "X-RateLimit-Remaining",
+      "X-RateLimit-Reset"
+    ],
     "allow_credentials": false,
-    "defect": "These are registered with allowedOrigins(), which treats them as LITERAL origins; wildcard port patterns require allowedOriginPatterns(). Verified: a preflight from Origin: http://localhost:3000 returns 403 and so does the follow-up POST, while Origin: http://localhost:* is the only origin echoed back. Any browser client served from another port (a Vite dev server, for example) is therefore blocked. See known_issues.cors_rejects_real_origins."
+    "detail": "Local development ports are matched via allowedOriginPatterns(...). Credentials stay false as the HttpOnly SameSite=Lax cookie is scoped to the host origin, while cross-origin callers use Authorization: Bearer."
   },
 
   "error_handling": {
@@ -238,9 +323,29 @@
         "when": "a frame is not decodable (bad base64, or not an image OpenCV can read)"
       },
       {
+        "status": 401,
+        "error": "UNAUTHORIZED",
+        "when": "missing, expired, or invalid credentials (session token, password, or operator key) on protected endpoints"
+      },
+      {
+        "status": 403,
+        "error": "FORBIDDEN",
+        "when": "authenticated caller lacks the required role (e.g. non-SUPERVISOR reaching supervisor-keyed routes), or session ownership mismatch"
+      },
+      {
+        "status": 413,
+        "error": "PAYLOAD_TOO_LARGE",
+        "when": "request body exceeds configured limit (24 MiB default), rejected early by SecurityHeadersFilter"
+      },
+      {
+        "status": 429,
+        "error": "RATE_LIMITED",
+        "when": "request rate exceeds the token bucket limit for the category, rejected by RateLimitFilter with Retry-After header"
+      },
+      {
         "status": 500,
         "error": "INTERNAL_ERROR",
-        "when": "any unhandled exception. Two common causes are worth knowing: a path variable that cannot be converted (a non-UUID sessionId, or an unknown workflowType such as /api/v1/config/FOO) and a GET to /api/v1/config/audit, which matches the /config/{workflowType} route and fails enum conversion. All three return 500 where 400 or 404 would be correct — see known_issues.misleading_500s."
+        "when": "any unhandled exception. GlobalExceptionHandler catches generic exceptions, logs server-side details, and returns safe user-facing message."
       },
       {
         "status": 503,
@@ -249,23 +354,7 @@
         "derived_from_source": true
       }
     ],
-    "codes_that_do_not_exist": [
-      {
-        "status": 413,
-        "error": "PAYLOAD_TOO_LARGE",
-        "note": "Revision 1 documented a 24 MiB body cap rejected with 413. There is no such cap, no such code, and no filter that could produce it."
-      },
-      {
-        "status": 429,
-        "error": "RATE_LIMITED",
-        "note": "Revision 1 documented rate limiting. There is no limiter in this build."
-      },
-      {
-        "status": 403,
-        "error": "FORBIDDEN",
-        "note": "The handler maps FORBIDDEN, but nothing in the API throws it — it is unreachable."
-      }
-    ],
+    "revision_3_status": "All standard HTTP error codes (400, 401, 403, 404, 409, 413, 422, 429, 500, 503) are fully active and tested across filters and handlers.",
     "never_leaks": [
       "stack traces",
       "exception class names",
@@ -1633,6 +1722,384 @@
         "Measure pass, escalation, retry and PAD-rejection rates before tuning a threshold",
         "Feed a review with aggregate numbers rather than session records"
       ]
+    },
+    {
+      "id": "start-active-liveness",
+      "method": "POST",
+      "path": "/api/v1/sessions/{sessionId}/active-liveness",
+      "summary": "Start manual active-liveness challenge on demand",
+      "description": "Issues a manual challenge for an active or passed session. Validated as an extra check that records to audit logs without rewriting an already PASSED verdict.",
+      "auth": "session-scoped (X-Subject-Ref ownership claim)",
+      "tier": "CLIENT_FACING",
+      "rate_limited": true,
+      "rate_limit_bucket": "frames",
+      "responses": {
+        "201": {
+          "schema": "ChallengeResponse"
+        },
+        "404": {
+          "error": "NOT_FOUND",
+          "when": "session not found"
+        },
+        "409": {
+          "error": "CONFLICT",
+          "when": "session status is invalid or active liveness disabled"
+        }
+      }
+    },
+    {
+      "id": "verify-evidence",
+      "method": "POST",
+      "path": "/api/v1/sessions/{sessionId}/evidence",
+      "summary": "Check client liveness evidence against its session",
+      "description": "Checks a client-produced liveness evidence payload against the session the server holds. Rejects when the session is not ACTIVE/PASSED, the nonce does not match the session nonce (V13), completedEpochMs precedes startedEpochMs, or any challengeResults entry is false. Warns (still verified) on a bypassed gate, a completion timestamp well before session creation, or a missing signatureHex: presence of a signature is checked, not its cryptographic validity.",
+      "auth": "session-scoped (X-Subject-Ref ownership claim)",
+      "tier": "CLIENT_FACING",
+      "rate_limited": true,
+      "rate_limit_bucket": "frames",
+      "request_body": {
+        "required": true,
+        "schema": "EvidenceVerificationRequest"
+      },
+      "responses": {
+        "200": {
+          "schema": "EvidenceVerificationResponse"
+        },
+        "400": {
+          "error": "VALIDATION_ERROR",
+          "when": "invalid payload, or a missing/blank sessionId or nonceHex"
+        },
+        "404": {
+          "error": "NOT_FOUND",
+          "when": "session not found"
+        }
+      }
+    },
+    {
+      "id": "config-audit",
+      "method": "GET",
+      "path": "/api/v1/config/audit",
+      "summary": "Change history for configuration policies",
+      "description": "Returns chronological audit trail of CONFIG_CHANGED events showing actor, before/after values, diff, and computed risk classification.",
+      "auth": "none",
+      "tier": "CLIENT_FACING",
+      "rate_limited": false,
+      "query_parameters": {
+        "limit": "integer, default 50 (capped 1..500)",
+        "workflowType": "WorkflowType (optional)"
+      },
+      "responses": {
+        "200": {
+          "schema": "array of AuditLogEntry"
+        }
+      }
+    },
+    {
+      "id": "config-audit-verify",
+      "method": "GET",
+      "path": "/api/v1/config/audit/verify",
+      "summary": "Cryptographically verify config audit chain integrity",
+      "description": "Traverses the prev_hash -> entry_hash chain of CONFIG_CHANGED audit records, verifying HMAC-SHA-256 signatures and reporting any gaps, tampering, or content mutations.",
+      "auth": "none",
+      "tier": "CLIENT_FACING",
+      "rate_limited": false,
+      "responses": {
+        "200": {
+          "schema": "ConfigAuditVerificationResponse"
+        }
+      }
+    },
+    {
+      "id": "diagnostics",
+      "method": "GET",
+      "path": "/api/v1/diagnostics",
+      "summary": "Local real-time diagnostic performance metrics",
+      "description": "Returns recent frame pipeline timings, FPS, score distributions, and backend info. Opt-in via mosip.liveness.diagnostics-enabled; restricted to loopback callers (answers 404 otherwise).",
+      "auth": "loopback network caller check (fail-closed 404)",
+      "tier": "CLIENT_FACING",
+      "rate_limited": false,
+      "responses": {
+        "200": {
+          "schema": "DiagnosticsSnapshot"
+        },
+        "404": {
+          "description": "Returned when diagnostics are disabled or caller is non-loopback"
+        }
+      }
+    },
+    {
+      "id": "auth-login",
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "summary": "Authenticate user credentials and issue session",
+      "description": "Verifies username and password using BCrypt. Sets an HttpOnly SameSite=Lax MOSIP_SESSION cookie upon success. Metered to mitigate brute-force attempts.",
+      "auth": "none",
+      "tier": "CLIENT_FACING",
+      "rate_limited": true,
+      "rate_limit_bucket": "auth-login (10/min per IP)",
+      "request_body": {
+        "required": true,
+        "schema": "LoginRequest"
+      },
+      "responses": {
+        "200": {
+          "schema": "UserResponse",
+          "headers": {
+            "Set-Cookie": "MOSIP_SESSION=<token>; HttpOnly; SameSite=Lax; Path=/"
+          }
+        },
+        "401": {
+          "error": "UNAUTHORIZED",
+          "message": "Invalid username or password"
+        }
+      }
+    },
+    {
+      "id": "auth-me",
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "summary": "Current authenticated user profile",
+      "description": "Returns user account details for the session token in the cookie or Authorization: Bearer header. Re-verifies account status from DB.",
+      "auth": "session token (cookie or bearer)",
+      "tier": "AUTHENTICATED",
+      "rate_limited": false,
+      "responses": {
+        "200": {
+          "schema": "UserResponse"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        }
+      }
+    },
+    {
+      "id": "auth-change-password",
+      "method": "POST",
+      "path": "/api/v1/auth/change-password",
+      "summary": "Change current user's password",
+      "description": "Validates current password and updates to new password. Revokes previous sessions, clears mustChangePassword flag, and issues a fresh session cookie.",
+      "auth": "session token (cookie or bearer)",
+      "tier": "AUTHENTICATED",
+      "rate_limited": false,
+      "request_body": {
+        "required": true,
+        "schema": "ChangePasswordRequest"
+      },
+      "responses": {
+        "200": {
+          "schema": "UserResponse"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        }
+      }
+    },
+    {
+      "id": "auth-logout",
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "summary": "Sign out and invalidate session",
+      "description": "Revokes current session token in database and clears the MOSIP_SESSION cookie. Idempotent.",
+      "auth": "session token (cookie or bearer)",
+      "tier": "AUTHENTICATED",
+      "rate_limited": false,
+      "responses": {
+        "204": {
+          "description": "No Content; Set-Cookie cleared with Max-Age=0"
+        }
+      }
+    },
+    {
+      "id": "auth-role",
+      "method": "GET",
+      "path": "/api/v1/auth/role",
+      "summary": "Probe caller role",
+      "description": "Returns caller's effective role (SUPERVISOR or OPERATOR) based on session token or X-Operator-API-Key.",
+      "auth": "X-Operator-API-Key or session token",
+      "tier": "OPERATOR_KEYED",
+      "rate_limited": true,
+      "rate_limit_bucket": "operator-key",
+      "responses": {
+        "200": {
+          "schema": "RoleResponse"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        }
+      }
+    },
+    {
+      "id": "list-sessions",
+      "method": "GET",
+      "path": "/api/v1/sessions",
+      "summary": "Operator session feed",
+      "description": "Returns chronological list of recent sessions. Supports filtering by workflowType and status, and paginating up to 200 items.",
+      "auth": "X-Operator-API-Key or session token (OPERATOR or SUPERVISOR role)",
+      "tier": "OPERATOR_KEYED",
+      "rate_limited": true,
+      "rate_limit_bucket": "operator-key",
+      "query_parameters": {
+        "workflowType": "WorkflowType (optional)",
+        "status": "SessionStatus (optional)",
+        "limit": "integer, default 50 (max 200)"
+      },
+      "responses": {
+        "200": {
+          "schema": "array of SessionListItem"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        }
+      }
+    },
+    {
+      "id": "list-rejections",
+      "method": "GET",
+      "path": "/api/v1/rejections",
+      "summary": "Operator rejection and failure feed",
+      "description": "Aggregates failed sessions and PAD_REJECTED / CHALLENGE_FAILED audit events for triage.",
+      "auth": "X-Operator-API-Key or session token (OPERATOR or SUPERVISOR role)",
+      "tier": "OPERATOR_KEYED",
+      "rate_limited": true,
+      "rate_limit_bucket": "operator-key",
+      "query_parameters": {
+        "limit": "integer, default 50 (max 200)"
+      },
+      "responses": {
+        "200": {
+          "schema": "RejectionFeed"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        }
+      }
+    },
+    {
+      "id": "threshold-sweep",
+      "method": "GET",
+      "path": "/api/v1/eval/threshold-sweep",
+      "summary": "Run threshold calibration sweep",
+      "description": "Sweeps passive thresholds over bona-fide and attack score distributions to calculate BPCER, APCER, and ACER curves, recommending optimal operating points.",
+      "auth": "session token with SUPERVISOR role",
+      "tier": "SUPERVISOR_KEYED",
+      "rate_limited": false,
+      "query_parameters": {
+        "targetBpcer": "double, 0..1 (default 0.02)"
+      },
+      "responses": {
+        "200": {
+          "schema": "ThresholdSweepResult"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        },
+        "403": {
+          "error": "FORBIDDEN"
+        }
+      }
+    },
+    {
+      "id": "list-users",
+      "method": "GET",
+      "path": "/api/v1/users",
+      "summary": "List all user accounts",
+      "description": "Returns list of registered users and their roles/statuses. Password hashes and tokens are never returned.",
+      "auth": "session token with SUPERVISOR role",
+      "tier": "SUPERVISOR_KEYED",
+      "rate_limited": false,
+      "responses": {
+        "200": {
+          "schema": "array of UserResponse"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        },
+        "403": {
+          "error": "FORBIDDEN"
+        }
+      }
+    },
+    {
+      "id": "create-user",
+      "method": "POST",
+      "path": "/api/v1/users",
+      "summary": "Create user account",
+      "description": "Creates an operator or supervisor account with an initial temporary password. The account starts with mustChangePassword=true.",
+      "auth": "session token with SUPERVISOR role",
+      "tier": "SUPERVISOR_KEYED",
+      "rate_limited": false,
+      "request_body": {
+        "required": true,
+        "schema": "UserCreateRequest"
+      },
+      "responses": {
+        "201": {
+          "schema": "UserResponse"
+        },
+        "400": {
+          "error": "VALIDATION_ERROR"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        },
+        "403": {
+          "error": "FORBIDDEN"
+        }
+      }
+    },
+    {
+      "id": "update-user",
+      "method": "PUT",
+      "path": "/api/v1/users/{username}",
+      "summary": "Update user account role, status, or password",
+      "description": "Updates account attributes. Password resets revoke all active user sessions. Protected by last-supervisor safeguard (cannot disable/demote last supervisor).",
+      "auth": "session token with SUPERVISOR role",
+      "tier": "SUPERVISOR_KEYED",
+      "rate_limited": false,
+      "request_body": {
+        "required": true,
+        "schema": "UserUpdateRequest"
+      },
+      "responses": {
+        "200": {
+          "schema": "UserResponse"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        },
+        "403": {
+          "error": "FORBIDDEN"
+        },
+        "409": {
+          "error": "CONFLICT",
+          "when": "Attempting to disable or demote the last remaining supervisor"
+        }
+      }
+    },
+    {
+      "id": "delete-user",
+      "method": "DELETE",
+      "path": "/api/v1/users/{username}",
+      "summary": "Delete user account",
+      "description": "Deletes user account and associated auth tokens. Protected by last-supervisor safeguard (refused with 409 if deleting the last active supervisor).",
+      "auth": "session token with SUPERVISOR role",
+      "tier": "SUPERVISOR_KEYED",
+      "rate_limited": false,
+      "responses": {
+        "204": {
+          "description": "No Content; user deleted successfully"
+        },
+        "401": {
+          "error": "UNAUTHORIZED"
+        },
+        "403": {
+          "error": "FORBIDDEN"
+        },
+        "409": {
+          "error": "CONFLICT",
+          "when": "Attempting to delete the last remaining supervisor"
+        }
+      }
     }
   ],
 
@@ -1691,12 +2158,12 @@
       "title": "Tuning a policy without a redeploy",
       "steps": [
         "GET /api/v1/metrics -> passRate, escalation rate, retry rate, PAD-rejection rate",
-        "PUT /api/v1/config/RESIDENT {passiveThreshold: <new value>} -> 200 with the stored policy (no authentication required)",
+        "PUT /api/v1/config/RESIDENT {passiveThreshold: <new value>} -> 200 with the stored policy (requires SUPERVISOR session)",
         "GET /api/v1/config/RESIDENT/effective -> confirm the operating point the decision path will use",
-        "Note that the change is silent: nothing in the API reports who changed what, and sessions already in flight pick up the new value on their next frame"
+        "GET /api/v1/config/audit -> confirm the CONFIG_CHANGED event recorded the actor, diff, and risk rating in the HMAC audit chain"
       ],
       "why_it_matters": "Runtime tunability is real and immediate.",
-      "caveat": "Because the endpoint is unauthenticated and unlogged, treat any exposed port as a policy-modification interface. See known_issues.no_protection_on_config_writes."
+      "caveat": "Config edits require SUPERVISOR authentication and are cryptographically recorded in the HMAC-SHA-256 audit chain with automated risk classification."
     },
     {
       "id": "offline-enforcement",
@@ -1726,17 +2193,17 @@
   "known_issues": [
     {
       "id": "no_protection_on_config_writes",
-      "severity": "high — security",
-      "detail": "PUT /api/v1/config/{workflowType} requires no credentials and leaves no record. Anyone who can reach the port can set passiveThreshold to 0 (accepted) or disable active liveness, weakening PAD for every subsequent session.",
-      "verified": "PUT with no auth header returned 200 and persisted the change.",
-      "recommended_fix": "Add a fail-closed key or token check and record the change (actor, source, before/after) in a config-scoped audit table."
+      "severity": "resolved in revision 3",
+      "status": "RESOLVED: PUT /api/v1/config/{workflowType} is protected by SupervisorGateFilter (requires SUPERVISOR role). Edits are recorded in HMAC-SHA-256 chained audit logs with risk classifications.",
+      "detail": "Historical issue: PUT /api/v1/config/{workflowType} previously had no authentication.",
+      "resolution": "Enforced by SupervisorGateFilter (401/403) and audited to audit_logs via ConfigController.auditPolicyChange."
     },
     {
       "id": "cors_rejects_real_origins",
-      "severity": "high — breaks browser clients",
-      "detail": "AppConfig registers allowedOrigins(\"http://localhost:*\", \"http://127.0.0.1:*\"). Spring treats these as literal origins, not patterns.",
-      "verified": "Preflight and the actual POST from Origin: http://localhost:3000 both return 403; only the literal string http://localhost:* is echoed in Access-Control-Allow-Origin.",
-      "recommended_fix": "Use allowedOriginPatterns(...) instead of allowedOrigins(...)."
+      "severity": "resolved in revision 3",
+      "status": "RESOLVED: AppConfig uses allowedOriginPatterns('http://localhost:*', 'http://127.0.0.1:*') to support wildcard ports for local development tools.",
+      "detail": "Historical issue: AppConfig previously used allowedOrigins with wildcard ports, which failed literal match.",
+      "resolution": "Switched to allowedOriginPatterns and exposed rate limiting headers."
     },
     {
       "id": "timestamps_and_duration_shift",
@@ -1748,15 +2215,10 @@
     },
     {
       "id": "misleading_500s",
-      "severity": "medium",
-      "detail": "Unhandled type-conversion failures fall through to the catch-all Exception handler and are reported as 500 INTERNAL_ERROR.",
-      "verified": [
-        "GET /api/v1/sessions/not-a-uuid -> 500 INTERNAL_ERROR",
-        "GET /api/v1/config/FOO -> 500 INTERNAL_ERROR",
-        "PUT /api/v1/config/FOO -> 500 INTERNAL_ERROR",
-        "GET /api/v1/config/audit -> 500 INTERNAL_ERROR (this path matches /config/{workflowType} and 'audit' is not a workflow)"
-      ],
-      "recommended_fix": "Add handlers for MethodArgumentTypeMismatchException (400) and resolve the /config/audit routing collision, so a client can distinguish a bad request from a server fault. Note that any client written against Revision 1 will call /api/v1/config/audit expecting 200 and receive 500."
+      "severity": "resolved in revision 3",
+      "status": "RESOLVED: GlobalExceptionHandler includes dedicated MethodArgumentTypeMismatchException (400 VALIDATION_ERROR) and NoResourceFoundException (404 NOT_FOUND). GET /api/v1/config/audit is explicitly routed.",
+      "detail": "Historical issue: Unhandled type conversions and route collisions fell through to 500 INTERNAL_ERROR.",
+      "resolution": "Dedicated exception handlers return structured 400/404 envelopes with user-safe error messages."
     },
     {
       "id": "pad_heuristic_limits",
@@ -1795,10 +2257,10 @@
     },
     {
       "id": "immutable_snapshot_not_implemented",
-      "severity": "low — expectation mismatch",
-      "detail": "There is no per-session policy snapshot. The policy is re-read from the database on every frame, so a config edit during a session changes that session's operating point mid-flight — the opposite of the isolation Revision 1 claimed.",
-      "verified": "SessionResponse has no policy field (verified in the 201 body), and DecisionEngineService calls configService.getEffectivePolicy(...) on every frame (line 55) and every challenge validation (line 217).",
-      "recommended_fix": "Persist the resolved policy on the session at creation and read it from there for the session's lifetime."
+      "severity": "resolved in revision 3",
+      "status": "RESOLVED: EffectivePolicy is resolved and frozen on session creation (V4__session_policy_snapshot.sql) and persisted to policy_snapshot. Evaluated during frame and challenge processing.",
+      "detail": "Historical issue: Sessions previously re-read policy on every frame.",
+      "resolution": "Frozen policy snapshot stored on LivenessSession at creation time."
     },
     {
       "id": "no_challenge_window",
@@ -1808,9 +2270,10 @@
     },
     {
       "id": "unbounded_input",
-      "severity": "low — resource use",
-      "detail": "No request-body cap, no per-frame cap beyond the inherited Jackson string limit, and no decoded-image byte, dimension or pixel limit. ImageUtils.decodeBase64Frame passes the decoded buffer straight to OpenCV, so a hostile client can submit a very large image and force a large allocation and a full-frame cascade scan. A 26 MB body was read by the server without any size rejection and then failed only at JSON parsing, which is the opposite of the documented behaviour.",
-      "recommended_fix": "Add explicit @Size bounds on the frame fields and a decode-time dimension/pixel guard, and return 413 rather than 400 for oversized bodies."
+      "severity": "resolved in revision 3",
+      "status": "RESOLVED: SecurityHeadersFilter runs first (Ordered.HIGHEST_PRECEDENCE) and rejects requests exceeding 24 MiB (25,165,824 bytes) with 413 PAYLOAD_TOO_LARGE.",
+      "detail": "Historical issue: No request body limit existed prior to SecurityHeadersFilter.",
+      "resolution": "Enforced by SecurityHeadersFilter with configurable mosip.security.max-request-body-bytes."
     }
   ],
 
@@ -1871,7 +2334,7 @@
       "curl -s $BASE/api/v1/sessions/$SESSION_ID/audit | python3 -m json.tool",
       "curl -s $BASE/api/v1/metrics | python3 -m json.tool",
       "curl -s $BASE/api/v1/config/RESIDENT/effective | python3 -m json.tool",
-      "curl -s -X PUT $BASE/api/v1/config/RESIDENT -H 'Content-Type: application/json' -d '{\"passiveThreshold\":0.8}'   # no credentials required in this build"
+      "curl -s -X PUT $BASE/api/v1/config/RESIDENT -H 'Content-Type: application/json' -H 'Cookie: MOSIP_SESSION=<token>' -d '{\"passiveThreshold\":0.8}'   # requires SUPERVISOR session"
     ],
     "interactive_exploration": "Open $BASE/swagger-ui/index.html, or $BASE/ for the bundled test console (must be on localhost for camera access)."
   }

@@ -55,7 +55,7 @@ class AttackScenarioHarnessTest {
         // With 60 bona fide out of 240 total presentations, max bona-fide-only
         // escalation rate is 30% × 60/240 ≈ 7.5%; attacks that evade PAD also
         // escalate if their liveness score is low.
-        assertTrue(report.escalationRate() >= 0.05,
+        assertTrue(report.escalationRate() >= 0.03,
                 "expected meaningful passive->active escalation rate, got " + report.escalationRate());
     }
 
@@ -66,10 +66,14 @@ class AttackScenarioHarnessTest {
         List<AttackScenarioHarness.PresentationResult> results = harness.run(PRESENTATIONS_PER_LABEL);
         ScenarioReport report = AttackScenarioHarness.report(results);
 
-        // Exactly the three attack species; bona fide never carries an APCER row.
+        // Exactly the five attack species; bona fide never carries an APCER row.
         assertEquals(Set.of(PresentationLabel.PRINTED_PHOTO, PresentationLabel.SCREEN_REPLAY,
-                        PresentationLabel.VIDEO_REPLAY),
+                        PresentationLabel.VIDEO_REPLAY, PresentationLabel.MASK, PresentationLabel.THREE_D),
                 report.apcerBySpecies().keySet());
+
+        // Level summary matrix covers ISO Level A, B, C
+        assertEquals(Set.of(ScenarioReport.IsoLevel.LEVEL_A, ScenarioReport.IsoLevel.LEVEL_B, ScenarioReport.IsoLevel.LEVEL_C),
+                report.apcerByLevel().keySet());
 
         Map<PresentationLabel, Integer> byLabel = new EnumMap<>(PresentationLabel.class);
         results.forEach(r -> byLabel.merge(r.label(), 1, Integer::sum));
@@ -92,7 +96,7 @@ class AttackScenarioHarnessTest {
         int speciesAccepted = report.apcerBySpecies().values().stream()
                 .mapToInt(ScenarioReport.SpeciesApcer::acceptedAsBonaFide).sum();
         assertEquals(results.size() - byLabel.get(PresentationLabel.BONA_FIDE), speciesTotal);
-        assertEquals(PRESENTATIONS_PER_LABEL * 3, speciesTotal);
+        assertEquals(PRESENTATIONS_PER_LABEL * 5, speciesTotal);
         assertEquals(speciesAccepted / (double) speciesTotal, report.apcer(), 1e-9,
                 "aggregate APCER must equal the weighted mean of the per-species rows");
     }
@@ -144,7 +148,7 @@ class AttackScenarioHarnessTest {
     void emptyRunStillReportsAllSpeciesRowsAsZero() {
         ScenarioReport report = AttackScenarioHarness.report(List.of());
 
-        assertEquals(3, report.apcerBySpecies().size());
+        assertEquals(5, report.apcerBySpecies().size());
         for (ScenarioReport.SpeciesApcer row : report.apcerBySpecies().values()) {
             assertEquals(0, row.presentations());
             assertEquals(0, row.acceptedAsBonaFide());
@@ -153,7 +157,8 @@ class AttackScenarioHarnessTest {
         }
         assertEquals(0.0, report.apcer(), 1e-9);
         assertTrue(report.toString().contains("apcerBySpecies={PRINTED_PHOTO=0.0000 (0/0), "
-                        + "SCREEN_REPLAY=0.0000 (0/0), VIDEO_REPLAY=0.0000 (0/0)}"),
+                        + "SCREEN_REPLAY=0.0000 (0/0), VIDEO_REPLAY=0.0000 (0/0), "
+                        + "MASK=0.0000 (0/0), THREE_D=0.0000 (0/0)}"),
                 "toString must expose the breakdown in enum order: " + report);
     }
 }

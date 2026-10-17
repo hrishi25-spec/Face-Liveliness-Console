@@ -51,16 +51,66 @@ public final class ChallengeSelector {
     private ChallengeType draw(Set<ChallengeType> pool) {
         if (bag.isEmpty()) refill(pool);
         ChallengeType t = bag.poll();
-        if (t.equals(lastIssued)) {
-            if (!bag.isEmpty()) {
-                bag.addLast(t);
-                t = bag.poll();
-            } else {
+
+        boolean hasNonContradictory = hasNonContradictoryAlternative(pool, lastIssued);
+        if (shouldReject(t, lastIssued, hasNonContradictory, pool.size() > 1)) {
+            bag.addLast(t);
+            int attempts = bag.size();
+            boolean found = false;
+            for (int i = 0; i < attempts; i++) {
+                ChallengeType candidate = bag.poll();
+                if (!shouldReject(candidate, lastIssued, hasNonContradictory, pool.size() > 1)) {
+                    t = candidate;
+                    found = true;
+                    break;
+                }
+                bag.addLast(candidate);
+            }
+            if (!found) {
                 refill(pool);
-                t = bag.poll();
+                int refillAttempts = bag.size();
+                for (int i = 0; i < refillAttempts; i++) {
+                    ChallengeType candidate = bag.poll();
+                    if (!shouldReject(candidate, lastIssued, hasNonContradictory, pool.size() > 1)) {
+                        t = candidate;
+                        found = true;
+                        break;
+                    }
+                    bag.addLast(candidate);
+                }
+                if (!found) {
+                    t = bag.poll();
+                }
             }
         }
         return t;
+    }
+
+    private static boolean shouldReject(ChallengeType candidate, ChallengeType last,
+                                        boolean hasNonContradictory, boolean canAvoidRepeat) {
+        if (last == null) return false;
+        if (candidate.equals(last) && canAvoidRepeat) return true;
+        if (hasNonContradictory && isContradictory(last, candidate)) return true;
+        return false;
+    }
+
+    private static boolean hasNonContradictoryAlternative(Set<ChallengeType> pool, ChallengeType last) {
+        if (last == null) return true;
+        for (ChallengeType candidate : pool) {
+            if (!isContradictory(last, candidate)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isContradictory(ChallengeType a, ChallengeType b) {
+        if (a == null || b == null) return false;
+        if (a == b) return true;
+        return (a == ChallengeType.TURN_HEAD_LEFT && b == ChallengeType.TURN_HEAD_RIGHT)
+                || (a == ChallengeType.TURN_HEAD_RIGHT && b == ChallengeType.TURN_HEAD_LEFT)
+                || (a == ChallengeType.LOOK_LEFT && b == ChallengeType.LOOK_RIGHT)
+                || (a == ChallengeType.LOOK_RIGHT && b == ChallengeType.LOOK_LEFT)
+                || (a == ChallengeType.LOOK_UP && b == ChallengeType.LOOK_DOWN)
+                || (a == ChallengeType.LOOK_DOWN && b == ChallengeType.LOOK_UP);
     }
 
     private void refill(Set<ChallengeType> pool) {

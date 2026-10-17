@@ -38,4 +38,8 @@ public record DeviceCapabilities(
     public boolean isL1() {
         return streamingSupported;
     }
+
+    public boolean isL0() {
+        return !streamingSupported;
+    }
 }

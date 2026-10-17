@@ -15,7 +15,7 @@ Legend: ✅ aligned · 🟡 partial · 🔴 gap.
 | PAD framework: categorise + report attacks | ✅ | `PadVerdict` + `PadAttackType` (PRINTED_PHOTO / SCREEN_REPLAY / VIDEO_REPLAY / OTHER) per frame; terminal, distinct audit event |
 | Scope boundary: only attacks at the capture device | ✅ | ISO scope boundary adopted and stated: digital **injection attacks** (virtual camera, hooked camera API, frame replay) are threat-modelled as a separate class — `design.md` §6 (threat surface, layered countermeasures, explicit residual risk) using Part-1 scope wording |
 | "PAI" (presentation attack instrument) terminology | ✅ | Part-1 vocabulary defined and used in `design.md` §5–§6 — PAI, attack presentation, bona fide presentation, PAD subsystem — incl. the `PresentationLabel` → PAI class mapping (§6.4) |
-| Self-testing ≠ certification | ✅ | `status-report.md` L176, `acceptance-audit.md` L79 |
+| Self-testing ≠ certification | ✅ | `status-report.md` §7 (honest caveats), `acceptance-audit.md` §Remaining gaps |
 
 ## 02 — ISO/IEC 30107-3:2023 (Testing & Reporting)
 
@@ -24,8 +24,8 @@ Legend: ✅ aligned · 🟡 partial · 🔴 gap.
 | APCER / BPCER metrics | ✅ | `eval.PadMetrics.apcer/bpcer/acer`; `ThresholdSweep` finds the operating point |
 | Attack species classification (Annex A style) | ✅ | `PresentationLabel` + `ProxyPresentationCorpus`: printed photo, screen replay, video replay (masks documented as residual risk) |
 | **APCER reported per PAI species** | ✅ | `ScenarioReport.apcerBySpecies()` — one immutable `SpeciesApcer` row (presentations / accepted-as-bona-fide / APCER) per attack `PresentationLabel`; aggregate `apcer` remains the presentation-weighted mean of the rows; bona fide excluded (its rate is BPCER). `AttackScenarioHarness.report()` groups the labelled results; tested by `AttackScenarioHarnessTest` (full-run grouping + exact hand-built math + zero-count rows) |
-| Honest reporting (method, limits) | 🟡 | Simulation is disclosed (3% miss / 1% FP injected, `status-report.md` L90), but no Part-3-style report skeleton (devices, subjects, lighting, threshold, limitations) exists in docs |
-| Not claiming certification | ✅ | "certification-ready, not self-certifying" (`brain.md` L874, `status-report.md`) |
+| Honest reporting (method, limits) | 🟡 | Simulation is disclosed (3% miss / 1% FP injected, `status-report.md` §2.5), but no Part-3-style report skeleton (devices, subjects, lighting, threshold, limitations) exists in docs |
+| Not claiming certification | ✅ | "certification-ready, not self-certifying" (`brain.md` §16, `status-report.md` §7) |
 
 ## 03 — ISO/IEC 19794-5:2011 (Face image data / capture conditions)
 
