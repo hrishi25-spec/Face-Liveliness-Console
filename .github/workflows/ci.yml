@@ -262,7 +262,7 @@ jobs:
       # pinned packages below can be installed. Pin it to a package that still
       # exists; the packages this build actually needs are installed next.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
           # Explicit, though it is the action's default: the install step below
