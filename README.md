@@ -169,7 +169,7 @@ All session routes live under `/api/v1`. The full contract is in [docs/PRD.md](d
 
 | Tier | Auth | Endpoints |
 |---|---|---|
-| **Client-facing** | none (session routes honour `X-Subject-Ref` ownership) | `POST /sessions` · `GET /sessions/{id}` · `POST /sessions/{id}/frames` · `POST /sessions/{id}/challenges/validate` · `POST /sessions/{id}/active-liveness` · `POST /sessions/{id}/close` · `GET /sessions/{id}/audit` · `GET /config/{workflow}` and `/effective` · `GET /config/audit` and `/audit/verify` · `GET /metrics` · `GET /diagnostics` (loopback, opt-in) · `GET /health` |
+| **Client-facing** | none (session routes honour `X-Subject-Ref` ownership) | `POST /sessions` · `GET /sessions/{id}` · `POST /sessions/{id}/frames` · `POST /sessions/{id}/challenges/validate` · `POST /sessions/{id}/active-liveness` · `POST /sessions/{id}/evidence` · `POST /sessions/{id}/close` · `GET /sessions/{id}/audit` · `GET /config/{workflow}` and `/effective` · `GET /config/audit` and `/audit/verify` · `GET /metrics` · `GET /diagnostics` (loopback, opt-in) · `GET /health` · `POST /auth/login` |
 | **Authenticated** | session cookie or `Bearer` | `GET /auth/me` · `POST /auth/change-password` · `POST /auth/logout` |
 | **Operator-keyed** | `X-Operator-API-Key` or an operator/supervisor session | `GET /auth/role` · `GET /sessions` (feed) · `GET /rejections` |
 | **Supervisor-only** | `SUPERVISOR` session, fail-closed | `PUT /config/{workflow}` · `GET /eval/threshold-sweep` · `GET/POST/PUT/DELETE /users` |
@@ -199,7 +199,7 @@ Measured, not estimated. Host: Intel Core i3-1005G1 (2 cores / 4 threads), 7.7 G
 
 | Metric | Result |
 |---|---|
-| Cold boot to `/health` (median of 5, cold OpenCV cache) | **58.3 s** (budget 120 s) |
+| Cold boot to `/health` (median of 5, cold OpenCV cache) | **58.3 s** under load, **15.8 s** re-measured idle (budget 120 s) |
 | Slim jar / full jar | **89.4 MiB** / 200.7 MiB (ceilings 110 / 245) |
 | Per-frame cost at the SPI, distinct frames | **61.8 ms** mean, ~16 fps (was 160.9 ms before the one-detection-one-inference fix) |
 | Per-frame pipeline over HTTP, distinct payloads | **167.8 ms** server-side (was 304.7 ms) |
@@ -232,7 +232,7 @@ void shutdown();
 
 | Backend | Notes |
 |---|---|
-| `onnx-minifasnet-v2` | **Default** (`auto`). Bundled 1.7 MB model, SHA-256 verified on load, live class is output index 1, input is raw 0–255 BGR |
+| `onnx-minifasnet-v2` | **The `auto` default on the HTTP scoring path.** Bundled 1.7 MB model, SHA-256 verified on load, live class is output index 1, input is raw 0–255 BGR. On the SPI bean path `auto` and `heuristic` both yield the scripted mock |
 | `mock` | Scripted and deterministic, for CI and the attack harness |
 | `mediapipe-facemesh` | 468-point landmarks. Needs the TFLite runtime and model, which are not bundled |
 | `tflite-minifasnet` | Android and embedded only. The TFLite runtime has no desktop-JVM interpreter |
@@ -243,25 +243,27 @@ Explicit backends never silently fall back. An unavailable one fails closed with
 
 | Path | What it is |
 |---|---|
-| `src/`, `pom.xml` | **The active codebase.** Spring Boot service and shared engine (190 main classes, 95 test classes) |
+| `src/`, `pom.xml` | **The active codebase.** Spring Boot service and shared engine (190 main classes, 88 test classes, 751 tests) |
 | `android_client/` | Pinned Flutter 3.10.4 / Dart 3.0.3 harness, Pigeon bindings, CameraX source. Not the full Registration Client |
 | `pad_liveness_backend/` | Independent FastAPI + PostgreSQL reference implementation (Python 3.12, Alembic), not wired into the Java build <!-- boundary-allow: repository map names each sibling project's own stack --> |
 | `training/` | Workstation-only synthetic-data pipeline for MiniFASNet. No real faces, not in CI |
 | `docs/` | Cross-project documentation (below) |
-| `scripts/` | Repo gates: boundary check, jar smoke, jar size, cold-boot median, Docker and Windows-launcher smoke |
+| `scripts/` | Repo gates: secret scan, boundary check, Java import and package layout, jar smoke, jar size, cold-boot median, Docker and Windows-launcher smoke |
 
 Inside `io.mosip.liveness`: `api/` (controllers and filters), `auth/`, `services/`, `engine/` (embedded state machine), `backend/` (the SPI), `challenge/`, `config/`, `audit/`, `device/` (SBI stream, burst capture and mock L0/L1 device), `eval/`, `client/` and `android/`.
 
 ## Testing and CI
 
 ```bash
-./mvnw --batch-mode test                         # Java unit + integration (95 test classes)
+./mvnw --batch-mode test                         # Java unit + integration (88 test classes, 751 tests)
 node src/test/js/console-guards.test.mjs        # console DOM guards, no Maven needed
 node scripts/check-project-boundaries.mjs       # docs-vs-CI consistency gate
-cd pad_liveness_backend && python -m pytest -q   # 46 Python tests — boundary-allow: sibling project's suite, documented from the repository root
+node scripts/check-java-imports.mjs             # every Java import resolves to source
+node scripts/check-java-packages.mjs            # every package declaration matches its directory
+cd pad_liveness_backend && python -m pytest -q   # 49 Python tests — boundary-allow: sibling project's suite, documented from the repository root
 ```
 
-Fourteen CI jobs cover unit and integration, console DOM guards, project boundaries, secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging, a Windows launcher smoke test (JDK under a path with a space), the Docker image, a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, and tagged releases. Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
+Fifteen CI jobs cover unit and integration, console DOM guards, project boundaries, Java source layout (imports and packages), secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging, a Windows launcher smoke test (JDK under a path with a space), the Docker image, a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, and tagged releases. Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
 
 ## Configuration essentials
 

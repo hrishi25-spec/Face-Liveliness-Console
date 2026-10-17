@@ -43,15 +43,15 @@ Legend: ✅ done · 🟡 partial · ❌ not done.
 | 2.6 Operator authentication (6) | ✅ | Passive+PAD+active; auth refused on failure; offline (local templates) path |
 | 2.7 Supervisor authentication (6) | ✅ | Stricter policy; same guarantees |
 | 2.8 Configuration (8 keys) | ✅ | Enablement, threshold, active policy, challenge types, min count, timeout, retries, per-workflow overrides |
-| 2.9 Error handling (13 conditions) | ✅ | All enumerated in `core/LivenessErrorCode` (E101→E901) with user-safe messages; `engine/ErrorConditionsTest`; 3-invalid-frames → device error; engine/model errors fail closed |
+| 2.9 Error handling (19 conditions) | ✅ | All enumerated in `core/LivenessErrorCode` (E101→E901) with user-safe messages; `engine/ErrorConditionsTest`; 3-invalid-frames → device error; engine/model errors fail closed |
 | 2.10 UI/UX | ✅ | All spec strings implemented (`LivenessView.defaultMessages`, engine `userMessage()`, console); system-generated prompts (user never selects); real-time feedback (continue/detected/hold); generic PAD message; retry indication + recovery guidance; operator/supervisor share the resident interaction model |
 
-## 3. Bonus tasks (8 → 4 ✅ / 4 🟡)
+## 3. Bonus tasks (9 → 6 ✅ / 3 🟡)
 
 | Task | Status | Evidence / gap |
 |---|---|---|
 | Mock L0/L1 device | ✅ | `device/MockL0L1Device`, `SyntheticScene`, android `MockFaceFrameSource` |
-| Automated liveness scenarios | ✅ | 349 green tests; engine flow/escalation/error suites |
+| Automated liveness scenarios | ✅ | 751 green Java tests; engine flow/escalation/error suites |
 | Automated PAD attack scenarios | ✅ | `AttackScenarioHarness` (240 presentations, seeded), `PrintAttackFixtureTest` |
 | Interop testing framework | 🟡 | Shared suite runs across mock/ONNX/MediaPipe backends + 2 device adapters; no formal cross-vendor report |
 | Model version management | ✅ | sha256 + version + rollback (`android/ModelStore`; bundled model hash verified at load) |
@@ -60,7 +60,7 @@ Legend: ✅ done · 🟡 partial · ❌ not done.
 | Low-resource Android optimization | 🟡 | `frameSamplingRate`, ≤640×480 analysis, keep-only-latest; **no on-device benchmark** |
 | Hardware acceleration | 🟡 | NNAPI/GPU → XNNPACK delegate chain documented + pluggable; not measured on-device |
 
-## 4. Good-to-have (9+4 → 8 ✅ / 1 🟡)
+## 4. Good-to-have (9 → 9 ✅ / 0 🟡)
 
 | Task | Status |
 |---|---|

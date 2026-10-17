@@ -334,7 +334,7 @@ Resident / UI          Host Client           Liveness Engine        Backend/Mode
       │                     │◀─ Signed Evidence ────│                     │                     │
       │                     │                                                                   │
       │                     │── POST /sessions/{id}/evidence (evidence token) ─────────────────▶│ (verify nonce,
-      │                     │◀─ 200 OK (evidenceVerified=true) ─────────────────────────────────│  timestamps, sig)
+      │                     │◀─ 200 OK (evidenceVerified=true) ─────────────────────────────────│  timestamps, sig presence)
       │◀─ Success Overlay ──│                                                                   │
 ```
 

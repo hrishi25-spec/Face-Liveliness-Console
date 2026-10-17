@@ -51,7 +51,7 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 │   │   ├── static/console.css              # Console styles (external — strict CSP)
 │   │   ├── static/console.js               # Console logic (external — strict CSP)
 │   │   └── db/migration/V1__init_schema.sql  # Flyway DB migration
-│   └── test/java/io/mosip/liveness/       # 76 test classes + 6 support files (82 files)
+│   └── test/java/io/mosip/liveness/       # 88 test classes + 7 support files (95 files)
 │
 ├── pad_liveness_backend/                   # Python FastAPI ORIGINAL reference backend
 │   ├── app/                                # FastAPI application (35 .py files)
@@ -81,9 +81,9 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 
 | Language | Where | Lines of Code | Purpose |
 |----------|-------|---------------|---------|
-| **Java 17** | `src/main/java` (156 files) | ~19,400 | Main backend: engine, API, device adapters, backends, services, models |
-| **Java 17** | `src/test/java` (82 files) | ~16,900 | Unit + integration tests and test utilities |
-| **Python 3.11+** | `pad_liveness_backend/` (50 files) | ~3,390 | Original FastAPI reference implementation (kept for comparison) |
+| **Java 17** | `src/main/java` (190 files) | ~24,100 | Main backend: engine, API, device adapters, backends, services, models |
+| **Java 17** | `src/test/java` (95 files) | ~21,700 | Unit + integration tests and test utilities |
+| **Python 3.11+** | `pad_liveness_backend/` (53 files) | ~3,840 | Original FastAPI reference implementation (kept for comparison) |
 | **SQL** | `V1__init_schema.sql` | ~85 | PostgreSQL schema (Flyway migration) |
 | **YAML** | `application.yml`, `application-dev.yml` | ~60 | Spring Boot configuration |
 | **JavaScript/HTML** | `static/index.html`, `static/console.css`, `static/console.js` | ~1,340 | Single-page browser test console (external assets so CSP stays strict) |
@@ -188,9 +188,11 @@ without the header, and the service's refusal arrives as a `LivenessClientExcept
 carrying the status and the service's own message rather than as a parse failure on
 the error body.
 
-This is resource-level isolation, not authentication: there is no identity
-provider, user table or token issuer here, `subjectRef` is not a wire credential,
-and a caller who learns a reference holds it. MOSIP subject references are
+This is resource-level isolation, not caller authentication: `subjectRef` is not a
+wire credential, and a caller who learns a reference holds it. The account system
+(`/api/v1/auth/*`, `auth_users` and `auth_tokens` in `V12`) authenticates
+supervisors and operators for the privileged surface only — it does not change who
+may open or drive a client-facing session. MOSIP subject references are
 predictable, so treat the port binding (`SERVER_ADDRESS`, loopback by default) as
 the real access boundary and this as the check that keeps honest clients from
 reaching each other's sessions.
@@ -228,6 +230,37 @@ no challenge types. While a manual challenge is still `ISSUED`, a repeat call
 returns that same challenge instead of issuing a second one. The route is
 client-facing (no session) and shares the per-session rate-limit budget with
 frame and challenge submissions.
+
+### Client Evidence (`/api/v1/sessions/{sessionId}/evidence`)
+```
+POST /api/v1/sessions/{sessionId}/evidence
+  Body: { sessionId, nonceHex, role, userId, policyVersion, engineId, modelVersion,
+          engineCertified, passiveScore, challenges[], challengeResults[],
+          startedEpochMs, completedEpochMs, bestFrameSha256, deviceId, bypassed,
+          signatureHex }
+  → 200: { verified: true/false, sessionId, failureReason, warnings[] }
+```
+
+`LivenessEvidenceVerifier` checks a `LivenessEvidence` payload produced by an
+online client gate against the session the server already holds. It **rejects**
+(`verified: false`) when the session is not `ACTIVE`/`PASSED`, when `nonceHex`
+does not equal the session nonce minted at creation (`V13`), when
+`completedEpochMs` precedes `startedEpochMs`, or when any entry in
+`challengeResults` is `false`. It only **warns** — the evidence still verifies —
+for a completion timestamp more than 5 s before the session was created, for
+`bypassed: true`, and for a missing `signatureHex`; the endpoint checks that a
+signature is present, not that it verifies against the client's key. Both
+outcomes are audited (`EVIDENCE_REJECTED` with the reason / `EVIDENCE_VERIFIED`
+with the engine, model and score) and the response is always `200`, so the caller
+reads the reason from the body rather than an HTTP status. The route is
+session-scoped, so `SessionOwnershipFilter` refuses a stranger first.
+
+> Evidence signing and verification are implemented on the client side
+> (`LivenessEvidenceBinding`, `SignedCapture`, `EvidenceSigner`) and exercised by
+> `LivenessEvidenceBindingTest`. Server-side cryptographic verification is not
+> wired into this endpoint yet — treat `verified: true` as "the evidence is
+> internally consistent with this session", not "the client proved possession of
+> its key".
 
 ### Frame Submission
 ```
@@ -933,7 +966,8 @@ refuses to freeze less, and the engine clamps stored values up to it.
 
 ## 11. Database Schema
 
-5 tables, managed by Flyway migration `V1__init_schema.sql`:
+Eight tables across twelve Flyway migrations (`V1`–`V13`; one number in the range
+was never used). `V1__init_schema.sql` creates the five core ones:
 
 ```sql
 liveness_sessions     -- id(UUID), workflow_type, device_id, status, current_stage,
@@ -962,7 +996,11 @@ identifier client-side with `@GeneratedValue(strategy = GenerationType.UUID)`).
 `policy_snapshot_at` and rewrites the three seeded rows to their distinct
 `WorkflowPolicyDefaults` operating points (see §10). The local audit chain adds
 `config_change_audit` (V7), `audit_logs.workflow_type` + its index (V8) and the
-append-only `UPDATE`/`DELETE` guards on `audit_logs` (V9).
+append-only `UPDATE`/`DELETE` guards on `audit_logs` (V9). `V10` drops the unused
+singular `audit_log` table, `V11` adds `challenges.manual`,
+`V12__auth_users_and_tokens.sql` creates `auth_users` (BCrypt hash, role, flags,
+lockout and password timestamps) and `auth_tokens` (SHA-256 digest only), and `V13`
+adds `liveness_sessions.nonce` + `last_frame_seq` for the anti-replay checks.
 
 `challenge_types` and `details` are stored as **JSON text**, not `JSONB`: the entities
 map them with explicit JPA `AttributeConverter`s (`models/converter/`) so H2 (dev) and
@@ -1015,7 +1053,7 @@ Automated evaluation framework for ISO/IEC 30107-3 style testing:
 | Component | Python | Java Equivalent |
 |-----------|--------|----------------|
 | `app/main.py` | FastAPI app entry | `PadLivenessApplication.java` |
-| `app/api/routes/` | 6 route files | 8 controller classes |
+| `app/api/routes/` | 6 route files | 13 controller classes |
 | `app/services/decision_engine.py` | Orchestrator | `DecisionEngineService.java` |
 | `app/services/liveness_engine.py` | Passive + active scoring | `LivenessEngineService.java` |
 | `app/services/pad_engine.py` | PAD heuristics | `PadEngineService.java` |
@@ -1030,7 +1068,7 @@ The Java version is a **complete superset** of the Python version — it adds th
 
 ## 14. Test Suite
 
-**76 test classes + 6 support files (82 files), 607 tests, all green.** The
+**88 test classes + 7 support files (95 files), 751 tests, all green.** The
 cross-backend contract test runs in its own CI job (it needs both runtimes), so
 it is excluded from the unit matrix rather than skipping there.
 
@@ -1275,17 +1313,23 @@ already in use.
 - `converter/` — `StringListJsonConverter`, `StringObjectMapJsonConverter`
   (JSON text ↔ Java collections, so H2 and PostgreSQL behave identically)
 
-### Java Tests (82 files, 607 tests)
-- 5 engine, 2 challenge, 1 config, 8 API, 1 device, 1 eval, 1 models, 4 service tests
-- Support files: `MutableClock`, `RecordingAuditLogger`, `TestConfig`
+### Java Tests (95 files, 88 test classes, 751 tests)
+- Engine, challenge, config, API (one class per controller plus the fail-closed
+  and route-inventory gates), device, evaluation, model, service and audit tests
+- Support files: `TestConfig`, `MutableClock`, `RecordingAuditLogger`,
+  `AuthTestFixture`, `RawHttpSupport`, `HeadlessFx`, `AndroidOrchestratorSupport`
 
 ### Python Reference Backend (50 files, ~3,390 LOC)
 - FastAPI app with identical API contract
 - SQLAlchemy + Alembic for DB
 - Same decision flow, pluggable engines, audit logging
 
-### SQL (1 file)
-- `V1__init_schema.sql` — 5 tables, indexes, seed data
+### SQL (12 files, ~470 lines)
+- `V1`–`V13` (one number in the range is unused) — schema and seed data, unified passive threshold, the
+  15 s challenge window, the frozen session policy snapshot, the audit table and
+  chain immutability triggers, config-change auditing, workflow typing,
+  the manual-challenge flag, `auth_users`/`auth_tokens` (V12) and the session
+  anti-replay nonce (V13)
 
 ### Documentation
 - `docs/PRD.md` — product requirements + full system reference: goals, repository contents,
@@ -1327,7 +1371,7 @@ already in use.
 
 ---
 
-*Last updated: 2026-10-02*
-*Branch: development*
+*Last updated: 2026-10-17*
+*Branch: main*
 *Artifact: `io.mosip.liveness:pad-liveness-backend:1.0.0-SNAPSHOT`*
-*Verified against: 156 main source files / 82 test files / 607 passing tests*
+*Verified against: 190 main source files / 95 test files / 751 passing tests*

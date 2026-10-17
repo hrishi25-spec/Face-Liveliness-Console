@@ -10,7 +10,9 @@
 run.bat
 ```
 
-Builds automatically if needed, starts on port 8000, opens browser.
+Builds automatically if needed, starts on port 8000, opens the browser. `run.sh` is
+the minimal runner; `start.sh` adds `--rebuild`, `--test` and `--lowmem`, and
+Windows `start.bat` also has `--doctor`.
 
 ## Minimal Hardware Requirements
 
@@ -19,7 +21,7 @@ Builds automatically if needed, starts on port 8000, opens browser.
 | CPU | 1 vCPU | 2+ vCPU |
 | RAM | 1 GB | 2 GB |
 | Disk | 500 MB | 1 GB |
-| Java | JDK 25+ | JDK 25 |
+| Java | JDK 17+ | JDK 21 LTS |
 
 ## Profiles
 
@@ -61,7 +63,8 @@ start.bat --help           # show options
 - Use a real **Windows console** (`cmd.exe` or PowerShell). Do not launch these
   with Git Bash or WSL — those do not run `.bat` files the same way, and names
   like `start` clash with built-in commands.
-- Install the **full JDK 25+**. Do **not** use the slim
+- Install a **full JDK 17 or newer** (21 LTS recommended; CI builds and tests
+  on 17, and the Mockito/ByteBuddy test stack does not run on 25 yet). Do **not** use the slim
   Twitter-style "vscode-jdk" extensions or WSL-only toolchains; `start.bat` and
   `run.bat` need a stock JDK at `C:\Program Files\Java\...` or
   `C:\Program Files\Eclipse Adoptium\...` to find it and to load the OpenCV
@@ -91,7 +94,10 @@ stale copy.
 docker compose -f docker-compose.lite.yml up -d
 ```
 
-Image size: ~90 MB layers (vs ~294 MB full). Runs as non-root user.
+Image size: ~329 MiB of layers, built from the ~89 MiB slim jar (the full jar is
+~200 MiB). Runs as the unprivileged `mosip` user, and the OpenCV engine stays
+unavailable inside the musl container by design — see the container caveat in the
+[README](README.md).
 
 ## Test
 

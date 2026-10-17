@@ -9,7 +9,7 @@ auth) so behaviour is identical online/offline and across roles.
 
 | Tree | Runs where | Notes |
 |---|---|---|
-| `src/main/java/io/mosip/liveness/android/**` | JVM (this repo) | Full state machine, policy floor, evidence signing — covered by `AndroidLivenessOrchestratorTest` (13 tests) and the shared engine suite (349 green). |
+| `src/main/java/io/mosip/liveness/android/**` | JVM (this repo) | Full state machine, policy floor, evidence signing — covered by `AndroidLivenessOrchestratorTest` (13 tests) and the shared engine suite (751 green). |
 | `pigeon/liveness.dart` | Regenerated code | Host/Flutter API definitions (spec §7). |
 | `lib/liveness/**` | Flutter | `LivenessViewModel` + `LivenessView`: renders state and prompts (i18n keys), retry; capture button enabled only on PASSED (§14). |
 | `android/app/src/main/java/io/mosip/registration/liveness/**` | Android embedding | `CameraXFaceSource`, `AndroidKeystoreEvidenceSigner`, and generated-Pigeon bridge. Compiled by the Android Gradle harness; the downstream MOSIP host still wires the production collaborators and registration/auth flows. |

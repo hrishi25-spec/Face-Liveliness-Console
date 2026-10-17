@@ -7,9 +7,18 @@ All notable changes to this project will be documented in this file.
 ### Added — Anti-replay protection, evidence verification, and unified localisation
 
 - **Session anti-replay validation (`AntiReplayValidator` + `V13__session_anti_replay.sql`)**: Sessions now generate cryptographically secure 256-bit nonces bound to `liveness_sessions.nonce`. Prevents replay attacks across capture attempts.
-- **Client evidence verification endpoint (`POST /api/v1/sessions/{sessionId}/evidence`)**: Verifies signed liveness evidence produced by online client gates (`EvidenceVerificationRequest`, `EvidenceVerificationResponse`, `LivenessEvidenceVerifier`). Validates session nonce binding, timing window, and challenge completion before acceptance.
+- **Client evidence verification endpoint (`POST /api/v1/sessions/{sessionId}/evidence`)**: Checks evidence produced by online client gates (`EvidenceVerificationRequest`, `EvidenceVerificationResponse`, `LivenessEvidenceVerifier`). Rejects a session that is not `ACTIVE`/`PASSED`, a nonce that does not match the session's (`V13`), timestamps in the wrong order, and any failed challenge result; warns on a bypassed gate or a missing signature. The endpoint checks that `signatureHex` is present, **not** that it verifies — client-side signing and verification exist (`LivenessEvidenceBinding`, `EvidenceSigner`) but server-side cryptographic verification is not wired in yet.
 - **Unified localisation message catalog (`LivenessMessageKeys` + `app_en.arb`)**: Centralised all user-facing guidance and error keys across Java and Flutter/Android. Enforced by `LocalisationKeyGateTest`, ensuring all message keys map to valid localized text without exposing internal error or model details.
 - **Repository cleanup**: Removed obsolete third-party workspace (`vendor/github setup/`) and design mockups (`stitch_markdown_ui_page_designer/`), keeping the repository focused strictly on the active MOSIP liveness and PAD implementation. Updated repository guidance (`AGENTS.md`, `README.md`, `PRD.md`) to reflect the 5 active project trees.
+- **Build hardening (`scripts/check-java-imports.mjs`)**: Restored the thirteen classes lost when `0824f02` deleted `src/` — the engine primitives, backend SPI and test helpers that the remaining files still imported — so `./start.sh` builds and boots again. A new CI job fails whenever an `io.mosip.liveness.*` import under `src` names no source file that declares it, so a partial source-tree restore is a one-line diagnosis instead of pages of `cannot find symbol` against the wrong files.
+
+### Fixed — the CI jobs that were red on every push
+
+- **A JDK 25 runner broke every Mockito-backed suite.** Commit `6506a40` raised every job from JDK 17 to 25, but the Mockito/ByteBuddy pair Spring Boot 3.3.x manages cannot instrument JDK 25 class files. Reproduced locally on Temurin 25.0.4.1: 732 tests, 231 errors, every one `Mockito cannot mock this class` before an assertion ran — which is what the Unit, Integration, PostgreSQL-schema and Cross-backend jobs were reporting. The workflow is back on JDK 17 (the version `<java.version>` targets), the Windows launcher keeps its own JDK 21 install, and `actions/setup-java` moves to v5, the version the runner's deprecation notice asks for.
+- **The Android job could not compile the engine it embeds.** `android/app/build.gradle` compiles a hand-picked subset of `src/main/java`, and `io/mosip/liveness/shared/**` was missing from it even though `EffectivePolicy`, `FaceLivenessEngine`, `AndroidLivenessOrchestrator` and `LivenessGatePolicy` all import `RepeatedFailureAction` from there. The include list now carries the package: the subset compiles under `javac` on 17, and deleting the entry again reproduces the CI error (`package io.mosip.liveness.shared.definitions does not exist`).
+- **The secret scan found 52 findings.** Forty are `curl -H` samples copied from a third-party NOAA API guide into vendored agent-skill trees (`.agents/`, `.claude/`, …, since removed — but the gate reads history), and twelve are the API tests' deliberately fake operator keys (`synthetic-operator-key-…`, `integration-operator-key-…`). `.gitleaks.toml` allowlists exactly those two families — the curl rule only under that one guide's path, the generic rule only on lines carrying those prefixes — and the scan is green again. Verified the same value outside `vendor/` still fails, so the historical allowlist has not gone blind.
+- `QUICKSTART.md` and `docs/PRD.md` said JDK 25 is the runtime; they now state the JDK 17+ the build and its tests actually require.
+- **The Java layout gates gained their second half.** `scripts/check-java-imports.mjs` proves every import names a source file that declares it, but a file moved to the wrong directory — or a package declaration edited to one the filesystem does not support — still resolves by path, so that gate stays green while `javac` fails for every consumer. `scripts/check-java-packages.mjs` now compares each file's declared package with its directory (and rejects a package declaration at a source root, where only the default package belongs); both run in one *Java source layout* job. An unresolved import is also annotated with its history: the commit that removed the class and the `git show <sha>^:<path>` command that restores it, or, when the path never held it, the last commit to touch a file of that name anywhere — so the repair starts from the deletion instead of a search. Outside a git checkout the annotation is simply omitted.
 
 ### Changed — The console implements the reference design system, and the review fixed what only looked right
 
@@ -98,6 +107,24 @@ All notable changes to this project will be documented in this file.
   documents the design system, the truth-in-UI rules, the divergences from the
   mocks, and (§7.7) the single dialog and why nothing is asked through a platform
   prompt.
+
+### Docs — the reference documents were reconciled with the tree
+
+A full documentation pass re-checked every count, route and backend claim against
+the code and the current test run. `docs/PRD.md` now states the real sizes (190
+main classes, 88 test classes, 751 Java tests, 49 Python tests, 12 migrations, 15
+CI jobs, 9 gate scripts), lists `POST /sessions/{id}/active-liveness`, `/evidence`
+and `/auth/login` in §7, and includes the import, package and secret gates in the
+repository-gate table; the CI job list gains the *Java source layout* job.
+`docs/status-report.md` (190 files, ONNX as the default backend, accounts and
+anti-replay rows) and `docs/brain.md` (inventory, test counts, schema through V13,
+an evidence-endpoint section) describe what exists rather than the phase-1 library.
+`README.md` documents the missing routes and the corrected project layout,
+`QUICKSTART.md` states the container's real layer size, `docs/backend-swapping.md`
+documents `OnnxMiniFasNetBackend` as the desktop default with the selection table,
+and `docs/known-quirks.md` records that its characterization tests are gone. The
+evidence endpoint is described for what it checks: signature **presence**, not
+validity (client-side signing exists; server-side verification is not wired in).
 
 ### Performance — the console's script crosses the wire compressed, and three startup knobs were measured out
 

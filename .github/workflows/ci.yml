@@ -47,13 +47,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Run the service on Java 25; compiled artifacts remain Java 17-compatible
-      # for the Android host integration. Maven caching keeps CI fast.
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      # JDK 17 matches <java.version> in pom.xml and is the ceiling this test
+      # stack supports: the Mockito/ByteBuddy pair Spring Boot 3.3.x manages
+      # (byte-buddy 1.14.x) cannot instrument JDK 25 class files, so a JDK 25
+      # runner fails every Mockito-backed slice with "Mockito cannot mock this
+      # class" before an assertion runs — 231 errors on the last measurement,
+      # none of them a real test failure. Raise this only together with those
+      # dependencies. Maven caching keeps CI fast.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
       # Tests are self-contained: the JPA slice swaps in embedded H2, OpenCV
@@ -104,6 +109,33 @@ jobs:
 
       - name: Check project guidance and instruction scope
         run: node scripts/check-project-boundaries.mjs
+
+  # Java source layout: two gates over the same tree, both reading it as text so
+  # neither needs Maven, a compiler, or a setup step (the scripts are
+  # dependency-free and ubuntu-latest ships node).
+  #
+  # The import gate exists because a partial restore of `src/` is a failure mode
+  # this repository has shipped: 0824f02 deleted the tree, the restore brought
+  # back most of it but left thirteen classes behind, and Maven only found out
+  # at compile time — attributing every error to the importing file, so the
+  # deleted class looked like a broken consumer. That gate reads the imports and
+  # names the missing class directly. The package gate covers the failure the
+  # import gate cannot see: a file whose directory and package declaration
+  # disagree still resolves by path, so the imports check stays green while
+  # javac fails for every consumer.
+  imports:
+    name: Java source layout
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check every Java import resolves to a source file
+        run: node scripts/check-java-imports.mjs
+
+      - name: Check every Java package matches its directory
+        run: node scripts/check-java-packages.mjs
 
   #
   # The secret scan. Nothing else here can catch a committed credential: the
@@ -181,11 +213,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
       - name: Set up Python 3.12.15
@@ -218,7 +250,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -331,11 +363,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
       # Tests already ran in the test jobs, so skip them here; spring-boot
@@ -446,28 +478,29 @@ jobs:
       # next step installs, which overwrites this JAVA_HOME. This one sits in
       # C:\hostedtoolcache — a path with no space in it, and therefore exactly
       # what the check below must not be run against.
-      - name: Set up JDK 25 (Maven cache only)
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17 (Maven cache only)
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
-      # Install Java 25 rather than the JDK cache-only setup above: this launcher
-      # job verifies the installed runtime and paths containing spaces.
-      # QUICKSTART recommends the matching Windows JDK installed by
-      # `winget install EclipseAdoptium.Temurin.25.JDK`.
+      # Java 21 rather than the 17 the cache-only setup installs, for two
+      # reasons: it is a newer major version than this project targets, so the
+      # launcher's JDK probe is exercised across a version boundary, and
+      # `winget install EclipseAdoptium.Temurin.21.JDK` — the command
+      # QUICKSTART hands a Windows reader — is how it arrives on a real machine.
       # That MSI's default INSTALLDIR is C:\Program Files\Eclipse Adoptium, so
       # the path has a space in it without anything faking one.
       - name: Install a JDK under C:\Program Files
         run: |
-          choco install temurin25 --yes --no-progress
+          choco install temurin21 --yes --no-progress
           $jdk = Get-ChildItem 'C:\Program Files\Eclipse Adoptium' -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like 'jdk-25*' } |
+            Where-Object { $_.Name -like 'jdk-21*' } |
             Sort-Object Name -Descending |
             Select-Object -First 1
           if (-not $jdk) {
-            throw "no jdk-25* under 'C:\Program Files\Eclipse Adoptium' - this job needs a JDK whose path has a space"
+            throw "no jdk-21* under 'C:\Program Files\Eclipse Adoptium' - this job needs a JDK whose path has a space"
           }
           if ($jdk.FullName -notmatch ' ') {
             throw "$($jdk.FullName) has no space in its path"
@@ -518,11 +551,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
       - name: Package the slim jar the image is built from
@@ -564,11 +597,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
       - name: Package the slim jar to measure
@@ -602,11 +635,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
       - name: Validate migrations against the entities
@@ -640,11 +673,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
       # Release assets are the same artifact CI publishes elsewhere, so they go
@@ -838,11 +871,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '17'
           cache: maven
 
       # Same build the release job's slim asset went through, so the

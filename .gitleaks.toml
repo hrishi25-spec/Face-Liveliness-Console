@@ -50,6 +50,33 @@ description = "CHANGELOG prose tripping the word-key heuristic"
 targetRules = ["generic-api-key"]
 paths = ['''^CHANGELOG\.md$''']
 
+# Vendored AI-agent skill trees (`.agents/`, `.bob/`, `.claude/`, `.grok/`,
+# `.roo/`, `.windsurf/`, `.codestudio/`, `skills/`) arrived in one commit and
+# were removed again, but this gate reads history, so those commits still carry
+# 40 `curl -H` examples copied from a third-party NOAA API guide. They are
+# documentation samples of someone else's API, never a credential for this
+# repository. Scoped to the curl rule and to that one guide's path, so a real
+# header in this repository's own trees still fails.
+[[allowlists]]
+description = "Third-party API guide samples inside vendored agent-skill trees"
+targetRules = ["curl-auth-header"]
+paths = [
+  '''^\.[a-z]+/skills/database-lookup/references/noaa\.md$''',
+  '''^skills/database-lookup/references/noaa\.md$''',
+]
+
+# The API tests present fixed synthetic key strings ("synthetic-operator-key-…",
+# "integration-operator-key-…", "synthetic-wrong-key-…"). The generic rule keys
+# on the import-free identifier — `OPERATOR_KEY` — plus any assigned value, so a
+# knowingly fake value trips it. The pattern below admits only those two
+# families, on the line, which also covers the historical commits where older
+# spellings of the same fixtures live; a real key has neither prefix.
+[[allowlists]]
+description = "Synthetic operator-key fixtures in the API tests (including history)"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''(?:synthetic|integration)[-\w]*key[-\w]+''']
+
 # Historical vendor workspaces (e.g. historical commits touching vendor/)
 # are allowlisted by path so past commits in git history cannot fail the scan,
 # while this repository's own code still must pass all checks.
