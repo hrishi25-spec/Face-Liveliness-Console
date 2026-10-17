@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Inline empty icon: stops the browser from requesting /favicon.ico on every load. -->
+<link rel="icon" href="data:,">
+<title>MOSIP Liveness Console</title>
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+
+<!-- Top bar: product identity on the left, authenticated user state and role on the right -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-logo" aria-hidden="true">M</div>
+      <span class="brand-text">
+        <span class="brand-name">MOSIP</span>
+        <span class="brand-sub">Liveness Console</span>
+      </span>
+    </div>
+
+    <!-- Live service status pills (kept accessible and styled cleanly) -->
+    <div class="topbar-status">
+      <span class="pill" id="pill-health" hidden>checking…</span>
+      <span class="pill" id="pill-engine" hidden>engine…</span>
+      <span class="pill" id="pill-chain" hidden>chain…</span>
+      <span class="pill" id="pill-session" hidden>no session</span>
+    </div>
+
+    <div class="topbar-right">
+      <span id="topbar-user-label" class="topbar-user-text" hidden>Signed in as <span id="topbar-username">staff.user</span></span>
+      <span class="pill-badge pill-brand" id="pill-user" hidden>no user</span>
+      <button id="btn-sign-in" class="secondary" hidden>Sign in</button>
+      <button id="btn-sign-out" class="secondary" hidden>Log out</button>
+    </div>
+  </div>
+</header>
+
+<!-- ========================= SCREEN 1: ROLE PICKER ========================= -->
+<div id="login-page" class="view role-picker-view">
+  <div class="picker-header">
+    <h1 class="page-title">Choose how you want to continue</h1>
+    <p class="page-subtitle">Select your role. Staff roles require sign-in.</p>
+  </div>
+
+  <div class="role-cards-grid">
+    <!-- Card 1: Resident -->
+    <div class="role-card">
+      <div class="role-icon-box">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+      </div>
+      <h3 class="role-title">Resident</h3>
+      <p class="role-desc">Check that you are a live person during registration. No sign-in needed.</p>
+      <div class="role-badge-row">
+        <span class="pill-badge pill-neutral"><span class="pill-dot"></span>No sign-in</span>
+      </div>
+      <input id="input-resident-id" type="hidden" value="RESIDENT-001">
+      <button id="btn-login-resident" class="primary role-btn">Continue as Resident</button>
+    </div>
+
+    <!-- Card 2: Operator -->
+    <div class="role-card">
+      <div class="role-icon-box">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+          <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+          <path d="M9 12h6"/>
+          <path d="M9 16h6"/>
+        </svg>
+      </div>
+      <h3 class="role-title">Operator</h3>
+      <p class="role-desc">Verify your identity, review sessions, audit entries and rejection reasons. Read-only.</p>
+      <div class="role-badge-row">
+        <span class="pill-badge pill-brand"><span class="pill-dot"></span>Staff sign-in</span>
+      </div>
+      <div class="role-inputs-collapsible">
+        <div class="role-input-group">
+          <label class="field-label">Operator Username
+            <input id="input-operator-user" type="text" value="operator" placeholder="Username">
+          </label>
+          <label class="field-label">Password
+            <input id="input-operator-pass" type="password" value="operator1234" placeholder="Password">
+          </label>
+        </div>
+      </div>
+      <div id="status-login-operator" class="cfg-status"></div>
+      <button id="btn-login-operator" class="primary role-btn">Continue as Operator</button>
+    </div>
+
+    <!-- Card 3: Supervisor -->
+    <div class="role-card">
+      <div class="role-icon-box">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="m9 12 2 2 4-4"/>
+        </svg>
+      </div>
+      <h3 class="role-title">Supervisor</h3>
+      <p class="role-desc">Full access: policy, users, audit chain, metrics and diagnostics.</p>
+      <div class="role-badge-row">
+        <span class="pill-badge pill-brand"><span class="pill-dot"></span>Staff sign-in</span>
+      </div>
+      <div class="role-inputs-collapsible">
+        <div class="role-input-group">
+          <label class="field-label">Supervisor Username
+            <input id="input-supervisor-user" type="text" value="supervisor" placeholder="Username">
+          </label>
+          <label class="field-label">Password
+            <input id="input-supervisor-pass" type="password" value="supervisor123" placeholder="Password">
+          </label>
+        </div>
+      </div>
+      <div id="status-login-supervisor" class="cfg-status"></div>
+      <button id="btn-login-supervisor" class="primary role-btn">Continue as Supervisor</button>
+    </div>
+  </div>
+
+  <p class="role-footer-note">The role you pick controls what the screen shows. Access itself is enforced by the server.</p>
+
+  <!-- Compatibility hooks for previous script references -->
+  <div hidden aria-hidden="true">
+    <button type="button" id="role-select-resident"></button>
+    <button type="button" id="role-select-operator"></button>
+    <button type="button" id="role-select-supervisor"></button>
+    <div id="signin-panel-resident"></div>
+    <div id="signin-panel-operator"></div>
+    <div id="signin-panel-supervisor"></div>
+  </div>
+</div>
+
+<!-- ========================= SCREEN 2: RESIDENT VIEW ========================= -->
+<div id="role-resident" class="view resident-view" hidden>
+  <div class="view-header">
+    <h1 class="page-title">Face liveness check</h1>
+    <p class="page-subtitle">We confirm you are physically present. It takes a few seconds.</p>
+  </div>
+
+  <div class="resident-grid">
+    <!-- Left Column: Camera card -->
+    <div class="card camera-card">
+      <div class="card-header-row">
+        <div class="card-title-row">
+          <svg class="card-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/>
+            <rect x="2" y="6" width="14" height="12" rx="2"/>
+          </svg>
+          <h2 class="card-title">Camera</h2>
+        </div>
+        <span class="pill-badge pill-neutral" id="res-camera-pill"><span class="pill-dot"></span>Camera ready</span>
+      </div>
+
+      <div class="camera-viewport-wrapper" id="res-viewfinder">
+        <video id="res-video" autoplay playsinline muted></video>
+        <div class="camera-overlay">
+          <div class="camera-scan" aria-hidden="true"></div>
+          <div class="camera-oval"></div>
+          <span class="camera-oval-caption">Position your face inside the oval</span>
+        </div>
+        <div class="camera-hud camera-hud-left">
+          <span>PAD: ISO/IEC 30107-3</span>
+          <span aria-hidden="true">·</span>
+          <span id="res-hud-budget">capture budget loading…</span>
+        </div>
+        <div class="camera-hud camera-hud-right" id="res-stream-state">
+          <span class="hud-dot" aria-hidden="true"></span>
+          <span id="res-stream-label">stream closed</span>
+        </div>
+      </div>
+
+      <div class="camera-actions-row">
+        <button id="btn-res-camera" class="primary">Start camera</button>
+        <button id="btn-res-run" class="secondary" disabled>Run liveness check</button>
+        <button id="btn-res-active" class="secondary" disabled>Run active liveness</button>
+        <button id="btn-res-stop" class="danger" disabled>Stop</button>
+      </div>
+
+      <!-- Verdict result banner -->
+      <div id="res-banner" class="verdict mt14">
+        <div class="verdict-icon" aria-hidden="true"></div>
+        <div class="verdict-content">
+          <div class="action" id="res-banner-action">READY</div>
+          <div class="msg" id="res-banner-msg">Start the camera to begin.</div>
+        </div>
+      </div>
+
+      <details class="resident-details-box mt14">
+        <summary>Camera guidance and technical details</summary>
+        <p class="hint">The preview is <b>mirrored</b> (like a selfie) so it matches instructions. Frames sent to the engine stay raw and un-mirrored.</p>
+        <dl class="kv mt12" id="res-guide" hidden><dt>—</dt><dd>—</dd></dl>
+      </details>
+    </div>
+
+    <!-- Right Column: Current step & Instructions -->
+    <div class="resident-sidebar">
+      <!-- Current step card -->
+      <div class="card step-card">
+        <div class="step-eyebrow-row">
+          <div class="card-eyebrow">Current step</div>
+          <span class="step-dot" id="res-step-dot" aria-hidden="true"></span>
+        </div>
+        <div class="step-title" id="res-current-step">Checking face liveness…</div>
+        <p class="step-note" id="res-step-note">Real-time passive sensor verification</p>
+        <div class="step-progress-track">
+          <div class="step-progress-fill" id="res-step-progress"></div>
+        </div>
+        <div class="step-meta">
+          <span id="res-stage">Stage 1 of 3</span>
+          <span id="res-stage-state">Idle</span>
+        </div>
+      </div>
+
+      <!-- Instructions card -->
+      <div class="card instructions-card">
+        <div class="card-title-row">
+          <svg class="card-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 16v-4"/>
+            <path d="M12 8h.01"/>
+          </svg>
+          <h3 class="card-title">Instructions</h3>
+        </div>
+        <ol class="instructions-list">
+          <li>
+            <span class="instruction-num">1</span>
+            <span class="instruction-text">Look straight at the camera.</span>
+          </li>
+          <li>
+            <span class="instruction-num">2</span>
+            <span class="instruction-text">Keep your face inside the oval.</span>
+          </li>
+          <li>
+            <span class="instruction-num">3</span>
+            <span class="instruction-text">Follow any prompt, like blinking or turning your head.</span>
+          </li>
+          <li>
+            <span class="instruction-num">4</span>
+            <span class="instruction-text">Hold still when asked.</span>
+          </li>
+        </ol>
+        <p class="tip-callout">
+          <svg class="tip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 18h6"/>
+            <path d="M10 22h4"/>
+            <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>
+          </svg>
+          <span>Ensure your face is evenly lit without harsh backlighting.</span>
+        </p>
+      </div>
+
+      <!-- Capture facts: the limits this page really applies -->
+      <div class="card side-facts-card">
+        <div class="fact-head">
+          <span>Capture facts</span>
+          <span class="fact-head-ok">On-device</span>
+        </div>
+        <dl class="fact-list">
+          <div class="fact-row"><dt>Frame size ceiling</dt><dd id="res-fact-edge">—</dd></div>
+          <div class="fact-row"><dt>Encoder</dt><dd id="res-fact-encoder">—</dd></div>
+          <div class="fact-row"><dt>Send rate ceiling</dt><dd id="res-fact-fps">—</dd></div>
+          <div class="fact-row"><dt>PAD</dt><dd>ISO/IEC 30107-3</dd></div>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================= SCREEN 3 & 4: STAFF / SUPERVISOR ========================= -->
+<main id="role-supervisor" class="view supervisor-view" hidden>
+  <div class="supervisor-container">
+    <!-- Top Underline Navigation Tabs -->
+    <nav class="tabs" id="sup-tabs">
+      <button class="tab active" id="tab-verify">Verify</button>
+      <button class="tab" id="tab-sessions">Sessions</button>
+      <button class="tab" id="tab-audit">Audit</button>
+      <button class="tab" id="tab-rejections">Rejections</button>
+      <button class="tab" id="tab-policy">Policy</button>
+      <button class="tab" id="tab-users">Users</button>
+      <button class="tab" id="tab-metrics">Metrics</button>
+      <button class="tab" id="tab-diagnostics">Diagnostics</button>
+      <button class="tab" id="tab-chain">Chain</button>
+      <button class="tab" id="tab-sweep">Sweep</button>
+    </nav>
+
+    <!-- ==================== TAB: VERIFY ==================== -->
+    <div class="tabpanel" id="panel-verify">
+      <div class="view-header">
+        <h1 class="page-title">Capture &amp; Verify</h1>
+        <p class="page-subtitle">Real-time biometric face verification and active challenge pipeline.</p>
+      </div>
+
+      <div class="card">
+        <div id="engine-warn" class="warnbox" hidden></div>
+
+        <!-- Split capture layout (DESIGN.md, "Layout & Spacing": camera feed and
+             a controls panel side by side, so the actions and the verdict stay on
+             screen while the preview is up.) -->
+        <div class="capture-grid">
+          <div class="capture-main">
+            <div class="steps-progress">
+              <span class="step" id="s1">1 · Session</span>
+              <span class="step" id="s2">2 · Passive liveness</span>
+              <span class="step" id="s3">3 · Active challenge</span>
+              <span class="step" id="s4">4 · Verdict</span>
+            </div>
+
+            <div class="camera-viewport-wrapper" id="sup-viewfinder">
+              <video id="video" autoplay playsinline muted></video>
+              <div class="camera-overlay">
+                <div class="camera-scan" aria-hidden="true"></div>
+                <div class="camera-oval"></div>
+                <span class="camera-oval-caption">Position your face inside the oval</span>
+              </div>
+              <div class="camera-hud camera-hud-left">
+                <span>PAD: ISO/IEC 30107-3</span>
+                <span aria-hidden="true">·</span>
+                <span id="sup-hud-budget">capture budget loading…</span>
+              </div>
+              <div class="camera-hud camera-hud-right" id="sup-stream-state">
+                <span class="hud-dot" aria-hidden="true"></span>
+                <span id="sup-stream-label">stream closed</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="capture-side">
+            <label class="field-label">Workflow
+              <select id="workflow" class="select-control">
+                <option value="RESIDENT">RESIDENT</option>
+                <option value="OPERATOR">OPERATOR</option>
+                <option value="SUPERVISOR">SUPERVISOR</option>
+              </select>
+            </label>
+
+            <label class="field-label">Device ID
+              <input id="deviceId" class="text-control" value="L1-CAM-01">
+            </label>
+
+            <div class="camera-actions-row">
+              <button id="btn-camera" class="primary">Start camera</button>
+              <button id="btn-run" class="secondary" disabled>Run liveness check</button>
+              <button id="btn-active" class="secondary" disabled>Run active liveness</button>
+              <button id="btn-stop" class="danger" disabled>Stop</button>
+            </div>
+
+            <div id="verdict" class="verdict" hidden>
+              <div class="verdict-icon" aria-hidden="true"></div>
+              <div class="verdict-content">
+                <div class="action" id="verdict-action"></div>
+                <div class="msg" id="verdict-msg"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: SESSIONS (SCREEN 3) ==================== -->
+    <div class="tabpanel" id="panel-sessions" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Sessions</h1>
+        <p class="page-subtitle">Recent liveness sessions. This view is read-only.</p>
+      </div>
+
+      <!-- Info notice banner -->
+      <div id="operator-policy-banner" class="info-notice-banner">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="info-icon">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="16" x2="12" y2="12"/>
+          <line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+        <span>Policy changes and user management require a supervisor.</span>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="table-filter-bar">
+        <div class="filter-controls-group">
+          <label class="field-label">Workflow
+            <select id="filter-workflow" class="select-control">
+              <option value="">All workflows</option>
+              <option value="RESIDENT">RESIDENT</option>
+              <option value="OPERATOR">OPERATOR</option>
+              <option value="SUPERVISOR">SUPERVISOR</option>
+            </select>
+          </label>
+          <label class="field-label">Status
+            <select id="filter-status" class="select-control">
+              <option value="">All statuses</option>
+              <option value="PASSED">PASSED</option>
+              <option value="FAILED">FAILED</option>
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="EXPIRED">EXPIRED</option>
+            </select>
+          </label>
+        </div>
+        <div class="filter-actions-group">
+          <button id="btn-sessions" class="secondary">Refresh</button>
+          <span class="row-label" id="sessions-count" hidden>no sessions yet</span>
+        </div>
+      </div>
+
+      <!-- Sessions data table card -->
+      <div class="card table-card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Session</th>
+              <th>Workflow</th>
+              <th>Status</th>
+              <th>Retries</th>
+              <th>Reason</th>
+              <th>Created</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-table-body">
+            <!-- Dynamic and sample rows rendered here -->
+          </tbody>
+        </table>
+        <p class="table-note" id="sessions-note" hidden></p>
+        <div id="sessions-list" class="sessions" hidden></div>
+      </div>
+
+      <!-- Session Detail -->
+      <div class="card mt16">
+        <h3 class="card-title">Session Detail</h3>
+        <dl class="kv mt12" id="session-detail"><dt>—</dt><dd>Select a session above to inspect full detail.</dd></dl>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: AUDIT ==================== -->
+    <div class="tabpanel" id="panel-audit" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Audit trail</h1>
+        <p class="page-subtitle">Cryptographically verifiable sequence of session events.</p>
+      </div>
+
+      <div class="card">
+        <div class="table-filter-bar">
+          <span class="row-label" id="audit-subject">no session selected</span>
+          <div class="filter-actions-group">
+            <button id="btn-audit" class="secondary">Refresh audit</button>
+            <button id="btn-close" class="danger">Close session</button>
+          </div>
+        </div>
+        <pre id="audit" class="code-box mt14">No session yet.</pre>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: REJECTIONS ==================== -->
+    <div class="tabpanel" id="panel-rejections" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Rejection reasons</h1>
+        <p class="page-subtitle">Detailed PAD analysis and failure breakdown for rejected sessions.</p>
+      </div>
+
+      <div class="card">
+        <div class="table-filter-bar">
+          <span class="row-label" id="rejections-subject">no session selected</span>
+          <button id="btn-rejections" class="secondary">Refresh reasons</button>
+        </div>
+        <dl class="kv mt12" id="rejections-summary"><dt>—</dt><dd>—</dd></dl>
+        <pre id="rejections-events" class="code-box mt14">No session selected.</pre>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: POLICY (SCREEN 4) ==================== -->
+    <div class="tabpanel" id="panel-policy" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Policy</h1>
+        <p class="page-subtitle">Control how strict each workflow is. Changes apply to new sessions only.</p>
+      </div>
+
+      <div class="policy-layout-grid">
+        <!-- Left: Form Editor Card -->
+        <div class="policy-main-col">
+          <div class="card">
+            <!-- Segmented button picker for workflow -->
+            <div class="policy-workflow-header">
+              <div class="segmented-control" id="workflow-segmented">
+                <button type="button" class="segmented-btn active" id="btn-wf-resident" data-wf="RESIDENT">RESIDENT</button>
+                <button type="button" class="segmented-btn" id="btn-wf-operator" data-wf="OPERATOR">OPERATOR</button>
+                <button type="button" class="segmented-btn" id="btn-wf-supervisor" data-wf="SUPERVISOR">SUPERVISOR</button>
+              </div>
+            </div>
+
+            <!-- Keep select element for exact test compatibility -->
+            <select id="cfg-workflow" hidden>
+              <option value="RESIDENT">RESIDENT</option>
+              <option value="OPERATOR">OPERATOR</option>
+              <option value="SUPERVISOR">SUPERVISOR</option>
+            </select>
+
+            <!-- 2-column fields -->
+            <div class="form-row-2col mt16">
+              <label class="field-label">Passive threshold
+                <input id="cfg-threshold" type="number" min="0" max="1" step="0.01" class="text-control" placeholder="0.80">
+                <span class="field-subtext">Higher is stricter. Range 0 to 1.</span>
+              </label>
+
+              <label class="field-label">Minimum challenges
+                <input id="cfg-min-challenges" type="number" min="1" step="1" class="text-control" placeholder="1">
+                <span class="field-subtext">Actions required after a weak passive score.</span>
+              </label>
+            </div>
+
+            <div class="form-row-2col mt14">
+              <label class="field-label">Challenge timeout (ms)
+                <input id="cfg-timeout" type="number" min="1000" step="500" class="text-control" placeholder="20000">
+                <span class="field-subtext">At least 15000.</span>
+              </label>
+
+              <label class="field-label">Max retries
+                <input id="cfg-retries" type="number" min="0" step="1" class="text-control" placeholder="3">
+                <span class="field-subtext">Attempts before the failure action applies.</span>
+              </label>
+            </div>
+
+            <div class="mt14">
+              <label class="field-label">On repeated failure
+                <select id="cfg-failure" class="select-control">
+                  <option value="ESCALATE">ESCALATE_TO_OPERATOR</option>
+                  <option value="LOCK">LOCK</option>
+                  <option value="ALLOW_RETRY">ALLOW_RETRY</option>
+                </select>
+                <span class="field-subtext">Action to take when maximum retries are exceeded.</span>
+              </label>
+            </div>
+
+            <!-- Active liveness switch row -->
+            <div class="toggle-control-card mt16">
+              <div class="toggle-info">
+                <span class="toggle-title">Active liveness enabled</span>
+                <span class="toggle-description">Ask for blink, smile or head turn when the passive score is low.</span>
+              </div>
+              <label class="switch-toggle" for="cfg-active">
+                <input type="checkbox" id="cfg-active">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <!-- Hidden/subtle challenges checkboxes & liveness toggle for test wiring -->
+            <div class="challenge-types-box mt14">
+              <span class="field-subtext">Allowed challenge types:</span>
+              <div class="challenge-types-row mt6">
+                <label class="chk"><input type="checkbox" id="cfg-ch-blink"> blink</label>
+                <label class="chk"><input type="checkbox" id="cfg-ch-smile"> smile</label>
+                <label class="chk"><input type="checkbox" id="cfg-ch-left"> turn_left</label>
+                <label class="chk"><input type="checkbox" id="cfg-ch-right"> turn_right</label>
+                <label class="chk" hidden><input type="checkbox" id="cfg-liveness" checked> liveness</label>
+              </div>
+            </div>
+
+            <!-- Pending diff box -->
+            <div id="cfg-diff" class="cfg-diff mt14" hidden></div>
+
+            <!-- Footer actions -->
+            <div class="policy-card-footer mt16">
+              <div class="policy-footer-left">
+                <div id="cfg-status" class="cfg-status"></div>
+              </div>
+              <div class="policy-footer-right">
+                <button id="btn-cfg-discard" class="secondary">Discard</button>
+                <button id="btn-cfg-save" class="primary">Save policy</button>
+                <button id="btn-cfg-load" class="secondary" hidden>Load policy</button>
+                <button id="btn-cfg-sign-out" class="secondary" hidden>Sign out</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Policy change history section -->
+          <div class="card mt16">
+            <div class="card-header-row">
+              <h3 class="card-title">Policy change history</h3>
+              <div class="filter-controls-group">
+                <select id="cfg-audit-workflow" class="select-control">
+                  <option value="">All workflows</option>
+                  <option value="RESIDENT">RESIDENT</option>
+                  <option value="OPERATOR">OPERATOR</option>
+                  <option value="SUPERVISOR">SUPERVISOR</option>
+                </select>
+                <button id="btn-cfg-audit" class="secondary">Refresh history</button>
+              </div>
+            </div>
+            <pre id="cfg-audit" class="code-box mt14">No policy changes recorded yet.</pre>
+          </div>
+        </div>
+
+        <!-- Right: Audit Chain card & Notice -->
+        <div class="policy-sidebar-col">
+          <!-- Audit chain card -->
+          <div class="card audit-chain-card">
+            <div class="card-header-row">
+              <h3 class="card-title">Audit chain</h3>
+              <span class="pill-badge pill-success" id="sidebar-chain-badge"><span class="pill-dot"></span>Intact</span>
+            </div>
+            <div class="chain-stat-list">
+              <div class="chain-stat-row">
+                <span class="chain-stat-label">HMAC keyed</span>
+                <span class="chain-stat-value" id="sidebar-chain-hmac">Yes</span>
+              </div>
+              <div class="chain-stat-row">
+                <span class="chain-stat-label">Chained entries</span>
+                <span class="chain-stat-value" id="sidebar-chain-count">128</span>
+              </div>
+              <div class="chain-stat-row">
+                <span class="chain-stat-label">Last verified</span>
+                <span class="chain-stat-value" id="sidebar-chain-time">Just now</span>
+              </div>
+            </div>
+            <button id="btn-sidebar-verify-chain" class="secondary full-width mt14">Verify chain</button>
+          </div>
+
+          <!-- Notice box -->
+          <div class="notice-callout-card mt14">
+            <svg class="notice-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75"/>
+              <path d="M6.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z"/>
+            </svg>
+            <p class="notice-text">Saving a policy asks for your supervisor credentials in a confirmation dialog, and the service authorises every save from that session. They are never stored in the browser.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: USERS ==================== -->
+    <div class="tabpanel" id="panel-users" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Users</h1>
+        <p class="page-subtitle">Supervisor user management and role assignment.</p>
+      </div>
+      <div class="card table-card">
+        <div class="table-filter-bar table-filter-bar-padded">
+          <span class="row-label" id="users-count">accounts load on demand</span>
+          <button id="btn-users-refresh" class="secondary">Refresh users</button>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th>State</th>
+              <th>First sign-in</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="users-table-body">
+            <!-- Rendered from GET /api/v1/users -->
+          </tbody>
+        </table>
+        <p class="table-note" id="users-note">Read-only: this lists the accounts the service holds, and
+          the service authorises every route from the supervisor session. Creating an account, changing a
+          role, disabling one and resetting a password live in the API (`POST /api/v1/users`,
+          `PUT` and `DELETE /api/v1/users/{username}`) and are not wired into this panel yet.</p>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: CHAIN ==================== -->
+    <div class="tabpanel" id="panel-chain" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Chain integrity</h1>
+        <p class="page-subtitle">Tamper-evident verification of cryptographic hash chain.</p>
+      </div>
+      <div class="card">
+        <pre id="chain-details" class="code-box">Checking chain…</pre>
+        <div class="mt14">
+          <button id="btn-chain-refresh" class="secondary">Refresh</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: METRICS ==================== -->
+    <div class="tabpanel" id="panel-metrics" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Operational metrics</h1>
+        <p class="page-subtitle">Real-time throughput, latency distributions, and rate limit buckets.</p>
+      </div>
+      <div class="card">
+        <dl class="kv" id="metrics"><dt>—</dt><dd>—</dd></dl>
+        <div class="mt14">
+          <button id="btn-metrics" class="secondary">Refresh metrics</button>
+        </div>
+      </div>
+      <div class="card mt16">
+        <h3 class="card-title">Request budget</h3>
+        <div id="rl-buckets" class="rl-buckets mt12">No limited requests yet.</div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: SWEEP ==================== -->
+    <div class="tabpanel" id="panel-sweep" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Threshold sweep</h1>
+        <p class="page-subtitle">Evaluate APCER / BPCER trade-offs over bona-fide and attack frames.</p>
+      </div>
+      <div class="card">
+        <div class="table-filter-bar">
+          <label class="field-label">Target BPCER
+            <input id="sweep-target" type="number" min="0" max="1" step="0.01" value="0.02" class="text-control">
+          </label>
+          <button id="btn-sweep" class="primary">Run sweep</button>
+        </div>
+        <dl class="kv mt12" id="sweep-summary"><dt>—</dt><dd>—</dd></dl>
+        <pre id="sweep-rows" class="code-box mt14">No sweep run yet.</pre>
+      </div>
+    </div>
+
+    <!-- ==================== TAB: DIAGNOSTICS ==================== -->
+    <div class="tabpanel" id="panel-diagnostics" hidden>
+      <div class="view-header">
+        <h1 class="page-title">Diagnostics</h1>
+        <p class="page-subtitle">Low-level frame timings, model latencies, and pipeline diagnostics.</p>
+      </div>
+      <div class="card">
+        <div id="diag-section" hidden>
+          <dl class="kv" id="diag"><dt>—</dt><dd>—</dd></dl>
+          <pre id="diag-frames" class="code-box mt14">No frames recorded yet.</pre>
+          <div class="mt14">
+            <button id="btn-diag" class="secondary">Refresh diagnostics</button>
+          </div>
+        </div>
+        <p class="hint" id="diag-off">Diagnostics are unavailable here: either diagnostic mode is off or this page is not a loopback caller.</p>
+      </div>
+    </div>
+
+    <!-- Collapsible Decision Log & Verdict for troubleshooting -->
+    <details class="admin-troubleshoot-drawer mt16">
+      <summary class="drawer-summary">Live Decision Log &amp; Frame Telemetry</summary>
+      <div class="drawer-content mt12">
+        <div class="card">
+          <h3 class="card-title">Decision Log</h3>
+          <pre id="log" class="code-box mt12">Ready.</pre>
+        </div>
+        <div class="card mt14">
+          <h3 class="card-title">Last Frame Verdict</h3>
+          <dl class="kv mt12" id="last"><dt>—</dt><dd>—</dd></dl>
+        </div>
+      </div>
+    </details>
+  </div>
+</main>
+
+<!-- Supervisor credential dialog. One dialog, two jobs: authorising a policy
+     save, and setting a first password for an account the service confines to
+     that one route (see console.js). Markup only — no inline script or style,
+     so the page's strict CSP is unchanged. -->
+<div id="auth-modal" class="auth-modal" hidden>
+  <div class="auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" aria-describedby="auth-modal-subtitle">
+    <div class="auth-modal-head">
+      <span class="auth-modal-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75"/>
+          <path d="M6.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z"/>
+        </svg>
+      </span>
+      <div class="auth-modal-head-text">
+        <h3 class="auth-modal-title" id="auth-modal-title">Confirm Supervisor Authorization</h3>
+        <p class="auth-modal-subtitle" id="auth-modal-subtitle">Saving policy changes requires re-authenticating with supervisor credentials. Changes apply to new sessions only.</p>
+      </div>
+      <button type="button" class="auth-modal-close" id="auth-modal-close" aria-label="Cancel">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 18 18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <form class="auth-modal-body" id="auth-modal-form">
+      <div class="auth-modal-field" id="auth-modal-user-field">
+        <label class="field-label" for="auth-modal-user">Username / Supervisor ID</label>
+        <input id="auth-modal-user" type="text" autocomplete="username" spellcheck="false">
+      </div>
+      <div class="auth-modal-field" id="auth-modal-pass-field">
+        <div class="auth-modal-field-head">
+          <label class="field-label" for="auth-modal-pass" id="auth-modal-pass-label">Supervisor Password / Passcode</label>
+          <span class="auth-modal-hint" id="auth-modal-pass-hint">Session re-auth required</span>
+        </div>
+        <input id="auth-modal-pass" type="password" autocomplete="current-password">
+      </div>
+      <div class="auth-modal-field" id="auth-modal-new-field" hidden>
+        <div class="auth-modal-field-head">
+          <label class="field-label" for="auth-modal-new">New password</label>
+          <span class="auth-modal-hint">At least 12 characters</span>
+        </div>
+        <input id="auth-modal-new" type="password" autocomplete="new-password">
+        <p class="auth-modal-note">It must differ from the password just used, and it replaces it immediately.</p>
+      </div>
+      <p class="auth-modal-error" id="auth-modal-error" role="alert" hidden></p>
+      <div class="auth-modal-foot">
+        <button type="button" class="secondary" id="auth-modal-cancel">Cancel</button>
+        <button type="submit" class="primary" id="auth-modal-submit">Confirm &amp; Apply Policy</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer-inner">
+    <span>MOSIP Modular Open Source Identity Platform — Face Liveness &amp; PAD</span>
+    <span class="site-footer-meta">
+      <span>PRESENTATION ATTACK DETECTION</span>
+      <span class="site-footer-sep" aria-hidden="true"></span>
+      <span>ISO/IEC 30107-3</span>
+      <span class="site-footer-sep" aria-hidden="true"></span>
+      <span>DECISIONS ON-DEVICE</span>
+    </span>
+  </div>
+</footer>
+
+<script src="console.js"></script>
+</body>
+</html>

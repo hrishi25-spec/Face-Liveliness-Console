@@ -1,12 +1,5 @@
 package io.mosip.liveness.api;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.mosip.liveness.models.enums.SessionStatus;
-import io.mosip.liveness.models.enums.WorkflowType;
-import io.mosip.liveness.models.enums.LivenessStage;
-import io.mosip.liveness.models.entity.LivenessSession;
-import io.mosip.liveness.crud.ChallengeRepository;
-import io.mosip.liveness.crud.FrameEventRepository;
 import io.mosip.liveness.crud.LivenessSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -64,5 +57,13 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(post("/api/v1/sessions")
                         .contentType(MediaType.APPLICATION_JSON).content(badJson))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void invalidPathUuid_returns400Not500() throws Exception {
+        mockMvc.perform(get("/api/v1/sessions/not-a-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.status").value(400));
     }
 }

@@ -1,0 +1,869 @@
+name: CI
+
+# Unit and integration suites run as two parallel jobs. Both jobs share the
+# same checkout/JDK setup; the suite split is a surefire -Dtest filter, so no
+# extra plugins or pom changes are needed.
+on:
+  push:
+    # Every branch push runs the suites and builds the jar. Tag pushes (v*)
+    # additionally publish a GitHub Release with both jars and their
+    # checksums attached.
+    branches: ['**']
+    tags: ['v*']
+  # Branches get the identical gate before merging — unit + integration
+  # suites, the PostgreSQL schema gate, the console DOM tests and both jar
+  # builds. A pull request publishes nothing: the upload step below is guarded
+  # on event type, ref and default branch, so no fork can write to storage.
+  pull_request:
+
+# Least privilege by default: the workflow only needs to read the repo. The
+# release job overrides this with contents: write, scoped to that one job.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.suite }} tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Run both to completion — a unit failure must not cancel the
+      # integration run (and vice versa); both results are wanted.
+      fail-fast: false
+      matrix:
+        include:
+          - suite: Unit
+            # CrossBackendContractTest is excluded here on purpose: it needs the
+            # Python backend's dependencies, which this job does not install,
+            # so it would only ever skip. The *Cross-backend contract* job
+            # exists to run it where that environment is real.
+            maven_tests: "!LivenessPipelineIntegrationTest,!PostgresSchemaTest,!CrossBackendContractTest"
+          - suite: Integration
+            maven_tests: "LivenessPipelineIntegrationTest"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the service on Java 25; compiled artifacts remain Java 17-compatible
+      # for the Android host integration. Maven caching keeps CI fast.
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Tests are self-contained: the JPA slice swaps in embedded H2, OpenCV
+      # natives and the ONNX model ship inside the dependency jars, so no
+      # database or external service is needed on the runner. The desktop
+      # overlay's smoke test is self-contained in the same way: surefire pins
+      # JavaFX to Monocle's headless glass platform, so it renders cards
+      # without a display, a window system or a GPU. The single quotes keep
+      # the surefire '!' exclusion literal for the shell.
+      - name: Run ${{ matrix.suite }} tests
+        run: ./mvnw --batch-mode test -Dtest='${{ matrix.maven_tests }}'
+
+  # The console is plain browser JS with no build step, so its guards live
+  # outside Maven entirely: a green Java suite says nothing about whether
+  # src/main/resources/static is still wired. This runs the DOM harness that
+  # executes the real index.html + console.js and drives the dirty marker,
+  # the per-field diff, the discard guard and the unload warnings.
+  console:
+    name: Console DOM tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # No setup-node and no npm install: the harness is deliberately
+      # dependency-free, and ubuntu-latest ships a node binary on PATH.
+      - name: Run the console guard tests
+        run: node src/test/js/console-guards.test.mjs
+
+  # Guidance and instruction scope. Nothing else in this workflow reads
+  # AGENTS.md or the READMEs: a project can land with no guidance and no map
+  # entry, and a paragraph copied from another project's README can tell
+  # readers to edit files that do not exist in the tree they are in. Both have
+  # shipped here, so the check exists now instead of in whoever notices next.
+  #
+  # Deliberately not a dependency of package/docker/release: a boundary
+  # problem is a reason to fix the PR, not a reason to withhold a jar. Like
+  # the console harness it needs no setup step — ubuntu-latest ships node, and
+  # the script has no dependencies.
+  boundaries:
+    name: Project boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check project guidance and instruction scope
+        run: node scripts/check-project-boundaries.mjs
+
+  #
+  # The secret scan. Nothing else here can catch a committed credential: the
+  # Java suites, the schema gate and the console harness all read the code, and
+  # a `.env`-shaped value compiles fine. gitleaks reads the Git history rather
+  # than the working tree, so a secret that was committed and then removed still
+  # fails until the history is rewritten — which is why the checkout is full
+  # depth — and `--redact` keeps the value itself out of the CI log.
+  #
+  # Like the boundary gate this is deliberately not a dependency of
+  # package/docker/release: a leak found in an old commit is a reason to fix the
+  # history, not a reason to withhold a jar. `./scripts/check-secrets.sh` uses
+  # the gitleaks CLI when one is present and the pinned image otherwise, so the
+  # gate accepts the same thing locally and here.
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan the checkout and its history for committed secrets
+        run: ./scripts/check-secrets.sh
+
+  python-backend:
+    name: Python liveness backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The runner has a Docker daemon, so the PostgreSQL migration and session
+    # persistence tests must run rather than silently skipping themselves.
+    env:
+      PAD_LIVENESS_REQUIRE_POSTGRES: '1'
+    defaults:
+      run:
+        working-directory: pad_liveness_backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12.15
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.15'
+          cache: pip
+          cache-dependency-path: |
+            pad_liveness_backend/requirements.txt
+            pad_liveness_backend/requirements-dev.txt
+
+      - name: Install backend and test dependencies
+        run: python -m pip install --requirement requirements-dev.txt
+
+      - name: Run backend tests (SQLite behavior, OpenCV heuristics, PostgreSQL integration)
+        run: python -m pytest --quiet
+
+  # The one check that compares the two implementations instead of asserting
+  # each against its own expectations. A spent active-challenge retry budget is
+  # driven on the Spring service (real HTTP, real OpenCV) and on the FastAPI
+  # backend (its scenario script, run as a subprocess because it is a different
+  # runtime), and the terminal verdicts are compared field by field. Each suite
+  # on its own can only pin its own spelling, which is how the two backends came
+  # to answer `locked` and `reject` for the same policy (CHANGELOG, 2026-10-11).
+  cross-backend:
+    name: Cross-backend contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # A runner without the Python environment must fail this job rather than
+      # skip the comparison inside it — the same convention the Python tests use
+      # for PostgreSQL (PAD_LIVENESS_REQUIRE_POSTGRES).
+      PAD_LIVENESS_REQUIRE_PYTHON: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Set up Python 3.12.15
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.15'
+          cache: pip
+          cache-dependency-path: |
+            pad_liveness_backend/requirements.txt
+            pad_liveness_backend/requirements-dev.txt
+
+      # The scenario runs the real FastAPI app in-process, so it imports the
+      # app's own dependencies (FastAPI, SQLAlchemy, numpy, OpenCV) as well as
+      # pytest. On PATH as `python3`, which is what the Java test defaults to.
+      - name: Install backend dependencies
+        run: python -m pip install --requirement pad_liveness_backend/requirements-dev.txt
+
+      - name: Compare a spent retry budget on both backends
+        run: ./mvnw --batch-mode test -Dtest='CrossBackendContractTest'
+
+  android-client:
+    name: Android/Flutter client build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: android_client
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # The action's `packages` input defaults to 'tools platform-tools', and
+      # the `tools` package was removed from the SDK repository years ago, so
+      # sdkmanager exits 1 ("Failed to find package 'tools'") before any of the
+      # pinned packages below can be installed. Pin it to a package that still
+      # exists; the packages this build actually needs are installed next.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          # Explicit, though it is the action's default: the install step below
+          # relies on every SDK license already being accepted.
+          accept-android-sdk-licenses: 'true'
+
+      # The action already ran `sdkmanager --licenses`, so this step only
+      # installs the pinned packages. Its own `yes | sdkmanager --licenses`
+      # pipeline is gone on purpose: GitHub's `shell: bash` runs with
+      # `-o pipefail`, and `yes` is killed by SIGPIPE the moment sdkmanager
+      # finishes accepting, so the step exited 1 on the broken pipe instead of
+      # on any SDK error.
+      - name: Install pinned Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;25.1.8937393"
+
+      - name: Set up Flutter 3.10.4 (Dart 3.0.3)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.10.4'
+          cache: true
+        env:
+          FLUTTER_VERSION: '3.10.4'
+
+      - name: Verify Flutter version
+        run: flutter --version
+
+      - name: Resolve locked Dart dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Regenerate Pigeon bindings
+        run: ./tool/generate_pigeon.sh
+
+      - name: Verify generated bindings are current
+        run: git diff --exit-code -- lib/pigeon/liveness.dart android/app/src/main/java/io/mosip/registration/liveness/pigeon/Liveness.java
+
+      - name: Check Dart formatting and analyze
+        run: |
+          dart format --output=none --set-exit-if-changed lib pigeon
+          flutter analyze
+
+      - name: Build Android debug APK
+        run: flutter build apk --debug
+
+  # Packages the executable jars only after the Java suites, console guards,
+  # and Python backend behavior tests pass, so a red check never publishes an
+  # artifact.
+  #
+  # Two legs, in parallel. The full jar is the deployable artifact — natives
+  # for every platform. The slim jar is the same application with only the
+  # linux-x86_64 natives a Linux runner can load anyway, which is why it is a
+  # fraction of the payload. Building both means storage holds the small one
+  # without anyone losing the fully runnable build.
+  #
+  # Runs on tag pushes too, not only branch pushes: the upload below is what
+  # gives a release tag a versioned artifact independent of whichever branch
+  # happens to be the default. The release job further down builds both jars
+  # itself (stamped with the tag's version) and attaches them, with checksums,
+  # to the GitHub Release.
+  package:
+    name: Package ${{ matrix.artifact }} jar
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [test, console, python-backend]
+    strategy:
+      # Both legs run to completion — one packaging path failing must not hide
+      # the other's result.
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: full
+            profile: ''
+            jar: target/pad-liveness-backend-*.jar
+            # The historical name goes to the slim build — it is what CI, the
+            # Docker image and most deployments actually run, and it is the
+            # small one. The cross-platform jar stays one click away under its
+            # own name for macOS/Windows consumers.
+            artifact_name: pad-liveness-backend-full-jar
+            smoke_jar: full
+            # ~200 MiB today; the ceiling leaves ~20% for a patch release but
+            # trips the moment a whole extra platform (~50-100 MB) sneaks back.
+            max_mib: 245
+          # `clean` is not optional for this leg: the slim profile unpacks the
+          # kept natives into target/classes, which repackage embeds verbatim,
+          # so a non-clean build could leave linux-only natives in the full jar.
+          - artifact: slim
+            profile: '-Pslim'
+            jar: target/pad-liveness-backend-*-slim.jar
+            artifact_name: pad-liveness-backend-jar
+            smoke_jar: slim
+            max_mib: 110
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Tests already ran in the test jobs, so skip them here; spring-boot
+      # repackage turns the build output into the runnable fat jar.
+      - name: Package the ${{ matrix.artifact }} jar
+        run: ./mvnw --batch-mode clean package -DskipTests ${{ matrix.profile }}
+
+      # Boot the jar we just built and prove it serves traffic. The test jobs
+      # run against target/classes with the full ~/.m2 classpath, so nothing
+      # they do can catch a packaging-only regression — a fat jar that lost its
+      # OpenCV natives, a wrong Start-Class (spring-boot writes JarLauncher
+      # itself when a <classifier> is set, and the loader then re-launches until
+      # StackOverflowError), a truncated repackage all ship green and only break
+      # for whoever runs the artifact.
+      #
+      # Both legs boot and must report `engine: available`. That is the point
+      # of running it for the slim jar too: nothing else in this workflow can
+      # tell a working -Pslim build from one whose native filter quietly stopped
+      # matching, and that failure ships as a jar that boots fine and then
+      # rejects every frame.
+      #
+      # Deliberately not branch-gated (unlike the upload below): this is the
+      # check that makes gating the upload safe to begin with.
+      #
+      # Lives in a script, not inline, because the release job runs it too and
+      # it is runnable locally with ./scripts/smoke-jar.sh (SMOKE_JAR=full|slim).
+      - name: Smoke test the packaged jar
+        env:
+          SMOKE_JAR: ${{ matrix.smoke_jar }}
+        run: ./scripts/smoke-jar.sh
+
+      # A jar that outgrows its budget is a regression nobody else notices: the
+      # build is still green, every download is just slower, and artifact
+      # storage quietly doubles. Red here, on the run that caused it.
+      - name: Enforce jar size ceiling
+        run: ./scripts/check-jar-size.sh '${{ matrix.jar }}' ${{ matrix.max_mib }} '${{ matrix.artifact }} jar'
+
+      # Both legs report, so the run summary shows the pair on every build and a
+      # payload that creeps up over months is visible in the history rather than
+      # being discovered when storage fills.
+      - name: Report jar size
+        run: |
+          BYTES=$(wc -c < ${{ matrix.jar }})
+          HUMAN=$(numfmt --to=iec --suffix=B "$BYTES" 2>/dev/null || echo "$BYTES bytes")
+          {
+            echo "### ${{ matrix.artifact }} jar — $HUMAN"
+            echo
+            echo "Artifact: \`${{ matrix.artifact_name }}\` · budget ${{ matrix.max_mib }} MiB"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Publishes on the default branch and on v* tags: a versioned artifact
+      # must not depend on which branch is the default. Pull requests build
+      # both jars but never write to the repo's artifact storage.
+      #
+      # Two artifact names rather than one shared name: upload-artifact v4
+      # treats a name as immutable across jobs, so a second matrix leg
+      # uploading under the same name fails with 409 and takes the whole job
+      # with it. Each glob matches exactly one file for its leg — the
+      # classifier-less fat jar, and the -slim classifier respectively.
+      #
+      # They are ~210 MB and ~94 MB (bundled OpenCV natives + ONNX model), so
+      # retention is kept short to stay inside the artifact storage quota.
+      - name: Upload jar
+        if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.jar }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # The launcher is Windows-only, and without this job nothing that ships to a
+  # Windows user is ever run: every other job here is ubuntu-latest. Two things
+  # hide behind that gap, and both have broken before.
+  #
+  #   * start.bat itself. Its JDK probe reads `java -version`, which prints on
+  #     stderr, through cmd.exe — and cmd strips the quotes around an executable
+  #     when a `for /f` command contains a pipe, so a JDK under "C:\Program
+  #     Files" was read as the path "C:\Program" and the launcher gave up before
+  #     starting anything. A runner's own JDK lives in C:\hostedtoolcache, where
+  #     no such thing can happen, so this job installs one under Program Files
+  #     on purpose and the smoke script refuses to run against a JDK whose path
+  #     has no space. A green run has to mean the quoting path was exercised.
+  #   * The full jar's Windows OpenCV natives. scripts/smoke-jar.sh boots the
+  #     jar on linux x86_64 and asserts `engine: available`; the same nested
+  #     openpnp jar carries a different native for Windows, and nothing loaded
+  #     it there.
+  #
+  # Only the full jar: the slim profile keeps linux/x86_64 natives and nothing
+  # else, so on Windows it boots and then reports the engine unavailable by
+  # design — its own boot gate is the Linux one in the package job.
+  #
+  # Not a dependency of package/docker/release, like the boundary and secret
+  # gates: a Windows-only regression is a reason to fix the push, not a reason
+  # to withhold a jar.
+  windows-launcher:
+    name: Windows launcher (full jar)
+    runs-on: windows-latest
+    # A full build on a Windows runner, plus a first boot that extracts the
+    # ~65 MB OpenCV native before the service can answer /health.
+    timeout-minutes: 45
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # For the Maven cache, not for the JDK: the JDK under test is the one the
+      # next step installs, which overwrites this JAVA_HOME. This one sits in
+      # C:\hostedtoolcache — a path with no space in it, and therefore exactly
+      # what the check below must not be run against.
+      - name: Set up JDK 25 (Maven cache only)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Install Java 25 rather than the JDK cache-only setup above: this launcher
+      # job verifies the installed runtime and paths containing spaces.
+      # QUICKSTART recommends the matching Windows JDK installed by
+      # `winget install EclipseAdoptium.Temurin.25.JDK`.
+      # That MSI's default INSTALLDIR is C:\Program Files\Eclipse Adoptium, so
+      # the path has a space in it without anything faking one.
+      - name: Install a JDK under C:\Program Files
+        run: |
+          choco install temurin25 --yes --no-progress
+          $jdk = Get-ChildItem 'C:\Program Files\Eclipse Adoptium' -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'jdk-25*' } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $jdk) {
+            throw "no jdk-25* under 'C:\Program Files\Eclipse Adoptium' - this job needs a JDK whose path has a space"
+          }
+          if ($jdk.FullName -notmatch ' ') {
+            throw "$($jdk.FullName) has no space in its path"
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "JAVA_HOME=$($jdk.FullName)"
+          Add-Content -Path $env:GITHUB_PATH -Value "$($jdk.FullName)\bin"
+          # `jar --version`, not `java -version`: java prints its banner on
+          # stderr, and this shell runs with $ErrorActionPreference = 'Stop',
+          # where a redirected native stderr is a terminating error. jar's goes
+          # to stdout and reports the same JDK build.
+          & "$($jdk.FullName)\bin\jar.exe" --version
+          Write-Host "the JDK under test: $($jdk.FullName)"
+
+      # The exact command the packaging job runs, so the artifact is the same
+      # one that job would produce; only the platform and the JDK differ.
+      - name: Package the full jar
+        run: .\mvnw.cmd --batch-mode clean package -DskipTests
+
+      # Boots through the launcher rather than `java -jar`: the JDK probe, the
+      # version parse, the port check, the /health wait and the engine report
+      # are start.bat's code, and only running it exercises them. The script
+      # also asserts the resolved JDK is the one under test, so a launcher that
+      # silently fell back to the runner's other JDK would fail rather than pass
+      # vacuously. Runnable locally from a Windows checkout with a JDK under a
+      # path with a space: ./scripts/smoke-windows-launcher.ps1
+      - name: Boot the packaged jar through start.bat
+        run: pwsh -NoProfile -File ./scripts/smoke-windows-launcher.ps1
+
+  # The image is a separate delivery path from the jar: the Dockerfile's COPY,
+  # its Alpine base, the unprivileged user and the JVM flags exist nowhere else
+  # in this repository, so no other job can see a mistake in any of them. Builds
+  # from the slim profile and boots the container against /health.
+  #
+  # It packages its own slim jar rather than downloading the package job's
+  # artifact: that upload is deliberately branch-gated, so on a pull request
+  # there would be nothing to download and the check would silently skip.
+  #
+  # The container assertion is `status: ok`, not `engine: available` — Alpine is
+  # musl and the OpenCV native is glibc-linked, so a correct image serves the API
+  # with frame processing unavailable by design. The engine assertion lives in
+  # the jar smoke tests, which run on glibc.
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [test, python-backend]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Package the slim jar the image is built from
+        run: ./mvnw --batch-mode clean package -DskipTests -Pslim
+
+      - name: Build the image and smoke test the container
+        run: ./scripts/smoke-docker.sh
+
+  # Boot-time gate: the packaged jar booted N times, each from a
+  # *cold* OpenCV native cache, with the median time-to-/health
+  # reported to the step summary and a generous budget enforced.
+  #
+  # Nothing else in this workflow notices a slow boot. The smoke test
+  # proves the jar *can* boot; a new eager bean, an extra Flyway
+  # migration or a dependency that scans the classpath at startup all
+  # ship green and surface only as "deployments are slow now". The
+  # native cache is cleared before every boot because openpnp extracts
+  # the ~65 MB OpenCV native once per machine — without that, boots
+  # 2..N would reuse the cache and measure the warm case, while the
+  # case a fresh deployment (or a fresh runner) actually hits is cold.
+  #
+  # The budget is ~3x the measured ~43 s on purpose: this gate exists
+  # to catch a regression that doubles boot, not to shave seconds.
+  #
+  # Builds its own jar rather than downloading the package job's
+  # artifact: that upload is branch-gated, so on a pull request there
+  # would be nothing to download (same reasoning as the docker job).
+  # Slim because that is what CI, the Docker image and most deployments
+  # actually run; BOOT_MEDIAN_JAR=full measures the full jar instead.
+  #
+  # Lives in a script, not inline, so it is runnable locally with
+  # ./scripts/boot-median.sh (BOOT_MEDIAN_JAR=full|slim).
+  boot-time:
+    name: Cold boot time (median)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test, console, python-backend]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Package the slim jar to measure
+        run: ./mvnw --batch-mode clean package -DskipTests -Pslim
+
+      - name: Measure median cold boot time
+        env:
+          BOOT_MEDIAN_RUNS: '5'
+          BOOT_MEDIAN_MAX_SECONDS: '120'
+        run: ./scripts/boot-median.sh
+
+  # The schema gate — the only job that compares the entities against the Flyway
+  # migrations on the database that actually ships.
+  #
+  # Everything else in this workflow runs on H2 with ddl-auto: create-drop, so
+  # Hibernate builds the schema *from the entities* and Flyway never runs. That
+  # hides a whole class of drift: a column an entity declares but no migration
+  # creates, a column too narrow for the values, an enum stored as a number.
+  # Green CI, broken production — while production is PostgreSQL, the one
+  # database never exercised.
+  #
+  # The test owns an isolated PostgreSQL through Testcontainers, so the same
+  # schema gate runs locally and in CI without environment-specific setup.
+  # It runs in parallel with the suites rather than after them — it is an
+  # independent concern and gives a fast signal.
+  schema:
+    name: PostgreSQL schema gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Validate migrations against the entities
+        run: ./mvnw --batch-mode test -Dtest='PostgresSchemaTest'
+
+  # Pushing a version tag (v*) publishes a GitHub Release. This is
+  # the deliberate, human-initiated publish event — unlike the per-push artifact
+  # upload, which is ephemeral and branch-gated.
+  #
+  # BOTH jars are release assets: the full one is the deployable
+  # cross-platform build, and the slim one is what CI, the Docker image and
+  # most deployments actually run — at a fifth of the size it is what most
+  # downloaders want. Each ships with a sibling .sha256 so a download can be
+  # verified before it is trusted.
+  #
+  # A `-canary` tag (e.g. v1.1.0-canary.1) runs the identical pipeline —
+  # both jars, both boots, checksums — but publishes as a prerelease, so a
+  # canary is visible and installable without ever being the version GitHub
+  # surfaces as "the latest". The pattern is matched on the tag name below.
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    # Two full builds plus two boots, so double the package job's budget.
+    timeout-minutes: 30
+    needs: [test, python-backend]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    # Scoped to this job alone: the rest of the workflow stays read-only.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Release assets are the same artifact CI publishes elsewhere, so they go
+      # through the identical gate: green tests, then a real boot.
+      #
+      # The tag is the version: `v1.0.1` builds as 1.0.1, so the jar's
+      # manifest and file name — and therefore the release asset — match
+      # the release instead of reading 1.0.0-SNAPSHOT. `${revision}` is
+      # the pom's CI-friendly version property; every other build keeps
+      # the snapshot default. The assertions below exist because a failed
+      # stamp is otherwise silent: the build still succeeds and publishes
+      # a SNAPSHOT-named asset.
+      #
+      # Both jars are built here rather than downloaded from the package job:
+      # those were built without the tag's revision, and a release must not
+      # ship assets whose name and manifest carry a snapshot version.
+      - name: Package the full jar (version stamped from the tag)
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          VERSION="${TAG#v}"
+          ./mvnw --batch-mode -DskipTests -Drevision="$VERSION" package
+
+          JAR="target/pad-liveness-backend-$VERSION.jar"
+          if [ ! -f "$JAR" ]; then
+            echo "::error::expected $JAR — the tag version was not stamped into the build"
+            exit 1
+          fi
+          MANIFEST_VERSION=$(unzip -p "$JAR" META-INF/MANIFEST.MF \
+            | sed -n 's/^Implementation-Version: //p' | tr -d '\r')
+          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+            echo "::error::manifest reports '$MANIFEST_VERSION', expected '$VERSION'"
+            exit 1
+          fi
+          echo "stamped $TAG as $VERSION (manifest Implementation-Version: $MANIFEST_VERSION)"
+
+      # The boot gate, before anything is published. On success the jar is
+      # staged into release-assets/ — the slim build below starts with
+      # `clean`, which deletes everything in target/ including this jar.
+      - name: Smoke test the full jar
+        env:
+          SMOKE_JAR: full
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          ./scripts/smoke-jar.sh
+          VERSION="${TAG#v}"
+          mkdir -p release-assets
+          mv "target/pad-liveness-backend-$VERSION.jar" release-assets/
+          echo "staged release-assets/pad-liveness-backend-$VERSION.jar"
+
+      # Same gate for the slim asset. `clean` is not optional for this build:
+      # the slim profile unpacks the kept natives into target/classes, which
+      # repackage embeds verbatim, so a target/ left over from the full build
+      # could leak the wrong natives into the slim artifact (see pom.xml).
+      - name: Package the slim jar (version stamped from the tag)
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          VERSION="${TAG#v}"
+          ./mvnw --batch-mode -DskipTests -Drevision="$VERSION" clean package -Pslim
+
+          JAR="target/pad-liveness-backend-$VERSION-slim.jar"
+          if [ ! -f "$JAR" ]; then
+            echo "::error::expected $JAR — the tag version was not stamped into the slim build"
+            exit 1
+          fi
+          MANIFEST_VERSION=$(unzip -p "$JAR" META-INF/MANIFEST.MF \
+            | sed -n 's/^Implementation-Version: //p' | tr -d '\r')
+          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+            echo "::error::slim jar manifest reports '$MANIFEST_VERSION', expected '$VERSION'"
+            exit 1
+          fi
+          echo "stamped $TAG as $VERSION (slim manifest Implementation-Version: $MANIFEST_VERSION)"
+
+      - name: Smoke test the slim jar
+        env:
+          SMOKE_JAR: slim
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          ./scripts/smoke-jar.sh
+          VERSION="${TAG#v}"
+          mkdir -p release-assets
+          mv "target/pad-liveness-backend-$VERSION-slim.jar" release-assets/
+          echo "staged release-assets/pad-liveness-backend-$VERSION-slim.jar"
+
+      # One checksum per jar, named exactly like its jar with a .sha256
+      # suffix — the convention `sha256sum -c <file>.sha256` verifies from
+      # the download directory with no path editing. The check run here
+      # proves the files are well-formed before they are published.
+      - name: Generate checksums for the release assets
+        run: |
+          set -uo pipefail
+          cd release-assets
+          shopt -s nullglob
+          JARS=( pad-liveness-backend-*.jar )
+          shopt -u nullglob
+          if [ "${#JARS[@]}" -ne 2 ]; then
+            echo "::error::expected the full and slim jars in release-assets/, found ${#JARS[@]}"
+            ls -la
+            exit 1
+          fi
+          for jar in "${JARS[@]}"; do
+            sha256sum "$jar" > "$jar.sha256"
+            sha256sum -c "$jar.sha256"
+          done
+
+      # `gh release create` fails if the release already exists, which is what a
+      # re-pushed or moved tag looks like. Upload --clobber replaces the assets
+      # in that case, so a retried run converges instead of wedging. GH_TOKEN is
+      # the automatic per-run token, so there is no secret to configure or leak.
+      #
+      # A `-canary` tag publishes as a prerelease: same smoke gate, same assets,
+      # but flagged so nobody treats an untested-in-production build as the
+      # latest stable version. The flag is set at create time; gh has no option
+      # to flip it on upload, so an existing canary release keeps whatever flag
+      # it was created with — a re-run replaces the assets, which is the point.
+      - name: Attach assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          VERSION="${TAG#v}"
+          ASSETS=(
+            "release-assets/pad-liveness-backend-$VERSION.jar"
+            "release-assets/pad-liveness-backend-$VERSION.jar.sha256"
+            "release-assets/pad-liveness-backend-$VERSION-slim.jar"
+            "release-assets/pad-liveness-backend-$VERSION-slim.jar.sha256"
+          )
+          # All four must exist: gh skips a missing file without failing, which
+          # would publish a release with no slim jar and nobody would notice
+          # until someone went looking for it.
+          for asset in "${ASSETS[@]}"; do
+            if [ ! -f "$asset" ]; then
+              echo "::error::missing release asset: $asset"
+              exit 1
+            fi
+          done
+
+          # Canary pattern: any tag carrying a -canary segment (v1.1.0-canary,
+          # v1.1.0-canary.1, ...). Stable tags match nothing and publish
+          # normally.
+          PRERELEASE=()
+          if [[ "$TAG" == *-canary* ]]; then
+            echo "canary tag $TAG — publishing as a prerelease"
+            PRERELEASE=(--prerelease)
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists — replacing the assets"
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            # No --notes-start-tag: it errors when there is no previous release,
+            # which would make the very first tag unpublishable. Plain
+            # --generate-notes picks the previous release automatically when
+            # one exists and starts from scratch when it does not.
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "$TAG" \
+              --generate-notes \
+              "${PRERELEASE[@]}"
+          fi
+
+  # Publishes the Docker image for a release tag. The jar ships as a
+  # release asset (job above); this makes the container delivery path
+  # carry the same tag, so a version ships both ways at once and a
+  # deployment can pick either artifact at the same version.
+  #
+  # Needs the release job, not just test: "promotes a successful
+  # release" means the release — jars, checksums and all — exists
+  # before an image is published under its tag. A release that failed
+  # to publish must not have an image claiming the same version.
+  #
+  # Canaries ride along: a v1.1.0-canary.1 tag publishes a
+  # v1.1.0-canary.1 image, matching the prerelease it belongs to.
+  docker-release:
+    name: Publish Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: release
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    permissions:
+      contents: read
+      # Pushing to ghcr.io is a package write; the release job's
+      # contents: write is deliberately not inherited here.
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Same build the release job's slim asset went through, so the
+      # image contains a jar stamped with the release version rather
+      # than a snapshot.
+      - name: Package the slim jar the image is built from
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          ./mvnw --batch-mode -DskipTests -Drevision="${TAG#v}" clean package -Pslim
+
+      # The smoke script builds the image, boots it, and asserts /health
+      # and the non-root user — so the image that gets pushed is exactly
+      # the one that passed the gate. SMOKE_IMAGE names the target:
+      # ghcr.io/<owner>/<repo>:<release-tag>, lowercased because GHCR
+      # rejects uppercase repository names.
+      - name: Build, smoke test and publish the image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_REF_NAME}"
+          SMOKE_IMAGE="$IMAGE" ./scripts/smoke-docker.sh
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE"
+          echo "published $IMAGE"

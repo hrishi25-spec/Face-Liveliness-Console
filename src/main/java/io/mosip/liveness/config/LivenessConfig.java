@@ -3,7 +3,7 @@ package io.mosip.liveness.config;
 import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.LivenessErrorCode;
 import io.mosip.liveness.core.LivenessException;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 
 import java.util.EnumSet;
@@ -23,7 +23,35 @@ public final class LivenessConfig {
     public static final int DEFAULT_PASSIVE_MIN_FRAMES = 5;
     public static final int DEFAULT_PASSIVE_WINDOW_FRAMES = 7;
     public static final int DEFAULT_MIN_CHALLENGE_COUNT = 2;
-    public static final long DEFAULT_CHALLENGE_TIMEOUT_MS = 10_000L;
+    /**
+     * Shortest challenge window any policy is allowed to request. Floors
+     * {@code challengeTimeoutMs} both at validation and at session start.
+     */
+    public static final long MIN_CHALLENGE_WINDOW_MS = 15_000L;
+    /**
+     * Nothing may shrink a challenge window below this: the engine clamps to it,
+     * so a shorter value would be silently lengthened and the policy would not
+     * mean what it says.
+     */
+    public static final long ABSOLUTE_MIN_CHALLENGE_WINDOW_MS = 1_000L;
+
+    /**
+     * The challenge-window floor actually in force: the configured
+     * {@code mosip.liveness.min-challenge-window-ms}, never below the absolute
+     * minimum. The engine, the config API and the session-start snapshot all
+     * ask this one question, so they cannot disagree about it.
+     */
+    public static long effectiveMinChallengeWindowMs(long configured) {
+        return Math.max(configured, ABSOLUTE_MIN_CHALLENGE_WINDOW_MS);
+    }
+    /**
+     * How long a single active challenge stays open. Shortened to 15s at the
+     * product's request — a brisker window keeps the flow snappy. Note this is
+     * tighter than the previous 60s (which existed because an impatient window
+     * was a false-failure source), so watch the challenge failure rate; the
+     * per-workflow {@code config_policies} row can override it at runtime.
+     */
+    public static final long DEFAULT_CHALLENGE_TIMEOUT_MS = MIN_CHALLENGE_WINDOW_MS;
     public static final int DEFAULT_MAX_RETRIES = 2;
     public static final RepeatedFailureAction DEFAULT_REPEATED_FAILURE_ACTION = RepeatedFailureAction.LOCK_OUT;
     // v3 defaults

@@ -1,0 +1,60 @@
+# Secret-scanning configuration for this repository.
+#
+# Extends gitleaks' built-in rules and adds only the allowlists this repository
+# actually needs. Each one names the exact benign pattern and says why, because
+# the value of the gate is the opposite case: a REAL credential in this
+# repository's own code — MOSIP_ADMIN_API_KEY, MOSIP_AUDIT_HMAC_SECRET, a
+# Postgres password, or a vendor signing key — must fail the build.
+
+title = "MOSIP Face Liveness & PAD service"
+
+[extend]
+useDefault = true
+
+# PEM header markers are not key material: ModelManifestTool locates the key
+# block inside a PEM file by these strings, and the key itself is supplied by
+# the operator and never lives in the repository.
+#
+# The pattern deliberately requires the surrounding quotes, i.e. a Java string
+# literal, and is matched against the line rather than the captured value. A
+# bare marker line is what a real PEM file starts with, so an allowlist that
+# ignored the marker anywhere would silently swallow every committed private
+# key. Verified both ways: the literals in ModelManifestTool stay suppressed,
+# and a real `openssl genpkey` PEM still fails the scan.
+[[allowlists]]
+description = "Java string literals naming the PEM markers, not key material"
+targetRules = ["private-key"]
+regexTarget = "line"
+regexes = ['''["']-----BEGIN (RSA )?PRIVATE KEY-----["']''']
+
+# Actor fingerprints, matched on the line rather than the captured value.
+# ConfigController.actorKeyId stores only a truncated SHA-256 of the presented
+# admin key, in the documented form "key:<12 hex>" — a correlation id that is
+# deliberately not reversible to the key. Test fixtures, the console harness and
+# the docs reproduce that format, which is what the generic-api-key rule reacts
+# to. A real key would not be 12 hex characters after "key:".
+[[allowlists]]
+description = "Audit actor fingerprints (key:<12 hex>), never the key itself"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''key:[0-9a-f]{12}''']
+
+# A changelog is prose. The generic-api-key rule keys on the word "key" plus
+# whatever follows it, and the history contains a sentence about "wrong signing
+# key, <ordinary words> refusals" — a phrase, not a credential. That commit is
+# historical, so the finding cannot be removed by editing today's text. Only the
+# generic rule is exempt here; the provider-specific rules (private-key, aws-*,
+# github-*, slack-*, stripe-*, jwt, ...) still apply to this file.
+[[allowlists]]
+description = "CHANGELOG prose tripping the word-key heuristic"
+targetRules = ["generic-api-key"]
+paths = ['''^CHANGELOG\.md$''']
+
+# vendor/github setup/ is a third-party workspace this repository neither builds
+# nor ships (see the boundary note in the root AGENTS.md). It commits a shared,
+# preview-only OAuth client secret deliberately, and the file documents its own
+# rotation procedure. Allowlisted by path so the vendored tree cannot fail the
+# gate, while this repository's own code still can.
+[[allowlists]]
+description = "Vendored third-party workspace, outside this repository's CI scope"
+paths = ['''^vendor/''']

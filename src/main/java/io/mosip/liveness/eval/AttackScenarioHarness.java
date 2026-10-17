@@ -2,10 +2,10 @@ package io.mosip.liveness.eval;
 
 import io.mosip.liveness.audit.AuditLogger;
 import io.mosip.liveness.audit.MetricsCollector;
+import io.mosip.liveness.backend.LivenessBackend;
 import io.mosip.liveness.backend.MockLivenessBackend;
 import io.mosip.liveness.config.LivenessConfig;
 import io.mosip.liveness.core.Challenge;
-import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.FaceSignals;
 import io.mosip.liveness.core.Frame;
 import io.mosip.liveness.core.PadAttackType;
@@ -21,6 +21,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.SplittableRandom;
+import java.util.function.Function;
 
 /**
  * Automated attack-scenario test harness for CI/regression runs.
@@ -48,10 +49,27 @@ public final class AttackScenarioHarness {
 
     private final LivenessConfig config;
     private final long seed;
+    /** Optional real backend factory; null means the scripted mock. */
+    private final Function<Long, LivenessBackend> backendFactory;
     private int frameCounter;
+
     public AttackScenarioHarness(LivenessConfig config, long seed) {
+        this(config, seed, null);
+    }
+
+    /**
+     * @param backendFactory when present, used instead of the scripted
+     *   {@link MockLivenessBackend} — inject a real backend (e.g.
+     *   {@code OnnxMiniFasNetBackend}) to evaluate genuine model behaviour.
+     *   Attack scripting ({@code Subject}) only exists on the mock, so with an
+     *   injected backend an escalation is recorded as an escalation rather than
+     *   being carried through a scripted active challenge.
+     */
+    public AttackScenarioHarness(LivenessConfig config, long seed,
+                                 Function<Long, LivenessBackend> backendFactory) {
         this.config = config;
         this.seed = seed;
+        this.backendFactory = backendFactory;
     }
 
     /**
@@ -71,9 +89,13 @@ public final class AttackScenarioHarness {
 
     PresentationResult runOne(PresentationLabel label, SplittableRandom rng, long streamSeed) {
         MockLivenessBackend mock = new MockLivenessBackend(new SplittableRandom(streamSeed));
-        configure(mock.subject(), label, rng);
+        boolean scripted = backendFactory == null;
+        if (scripted) {
+            configure(mock.subject(), label, rng);
+        }
+        LivenessBackend backend = scripted ? mock : backendFactory.apply(streamSeed);
 
-        FaceLivenessEngine engine = new FaceLivenessEngine(config, mock, AuditLogger.noop(),
+        FaceLivenessEngine engine = new FaceLivenessEngine(config, backend, AuditLogger.noop(),
                 new MetricsCollector(), Clock.systemUTC());
         String sid = engine.initSession(io.mosip.liveness.core.WorkflowType.RESIDENT_REGISTRATION);
 
@@ -95,7 +117,7 @@ public final class AttackScenarioHarness {
                     accepted = true;
                 } else if (a.status() == AssessmentStatus.ESCALATED_TO_ACTIVE) {
                     escalated = true;
-                    accepted = runActiveStage(engine, sid, mock);
+                    accepted = scripted && runActiveStage(engine, sid, mock);
                 } else if (a.status() == AssessmentStatus.PAD_BLOCKED) {
                     padBlocked = true;
                 }
@@ -209,7 +231,7 @@ public final class AttackScenarioHarness {
                         ? PadVerdict.attack(PadAttackType.OTHER, 0.60)     // false positive
                         : PadVerdict.bonaFide(0.97);
             }
-            case PRINTED_PHOTO, SCREEN_REPLAY, VIDEO_REPLAY -> {
+            case PRINTED_PHOTO, SCREEN_REPLAY, VIDEO_REPLAY, MASK, THREE_D -> {
                 if (rng.nextDouble() < SIMULATED_ATTACK_MISS_RATE) {
                     // Attack evades the PAD classifier — looks like a decent capture
                     subject.livenessScore = 0.88;
@@ -220,6 +242,8 @@ public final class AttackScenarioHarness {
                     PadAttackType type = switch (label) {
                         case PRINTED_PHOTO -> PadAttackType.PRINTED_PHOTO;
                         case SCREEN_REPLAY -> PadAttackType.SCREEN_REPLAY;
+                        case MASK -> PadAttackType.MASK;
+                        case THREE_D -> PadAttackType.THREE_D;
                         default -> PadAttackType.VIDEO_REPLAY;
                     };
                     subject.attack(type, confidence);
@@ -239,7 +263,11 @@ public final class AttackScenarioHarness {
 
     // ---- aggregation ----
 
-    /** Computes the ISO/IEC 30107-3 style report from raw results. */
+    /**
+     * Computes the ISO/IEC 30107-3 style report from raw results — aggregate
+     * APCER/BPCER/ACER plus the per-PAI-species APCER breakdown
+     * ({@link ScenarioReport#apcerBySpecies()}).
+     */
     public static ScenarioReport report(List<PresentationResult> results) {
         Map<PresentationLabel, Integer> totals = new EnumMap<>(PresentationLabel.class);
         Map<PresentationLabel, Integer> accepted = new EnumMap<>(PresentationLabel.class);
@@ -258,10 +286,26 @@ public final class AttackScenarioHarness {
         int bonaTotal = totals.getOrDefault(PresentationLabel.BONA_FIDE, 0);
         int bonaRejected = bonaTotal - accepted.getOrDefault(PresentationLabel.BONA_FIDE, 0);
 
+        // Per-species rows (ISO/IEC 30107-3 reports APCER per PAI species);
+        // bona fide is excluded — its error rate is BPCER, not an APCER.
+        Map<PresentationLabel, ScenarioReport.SpeciesApcer> bySpecies =
+                new EnumMap<>(PresentationLabel.class);
+        for (PresentationLabel label : PresentationLabel.values()) {
+            if (label == PresentationLabel.BONA_FIDE) {
+                continue;
+            }
+            int speciesTotal = totals.getOrDefault(label, 0);
+            int speciesAccepted = accepted.getOrDefault(label, 0);
+            bySpecies.put(label, new ScenarioReport.SpeciesApcer(
+                    label, speciesTotal, speciesAccepted,
+                    PadMetrics.apcer(speciesAccepted, speciesTotal)));
+        }
+
         double apcer = PadMetrics.apcer(attacksAccepted, attacksTotal);
         double bpcer = PadMetrics.bpcer(bonaRejected, bonaTotal);
         double n = Math.max(1, results.size());
         return new ScenarioReport(apcer, bpcer, PadMetrics.acer(apcer, bpcer),
-                apcer, bpcer, escalations / n, 0 /* latency measured per-presentation upstream */, results.size());
+                apcer, bpcer, escalations / n, 0 /* latency measured per-presentation upstream */,
+                results.size(), bySpecies);
     }
 }

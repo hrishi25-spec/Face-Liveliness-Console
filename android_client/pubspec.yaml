@@ -1,0 +1,21 @@
+name: mosip_liveness_client
+description: Buildable Flutter integration harness for the MOSIP liveness gate.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.3 <3.1.0'
+  flutter: 3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: 2.0.0
+  flutter_test:
+    sdk: flutter
+  pigeon: 10.0.1
+
+flutter:
+  uses-material-design: true

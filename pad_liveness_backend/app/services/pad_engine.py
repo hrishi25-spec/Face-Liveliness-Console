@@ -12,11 +12,24 @@ the codebase needs to change.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import lru_cache
 
 import cv2
 import numpy as np
 
 from app.services.image_utils import brightness_score
+
+
+@lru_cache(maxsize=8)
+def _outer_band_mask(height: int, width: int) -> np.ndarray:
+    """Read-only mask of the outer half of an (height, width) spectrum plane.
+
+    Cached per frame size: building it costs ~40 ms on a 720p frame, which is
+    most of the signal's cost, and the mask never changes for a given shape.
+    """
+    yy, xx = np.mgrid[0:height, 0:width]
+    center_y, center_x = height // 2, width // 2
+    return np.hypot(yy - center_y, xx - center_x) > (min(height, width) / 4.0)
 
 
 @dataclass
@@ -47,24 +60,38 @@ class MockPADEngine(BasePADEngine):
     trained and ISO/IEC 30107-3 evaluated model before go-live.
     """
 
-    _FREQ_ENERGY_ATTACK_THRESHOLD = 0.35
+    # Placeholder calibration measured on the synthetic fixtures in
+    # tests/test_opencv_heuristics.py: periodic screen structure lands at ~1.0,
+    # smooth photo-like content at ~0.4, flat printed paper at ~0.1. Real
+    # capture hardware needs its own band before this threshold means anything.
+    _FREQ_ENERGY_ATTACK_THRESHOLD = 0.6
     _TEXTURE_VARIANCE_ATTACK_THRESHOLD = 15.0
 
     def detect(self, frame: np.ndarray) -> PADResult:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        gray_u8 = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = gray_u8.astype(np.float32)
 
-        # --- Screen-replay / moire proxy via high-frequency FFT energy ---
-        fft = np.fft.fftshift(np.fft.fft2(gray))
-        magnitude = np.log1p(np.abs(fft))
-        h, w = magnitude.shape
-        cy, cx = h // 2, w // 2
-        radius = min(h, w) // 8
-        high_freq_energy = magnitude.copy()
-        high_freq_energy[cy - radius: cy + radius, cx - radius: cx + radius] = 0
-        freq_ratio = float(np.sum(high_freq_energy) / (np.sum(magnitude) + 1e-6))
+        # --- Screen-replay / moire proxy via high-frequency spectral energy ---
+        # Share of the non-DC spectrum that sits in the outer half of the
+        # frequency plane. Two earlier forms of this signal were unusable: the
+        # log-compressed magnitude plus a whole-plane sum sat at ~0.9 for every
+        # image (so the branch below fired on all frames, attack or not), and a
+        # linear ratio over the whole plane barely moved between a smooth photo
+        # and a checkerboard. Log compression destroys the comparison, and the
+        # DC term has to be excluded, so keep the linear spectrum and normalise
+        # against everything but DC.
+        spectrum = np.abs(np.fft.fftshift(np.fft.fft2(gray)))
+        h, w = spectrum.shape
+        outer_band = _outer_band_mask(h, w)
+        non_dc = float(spectrum.sum()) - float(spectrum[h // 2, w // 2])
+        freq_ratio = float(spectrum[outer_band].sum() / (non_dc + 1e-6))
 
         # --- Print-attack proxy via local texture variance ---
-        texture_variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        # The Laplacian needs a depth pair OpenCV supports (8U source to CV_64F
+        # destination). On the float32 copy used for the FFT it raises
+        # "Unsupported combination of source format ... destination format",
+        # which nothing noticed while every caller stubbed this engine.
+        texture_variance = float(cv2.Laplacian(gray_u8, cv2.CV_64F).var())
 
         # --- Sanity: extreme over/under exposure often accompanies a replay attack ---
         brightness = brightness_score(frame)

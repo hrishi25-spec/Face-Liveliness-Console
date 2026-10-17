@@ -1,0 +1,6 @@
+-r requirements.txt
+httpx==0.27.2
+pytest==8.3.3
+# Starts a throwaway PostgreSQL 16 container for the migration and session
+# persistence tests; those tests need a Docker daemon.
+testcontainers==4.15.0

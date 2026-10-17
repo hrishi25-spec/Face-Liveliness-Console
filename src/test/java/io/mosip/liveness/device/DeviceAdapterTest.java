@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Timeout;
 
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -65,7 +64,11 @@ class DeviceAdapterTest {
         assertTrue(latch.await(5, TimeUnit.SECONDS));
         device.stopCapture();
         assertFalse(device.isCapturing());
-        assertEquals(5, frames.size());
+        // Capture runs until stopCapture(), so a frame delivered between the
+        // latch opening and the stop can race in — assert the guaranteed
+        // lower bound, not an exact count (exact counts flaked under load).
+        assertTrue(frames.size() >= 5,
+                "latch guarantees at least 5 frames, got " + frames.size());
 
         // Frame metadata validation
         Frame first = frames.get(0);
@@ -129,7 +132,12 @@ class DeviceAdapterTest {
         assertTrue(frameLatch.await(5, TimeUnit.SECONDS));
         assertTrue(errorLatch.await(5, TimeUnit.SECONDS));
         device.stopCapture();
-        assertEquals(2, errors.size());
+        // corruptEveryNthFrame keeps firing while capture runs, so more errors
+        // can land between the latches opening and stopCapture() — the latch
+        // guarantees at least two, and the first is always the first corrupt
+        // frame (an exact count here flaked under load).
+        assertTrue(errors.size() >= 2,
+                "latch guarantees at least 2 errors, got " + errors.size());
         assertEquals(LivenessErrorCode.INVALID_FRAME_DATA, errors.get(0).errorCode());
     }
 
@@ -573,5 +581,59 @@ class DeviceAdapterTest {
     void deviceCapabilitiesBlankIdRejected() {
         assertThrows(IllegalArgumentException.class,
                 () -> new DeviceCapabilities("", "MOCK", true, true, Set.of(), 15));
+    }
+
+    @Test
+    @Timeout(10)
+    void mockL0ProfileCapabilitiesAndHttpInfo() throws Exception {
+        MockL0L1Device mockL0 = track(MockL0L1Device.create(
+                new MockL0L1Device.Config().l0().deviceId("mock-l0-device").width(160).height(120).fps(15)));
+
+        assertTrue(mockL0.capabilities().isL0());
+        assertFalse(mockL0.capabilities().isL1());
+        assertFalse(mockL0.capabilities().streamingSupported());
+        assertEquals("MOCK_L0_FACE", mockL0.capabilities().deviceSubType());
+
+        int port = mockL0.serve(0);
+        java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+        java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + port + "/info"))
+                .GET().build();
+        java.net.http.HttpResponse<String> resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, resp.statusCode());
+        assertTrue(resp.body().contains("\"deviceSubType\":\"MOCK_L0_FACE\""));
+        assertTrue(resp.body().contains("\"spec\":[\"BURST\"]"));
+
+        // Burst adapter can capture from this L0 device captureSource
+        BurstRCaptureDeviceAdapter burstAdapter = track(BurstRCaptureDeviceAdapter.create(
+                mockL0.captureSource(),
+                new BurstRCaptureDeviceAdapter.Options().deviceId("burst-from-l0").targetFps(15)));
+        burstAdapter.open();
+        CountDownLatch latch = new CountDownLatch(2);
+        burstAdapter.startCapture(f -> latch.countDown());
+        assertTrue(latch.await(3, TimeUnit.SECONDS));
+        burstAdapter.stopCapture();
+    }
+
+    @Test
+    @Timeout(10)
+    void httpFailureInjectionOverTheWire() throws Exception {
+        MockL0L1Device mockDevice = track(MockL0L1Device.create(
+                new MockL0L1Device.Config().deviceId("mock-wire-fail").width(160).height(120)));
+        int port = mockDevice.serve(0);
+
+        java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+
+        // Dynamically inject failure parameters over /config endpoint
+        java.net.http.HttpRequest cfgReq = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + port + "/config?corruptEveryNthFrame=2&disconnectAfterFrames=5&networkLatencyMs=10"))
+                .GET().build();
+        java.net.http.HttpResponse<String> cfgResp = client.send(cfgReq, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, cfgResp.statusCode());
+        assertTrue(cfgResp.body().contains("\"corruptEveryNthFrame\":2"));
+        assertTrue(cfgResp.body().contains("\"disconnectAfterFrames\":5"));
+        assertTrue(cfgResp.body().contains("\"networkLatencyMs\":10"));
     }
 }

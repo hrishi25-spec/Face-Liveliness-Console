@@ -6,9 +6,11 @@ import io.mosip.liveness.models.enums.SessionStatus;
 import io.mosip.liveness.models.enums.WorkflowType;
 import io.mosip.liveness.models.enums.LivenessStage;
 import io.mosip.liveness.models.entity.LivenessSession;
+import io.mosip.liveness.config.WorkflowPolicyDefaults;
 import io.mosip.liveness.crud.ChallengeRepository;
 import io.mosip.liveness.crud.FrameEventRepository;
 import io.mosip.liveness.crud.LivenessSessionRepository;
+import io.mosip.liveness.services.ConfigService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +23,8 @@ import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -35,13 +39,19 @@ class SessionsControllerTest {
     @Autowired private LivenessSessionRepository sessionRepo;
     @Autowired private FrameEventRepository frameEventRepo;
     @Autowired private ChallengeRepository challengeRepo;
+    @Autowired private ConfigService configService;
 
     private UUID sessionId;
     private LivenessSession session;
 
     @BeforeEach
     void setUp() {
-        reset(sessionRepo, frameEventRepo, challengeRepo);
+        reset(sessionRepo, frameEventRepo, challengeRepo, configService);
+        // The real conversion + per-workflow defaults: createSession resolves the
+        // user type's policy, so the controller needs both to behave as in prod.
+        when(configService.toCoreWorkflow(any())).thenCallRealMethod();
+        when(configService.getEffectivePolicy(any()))
+                .thenAnswer(inv -> WorkflowPolicyDefaults.forWorkflow(inv.getArgument(0)));
         sessionId = UUID.randomUUID();
         session = LivenessSession.builder()
                 .id(sessionId).workflowType(WorkflowType.RESIDENT).deviceId("L1-CAM-01")
@@ -64,8 +74,58 @@ class SessionsControllerTest {
                                 SessionCreateRequest.builder().workflowType(WorkflowType.RESIDENT).deviceId("L1-CAM-01").online(true).build())))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.workflowType").value("RESIDENT"))
-                .andExpect(jsonPath("$.status").value("ACTIVE"));
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                // The resolved policy is returned and differs by user type.
+                .andExpect(jsonPath("$.policy.passiveThreshold").value(0.80))
+                .andExpect(jsonPath("$.policy.onRepeatedFailure").value("ESCALATE_TO_OPERATOR"));
         verify(sessionRepo).save(any());
+    }
+
+    @Test
+    void createSession_freezesADistinctPolicyPerUserType() throws Exception {
+        when(sessionRepo.save(any())).thenAnswer(inv -> {
+            LivenessSession s = inv.getArgument(0);
+            s.setId(UUID.randomUUID()); s.setCreatedAt(OffsetDateTime.now()); s.setUpdatedAt(OffsetDateTime.now());
+            return s;
+        });
+
+        mockMvc.perform(post("/api/v1/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                SessionCreateRequest.builder().workflowType(WorkflowType.OPERATOR).deviceId("D").build())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.policy.passiveThreshold").value(0.82))
+                .andExpect(jsonPath("$.policy.onRepeatedFailure").value("FALLBACK"))
+                .andExpect(jsonPath("$.policy.minChallengeCount").value(1));
+
+        mockMvc.perform(post("/api/v1/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                SessionCreateRequest.builder().workflowType(WorkflowType.SUPERVISOR).deviceId("D").build())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.policy.passiveThreshold").value(0.85))
+                .andExpect(jsonPath("$.policy.onRepeatedFailure").value("LOCK_OUT"))
+                .andExpect(jsonPath("$.policy.minChallengeCount").value(2));
+    }
+
+    @Test
+    void createSession_persistsTheResolvedPolicySnapshot() throws Exception {
+        when(sessionRepo.save(any())).thenAnswer(inv -> {
+            LivenessSession s = inv.getArgument(0);
+            s.setId(sessionId); s.setCreatedAt(OffsetDateTime.now()); s.setUpdatedAt(OffsetDateTime.now());
+            return s;
+        });
+
+        mockMvc.perform(post("/api/v1/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                SessionCreateRequest.builder().workflowType(WorkflowType.SUPERVISOR).deviceId("D").build())))
+                .andExpect(status().isCreated());
+
+        org.mockito.ArgumentCaptor<LivenessSession> saved =
+                org.mockito.ArgumentCaptor.forClass(LivenessSession.class);
+        verify(sessionRepo).save(saved.capture());
+        assertNotNull(saved.getValue().getPolicySnapshot(),
+                "the effective policy must be frozen on the session at creation");
+        assertEquals(0.85, saved.getValue().getPolicySnapshot().passiveThreshold(), 1e-9);
+        assertNotNull(saved.getValue().getPolicySnapshotAt());
     }
 
     @Test
@@ -89,6 +149,51 @@ class SessionsControllerTest {
         when(sessionRepo.findById(any(UUID.class))).thenReturn(Optional.empty());
         mockMvc.perform(get("/api/v1/sessions/" + UUID.randomUUID()))
                 .andExpect(status().isNotFound());
+    }
+
+    /**
+     * The ownership rule on a session that declares an owner. It is checked on
+     * reads too: the response names the workflow, the stage and the failure
+     * reason, which is the owner's business and nobody else's.
+     */
+    @Test
+    void aSessionOwnedByASubjectRefIsOnlyReachableWithIt() throws Exception {
+        session.setSubjectRef("resident-42");
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId).header("X-Subject-Ref", "resident-43"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId).header("X-Subject-Ref", "resident-42"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(sessionId.toString()));
+    }
+
+    @Test
+    void closingSomebodyElsesSessionIsRefused() throws Exception {
+        session.setSubjectRef("resident-42");
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+
+        mockMvc.perform(post("/api/v1/sessions/" + sessionId + "/close")
+                        .header("X-Subject-Ref", "resident-43"))
+                .andExpect(status().isForbidden());
+        verify(sessionRepo, never()).save(any());
+        assertEquals(SessionStatus.ACTIVE, session.getStatus(), "a refused close must not expire it");
+    }
+
+    /**
+     * Creation is what decides ownership: a session with no subjectRef has no
+     * owner to protect, so every existing client (the console, the shipped
+     * {@code LivenessHttpClient}) keeps working without a new header.
+     */
+    @Test
+    void anAnonymousSessionStaysReachableWithoutTheHeader() throws Exception {
+        when(sessionRepo.findById(sessionId)).thenReturn(Optional.of(session));
+
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/sessions/" + sessionId).header("X-Subject-Ref", "anyone"))
+                .andExpect(status().isOk());
     }
 
     @Test

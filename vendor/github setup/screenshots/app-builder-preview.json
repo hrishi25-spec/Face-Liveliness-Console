@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Repo Order",
+      "hasCanvas": false,
+      "bodyTextLen": 21980,
+      "bodyTextHash": "6b0201a3e91bc1192c97cb8b442253c907639dd488401a8818322d8b5f9ba9b5",
+      "bodyTextPrefix": "Repo Order A handbook for repository layout Copy Download .md CO",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Repo Order",
+      "hasCanvas": false,
+      "bodyTextLen": 20795,
+      "bodyTextHash": "41dfc1332a8735c31d11b100bef3bb4689ee575998f1367241e2fba1356d704a",
+      "bodyTextPrefix": "Repo Order .md ENGINEERING STANDARD How a repository should be o",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}

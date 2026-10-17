@@ -4,7 +4,6 @@ import io.mosip.liveness.challenge.ChallengeSelector;
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.core.Challenge;
 import io.mosip.liveness.core.ChallengeProgress;
-import io.mosip.liveness.core.CombinedLivenessScore;
 import io.mosip.liveness.core.LivenessErrorCode;
 import io.mosip.liveness.core.WorkflowType;
 
@@ -188,7 +187,8 @@ final class LivenessSession {
 
     SessionSummary summarize(long durationMs) {
         return new SessionSummary(sessionId, workflow, outcome, escalated, lastMedianScore,
-                padAttackType, challengeAttempts, challengesPassed, challengesFailed, durationMs);
+                padAttackType, challengeAttempts, challengesPassed, challengesFailed, durationMs,
+                challengeProgressEvents());
     }
 
     // G7: per-session frame sampling counter

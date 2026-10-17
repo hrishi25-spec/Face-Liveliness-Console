@@ -8,23 +8,24 @@ import io.mosip.liveness.backend.LivenessBackend;
 import io.mosip.liveness.challenge.ChallengeEvaluators;
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.config.LivenessConfig;
-import io.mosip.liveness.core.ActiveFrameResult;
 import io.mosip.liveness.core.Challenge;
-import io.mosip.liveness.core.ChallengeProgress;
+import io.mosip.liveness.core.ChallengeType;
 import io.mosip.liveness.core.CombinedLivenessScore;
 import io.mosip.liveness.core.FaceSignals;
 import io.mosip.liveness.core.Frame;
 import io.mosip.liveness.core.LivenessErrorCode;
 import io.mosip.liveness.core.LivenessException;
 import io.mosip.liveness.core.PadVerdict;
-import io.mosip.liveness.core.RepeatedFailureAction;
+import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.core.WorkflowType;
 
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -108,7 +109,7 @@ public final class FaceLivenessEngine implements LivenessPipeline {
         // G3: session duration timeout — check on EVERY frame, even skipped ones
         if (s.isSessionTimedOut(clock.millis()) && !s.isTerminal() && s.state() != LivenessSession.State.PASSED) {
             s.fail(LivenessErrorCode.SESSION_TIMEOUT, SessionSummary.Outcome.FAILED_SESSION_TIMEOUT);
-            metrics.recordSessionEnd(true);
+            metrics.recordSessionEnd(true, null, false); // Timeout is not a PAD attack
             audit.log(AuditEvent.of(clock.millis(), sessionId, s.workflow(), AuditEventType.INTERNAL_ERROR)
                     .field("code", "SESSION_TIMEOUT"));
             return FrameAssessment.sessionTimedOut();
@@ -243,7 +244,7 @@ public final class FaceLivenessEngine implements LivenessPipeline {
             if (s.passiveScoreFailedDuringActive(s.policy().passiveThresholdActive())) {
                 s.fail(LivenessErrorCode.ACTIVE_REEVAL_FAILED,
                         SessionSummary.Outcome.FAILED_LIVENESS);
-                metrics.recordSessionEnd(true);
+                metrics.recordSessionEnd(true, null, false);
                 audit.log(AuditEvent.of(clock.millis(), sessionId, s.workflow(), AuditEventType.LIVENESS_FAILED)
                         .field("reason", "passive_reeval_during_active")
                         .field("passiveScore", fmt(passiveScore)));
@@ -289,7 +290,7 @@ public final class FaceLivenessEngine implements LivenessPipeline {
                     return FrameAssessment.escalated(median);
                 }
                 s.fail(LivenessErrorCode.LIVENESS_SCORE_BELOW_THRESHOLD, SessionSummary.Outcome.FAILED_LIVENESS);
-                metrics.recordSessionEnd(true);
+                metrics.recordSessionEnd(true, null, false);
                 audit.log(AuditEvent.of(clock.millis(), s.sessionId(), s.workflow(), AuditEventType.LIVENESS_FAILED)
                         .field("median", fmt(median)).field("threshold", threshold));
                 return FrameAssessment.failed(LivenessErrorCode.LIVENESS_SCORE_BELOW_THRESHOLD, median);
@@ -308,7 +309,7 @@ public final class FaceLivenessEngine implements LivenessPipeline {
         s.setPadAttack(pad.attackType());
         s.fail(LivenessErrorCode.PAD_FAILURE, SessionSummary.Outcome.PAD_BLOCKED);
         metrics.recordPadBlock();
-        metrics.recordSessionEnd(true);
+        metrics.recordSessionEnd(true, null, false);
         audit.log(AuditEvent.of(clock.millis(), s.sessionId(), s.workflow(), AuditEventType.PAD_BLOCKED)
                 .field("attackType", pad.attackType().name())
                 .field("confidence", fmt(pad.confidence())));
@@ -319,18 +320,43 @@ public final class FaceLivenessEngine implements LivenessPipeline {
 
     @Override
     public Challenge requestChallenge(String sessionId) {
+        return requestChallenge(sessionId, Set.of());
+    }
+
+    /**
+     * Issue the next engine-selected challenge with the given types excluded
+     * from the draw pool (used by the Android orchestrator to drop BLINK when
+     * the measured stream rate is too low to sample a blink reliably — the
+     * engine stays fps-agnostic and the caller adapts the pool). Exclusion
+     * never yields an empty pool: if every allowed type were excluded, the
+     * unfiltered pool is used — a less-than-ideal challenge beats no
+     * challenge at all.
+     */
+    public Challenge requestChallenge(String sessionId, Set<ChallengeType> excludedTypes) {
         LivenessSession s = requireSession(sessionId);
         assertNotTerminal(s);
         if (s.state() != LivenessSession.State.ESCALATED) {
             throw new LivenessException(LivenessErrorCode.INVALID_STATE,
                     "challenge requested outside escalation state: " + s.state());
         }
-        Challenge challenge = s.selector().next(s.policy().allowedChallenges(), s.challengeAttempts());
+        Set<ChallengeType> pool = s.policy().allowedChallenges();
+        if (excludedTypes != null && !excludedTypes.isEmpty()) {
+            EnumSet<ChallengeType> filtered = EnumSet.noneOf(ChallengeType.class);
+            filtered.addAll(pool);
+            filtered.removeAll(excludedTypes);
+            if (!filtered.isEmpty()) {
+                pool = filtered;
+            }
+        }
+        Challenge challenge = s.selector().next(pool, s.challengeAttempts());
         s.setCurrentChallenge(challenge);
         s.issueChallenge(clock.millis());
         audit.log(AuditEvent.of(clock.millis(), sessionId, s.workflow(), AuditEventType.CHALLENGE_ISSUED)
                 .field("type", challenge.type().name())
                 .field("attempt", s.challengeAttempts())
+                .field("excluded", excludedTypes == null || excludedTypes.isEmpty()
+                        ? "none"
+                        : String.join(",", excludedTypes.stream().map(Enum::name).sorted().toList()))
                 .field("timeoutMs", challenge.timeoutMs()));
         return challenge;
     }
@@ -372,7 +398,7 @@ public final class FaceLivenessEngine implements LivenessPipeline {
             s.addActivePassiveScore(passiveScore);
             if (s.passiveScoreFailedDuringActive(s.policy().passiveThresholdActive())) {
                 s.fail(LivenessErrorCode.ACTIVE_REEVAL_FAILED, SessionSummary.Outcome.FAILED_LIVENESS);
-                metrics.recordSessionEnd(true);
+                metrics.recordSessionEnd(true, null, false);
                 return ValidationResult.hardFailure(LivenessErrorCode.ACTIVE_REEVAL_FAILED);
             }
             sequence.add(sig);
@@ -446,7 +472,7 @@ public final class FaceLivenessEngine implements LivenessPipeline {
             case ESCALATE_TO_OPERATOR -> SessionSummary.Outcome.FAILED_MAX_RETRIES_OPERATOR_ESCALATION;
         };
         s.fail(LivenessErrorCode.MAX_RETRIES_EXCEEDED, outcome);
-        metrics.recordSessionEnd(true);
+        metrics.recordSessionEnd(true, null, false);
         audit.log(AuditEvent.of(clock.millis(), s.sessionId(), s.workflow(),
                 AuditEventType.MAX_RETRIES_EXCEEDED).field("attempts", s.challengeAttempts()));
         audit.log(AuditEvent.of(clock.millis(), s.sessionId(), s.workflow(),
@@ -475,7 +501,7 @@ public final class FaceLivenessEngine implements LivenessPipeline {
         }
         long duration = clock.millis() - s.startedAtMillis();
         SessionSummary summary = s.summarize(duration);
-        metrics.recordSessionEnd(!summary.passed());
+        metrics.recordSessionEnd(!summary.passed(), null, false); // Session end: not a specific PAD attack
         audit.log(AuditEvent.of(clock.millis(), sessionId, s.workflow(), AuditEventType.SESSION_CLOSED)
                 .field("outcome", summary.outcome().name())
                 .field("escalated", summary.escalatedToActive())

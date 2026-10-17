@@ -3,7 +3,10 @@ target/
 *.iml
 .idea/
 .vscode/
-models/
+# ML model artifacts. Anchored to the repository root: an unanchored `models/`
+# also matched src/main/java/io/mosip/liveness/models/ and silently excluded
+# the JPA entity/enum packages from version control.
+/models/
 
 # Training data (face images must never be committed)
 training/data/
@@ -16,3 +19,23 @@ __pycache__/
 # Backup files
 *.bak
 *.log
+target/
+vendor/SKILLS-INTEGRATION.zip
+target/
+target/
+.DS_Store
+
+# Environment files - docker compose reads .env automatically, so ignore it
+.env
+!.env.example
+
+# Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
+
+# Local README preview output — regenerate with python .readme-preview/build_preview.py
+.readme-preview/readme.html
+
+.claude/
+.claude-flow/
+.freebuff/
+.readme-preview/

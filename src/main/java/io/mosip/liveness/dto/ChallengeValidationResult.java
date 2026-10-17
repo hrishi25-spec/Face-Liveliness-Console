@@ -22,6 +22,17 @@ public class ChallengeValidationResult {
     private UUID sessionId;
     private ChallengeResponse challenge;
     private Boolean passed;
-    private String action;  // proceed | retry_challenge | reject
+    // proceed | retry_challenge | retry_passive | continue | reject |
+    // locked | escalate_to_operator | failed | manual_check_passed |
+    // manual_check_failed
+    private String action;
+    /**
+     * Set only on a terminal budget-exhausted verdict: true when the frozen
+     * policy's repeated-failure action lets the client open a fresh session
+     * ({@code FALLBACK}/ALLOW_RETRY), false for {@code locked} and
+     * {@code escalate_to_operator}. Absent on every non-terminal verdict, and
+     * never a grant of another challenge inside this session.
+     */
+    private Boolean mayRetrySession;
     private String message;
 }

@@ -18,3 +18,10 @@ spring:
     console:
       enabled: true
       path: /h2-console
+
+mosip:
+  security:
+    auth:
+      bcrypt-cost: 4
+      bootstrap-username: supervisor
+      bootstrap-password: supervisor123
