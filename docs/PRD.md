@@ -150,7 +150,7 @@ Five independent projects plus repository tooling. Full details in §13–§17.
 
 | Path | Kind | What it is |
 | --- | --- | --- |
-| `src/`, `pom.xml` | Java / Maven | The service and shared engine. **The active codebase.** 156 main classes, 76 test classes. |
+| `src/`, `pom.xml` | Java / Maven | The service and shared engine. **The active codebase.** 190 main classes, 95 test classes. |
 | `pad_liveness_backend/` | Python / FastAPI | Independent PostgreSQL-backed reference implementation of the same decision flow, with Alembic migrations and real-PostgreSQL tests. Its own service, not wired into the Java build. |
 | `android_client/` | Flutter + Android | Pinned Flutter 3.10.4 build harness, Pigeon bindings, CameraX frame source, keystore evidence signer. Not the full Registration Client. |
 | `docs/` | Markdown | Cross-project documentation (this file included). |

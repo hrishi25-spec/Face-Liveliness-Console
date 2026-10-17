@@ -243,9 +243,9 @@ Explicit backends never silently fall back. An unavailable one fails closed with
 
 | Path | What it is |
 |---|---|
-| `src/`, `pom.xml` | **The active codebase.** Spring Boot service and shared engine (156 main classes, 76 test classes) |
+| `src/`, `pom.xml` | **The active codebase.** Spring Boot service and shared engine (190 main classes, 95 test classes) |
 | `android_client/` | Pinned Flutter 3.10.4 / Dart 3.0.3 harness, Pigeon bindings, CameraX source. Not the full Registration Client |
-| `pad_liveness_backend/` | Independent FastAPI + PostgreSQL reference implementation (Python 3.12, Alembic), not wired into the Java build |
+| `pad_liveness_backend/` | Independent FastAPI + PostgreSQL reference implementation (Python 3.12, Alembic), not wired into the Java build <!-- boundary-allow: repository map names each sibling project's own stack --> |
 | `training/` | Workstation-only synthetic-data pipeline for MiniFASNet. No real faces, not in CI |
 | `docs/` | Cross-project documentation (below) |
 | `scripts/` | Repo gates: boundary check, jar smoke, jar size, cold-boot median, Docker and Windows-launcher smoke |
@@ -255,10 +255,10 @@ Inside `io.mosip.liveness`: `api/` (controllers and filters), `auth/`, `services
 ## Testing and CI
 
 ```bash
-./mvnw --batch-mode test                         # Java unit + integration (76 test classes)
+./mvnw --batch-mode test                         # Java unit + integration (95 test classes)
 node src/test/js/console-guards.test.mjs        # console DOM guards, no Maven needed
 node scripts/check-project-boundaries.mjs       # docs-vs-CI consistency gate
-cd pad_liveness_backend && python -m pytest -q   # 46 Python tests
+cd pad_liveness_backend && python -m pytest -q   # 46 Python tests — boundary-allow: sibling project's suite, documented from the repository root
 ```
 
 Fourteen CI jobs cover unit and integration, console DOM guards, project boundaries, secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging, a Windows launcher smoke test (JDK under a path with a space), the Docker image, a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, and tagged releases. Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
