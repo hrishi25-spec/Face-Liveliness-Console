@@ -45,7 +45,7 @@ jobs:
             maven_tests: "LivenessPipelineIntegrationTest"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # JDK 17 matches <java.version> in pom.xml and is the ceiling this test
       # stack supports: the Mockito/ByteBuddy pair Spring Boot 3.3.x manages
@@ -82,7 +82,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # No setup-node and no npm install: the harness is deliberately
       # dependency-free, and ubuntu-latest ships a node binary on PATH.
@@ -105,7 +105,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check project guidance and instruction scope
         run: node scripts/check-project-boundaries.mjs
@@ -129,7 +129,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check every Java import resolves to a source file
         run: node scripts/check-java-imports.mjs
@@ -156,7 +156,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -176,7 +176,7 @@ jobs:
         working-directory: pad_liveness_backend
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.12.15
         uses: actions/setup-python@v5
@@ -211,7 +211,7 @@ jobs:
       PAD_LIVENESS_REQUIRE_PYTHON: '1'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -247,7 +247,7 @@ jobs:
         working-directory: android_client
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -361,7 +361,7 @@ jobs:
             max_mib: 110
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -472,7 +472,7 @@ jobs:
     needs: [test]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # For the Maven cache, not for the JDK: the JDK under test is the one the
       # next step installs, which overwrites this JAVA_HOME. This one sits in
@@ -549,7 +549,7 @@ jobs:
     needs: [test, python-backend]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -595,7 +595,7 @@ jobs:
     needs: [test, console, python-backend]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -633,7 +633,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -671,7 +671,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -869,7 +869,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
