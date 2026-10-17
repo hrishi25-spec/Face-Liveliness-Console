@@ -2,14 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-10-11
+## [Unreleased] - 2026-10-17
+
+### Added — Anti-replay protection, evidence verification, and unified localisation
+
+- **Session anti-replay validation (`AntiReplayValidator` + `V13__session_anti_replay.sql`)**: Sessions now generate cryptographically secure 256-bit nonces bound to `liveness_sessions.nonce`. Prevents replay attacks across capture attempts.
+- **Client evidence verification endpoint (`POST /api/v1/sessions/{sessionId}/evidence`)**: Verifies signed liveness evidence produced by online client gates (`EvidenceVerificationRequest`, `EvidenceVerificationResponse`, `LivenessEvidenceVerifier`). Validates session nonce binding, timing window, and challenge completion before acceptance.
+- **Unified localisation message catalog (`LivenessMessageKeys` + `app_en.arb`)**: Centralised all user-facing guidance and error keys across Java and Flutter/Android. Enforced by `LocalisationKeyGateTest`, ensuring all message keys map to valid localized text without exposing internal error or model details.
+- **Repository cleanup**: Removed obsolete third-party workspace (`vendor/github setup/`) and design mockups (`stitch_markdown_ui_page_designer/`), keeping the repository focused strictly on the active MOSIP liveness and PAD implementation. Updated repository guidance (`AGENTS.md`, `README.md`, `PRD.md`) to reflect the 5 active project trees.
 
 ### Changed — The console implements the reference design system, and the review fixed what only looked right
 
-- `src/main/resources/static/` now implements
-  `stitch_markdown_ui_page_designer/liveness_verification_console/DESIGN.md`:
-  the institutional palette (cobalt `#1E56D0` over a `#F8FAFC` canvas in white
-  containers, `#E2E8F0` borders, the four status triads), a 32px display heading,
+- `src/main/resources/static/` now implements the modern institutional enterprise design system:
+  the palette (cobalt `#1E56D0` over a `#F8FAFC` canvas in white containers, `#E2E8F0` borders, the four status triads), a 32px display heading,
   the two-line MOSIP / Liveness Console identity, the 1440px content cap, a split
   capture layout (preview beside its controls — the old single column pushed Run
   and Stop below the fold on a laptop), the hardened `#020617` camera surface with

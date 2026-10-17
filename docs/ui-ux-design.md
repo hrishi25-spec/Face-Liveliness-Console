@@ -9,8 +9,8 @@ browser console implement the same states and the same message catalog.
 | Surface | Artifact |
 |---|---|
 | Browser console (working reference UI) | `src/main/resources/static/index.html` + `console.js` + `console.css` |
-| Console design system (tokens, components, states) | [`stitch_markdown_ui_page_designer/liveness_verification_console/DESIGN.md`](../stitch_markdown_ui_page_designer/liveness_verification_console/DESIGN.md) |
-| Console screen mocks (role picker, capture, policy, credential modal, saved state) | [`stitch_markdown_ui_page_designer/`](../stitch_markdown_ui_page_designer/) — `*/code.html` + `*/screen.png` |
+| Console design system (tokens, components, states) | `src/main/resources/static/console.css` (tokens, states, dark mode) |
+| Console screens (role picker, capture, policy, credential modal, saved state) | `src/main/resources/static/index.html` + `src/main/resources/static/console.js` |
 | Flutter (Android) | `android_client/lib/liveness/liveness_view.dart` + `liveness_view_model.dart` |
 | Desktop (JavaFX) | `src/main/java/io/mosip/liveness/client/LivenessChallengeOverlay.java` + `src/main/resources/fxml/LivenessChallengeOverlay.fxml` (guide §3.6) |
 | Message catalog (single source) | `LivenessView.defaultMessages`, `LivenessErrorCode.userMessage()` |
@@ -129,12 +129,11 @@ to "Checking face liveness…".
 
 ## 7. Browser console design system (implemented)
 
-The console implements the design system of
-[`stitch_markdown_ui_page_designer/liveness_verification_console/DESIGN.md`](../stitch_markdown_ui_page_designer/liveness_verification_console/DESIGN.md):
-"modern institutional enterprise" — crisp 1px borders, white containers over a
-tinted canvas, high-contrast slate type and a cobalt accent. The tokens live in
-`console.css` as CSS custom properties, and the mocks in the same directory are
-the visual reference (`*/screen.png` alongside each `code.html`).
+The console implements a "modern institutional enterprise" design system:
+crisp 1px borders, white containers over a tinted canvas, high-contrast slate
+type and a cobalt accent. The tokens live in `console.css` as CSS custom
+properties, providing the reference implementation for the role picker,
+resident capture, supervisor policy editor, and credential auth dialog.
 
 ### 7.1 Tokens
 
@@ -147,12 +146,12 @@ the visual reference (`*/screen.png` alongside each `code.html`).
 | Banners | one notch lighter than the pills: success `#F0FDF4` on `#86EFAC`, danger `#FEF2F2` on `#FCA5A5`, in-progress `#FEFCE8` on `#FDE047` |
 | Radii / elevation | 8px controls and banners, 12px cards, 16px role cards, pills full; 1px border plus a micro-shadow, no blurred drop shadows |
 
-**Type.** DESIGN.md specifies Inter for UI and JetBrains Mono for hashes,
+**Type.** Inter is specified for UI and JetBrains Mono for hashes,
 nonces and diagnostics. The console ships under `style-src 'self'`, so it loads
 no font CDN: both families are used when the workstation already has them and
-the platform UI/mono stack otherwise. **The mock is light-only**; the console
-keeps a dark palette under `prefers-color-scheme: dark` built from the same
-tokens, because the console is also read on dim enrolment workstations.
+the platform UI/mono stack otherwise. The console includes a dark palette under
+`prefers-color-scheme: dark` built from the same tokens, because the console is
+also read on dim enrolment workstations.
 
 ### 7.2 Layout
 
@@ -214,9 +213,9 @@ the design:
   detail in any state — unchanged from §2 above; the step card and HUD only ever
   restate the state the server reported.
 
-### 7.5 Deliberate divergences from the mocks
+### 7.5 Deliberate design decisions for production console
 
-| Mock | Console | Why |
+| Feature / Pattern | Console Implementation | Rationale |
 |---|---|---|
 | `supervisor_policy_credential_auth_modal` — in-page username/password form, FIDO2 row | the same form, in a dialog the console opens itself (`#auth-modal`) | the FIDO2/Smartcard row is omitted: there is no FIDO2 or OTP backend to drive, so it would be an affordance that does nothing. The username is read-only once the account is known (an account changes its own password; it does not switch to another one mid-dialog), and it is editable when the console has no name yet and is signing in |
 | `supervisor_policy_saved_verified_state` — disabled "Policy saved" button and a sync pill | the status chip (`Saved <WF> policy.`) plus the pending-diff panel | the enabled/disabled state of Save is derived from whether the form differs from the loaded policy, which is what the operator needs to see; a permanently disabled button would hide that |

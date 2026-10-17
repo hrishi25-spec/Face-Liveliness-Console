@@ -294,8 +294,8 @@ function discoverScopes() {
   scopeDirs.set(ROOT, { name: '.', kind: detectKind(ROOT) });
 
   // A nested scope's sources belong to that nested project, so a directory
-  // that only groups other projects (vendor/, holding vendor/github setup/)
-  // is not itself a project and needs no guidance of its own.
+  // that only groups other projects is not itself a project and needs no
+  // guidance of its own.
   for (const entry of readdirSync(ROOT, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (IGNORED_DIRS.has(entry.name) || TOOLING_DIRS.has(entry.name) || (entry.name.startsWith('.') && entry.name !== '.')) continue;

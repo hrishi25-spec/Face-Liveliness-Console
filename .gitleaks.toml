@@ -50,11 +50,9 @@ description = "CHANGELOG prose tripping the word-key heuristic"
 targetRules = ["generic-api-key"]
 paths = ['''^CHANGELOG\.md$''']
 
-# vendor/github setup/ is a third-party workspace this repository neither builds
-# nor ships (see the boundary note in the root AGENTS.md). It commits a shared,
-# preview-only OAuth client secret deliberately, and the file documents its own
-# rotation procedure. Allowlisted by path so the vendored tree cannot fail the
-# gate, while this repository's own code still can.
+# Historical vendor workspaces (e.g. historical commits touching vendor/)
+# are allowlisted by path so past commits in git history cannot fail the scan,
+# while this repository's own code still must pass all checks.
 [[allowlists]]
-description = "Vendored third-party workspace, outside this repository's CI scope"
+description = "Historical vendored workspaces in git history"
 paths = ['''^vendor/''']

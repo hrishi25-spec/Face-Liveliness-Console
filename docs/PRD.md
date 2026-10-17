@@ -146,7 +146,7 @@ Three integration surfaces exist:
 
 ## 3. What the repository contains
 
-Six independent projects plus repository tooling. Full details in §13–§17.
+Five independent projects plus repository tooling. Full details in §13–§17.
 
 | Path | Kind | What it is |
 | --- | --- | --- |
@@ -155,12 +155,11 @@ Six independent projects plus repository tooling. Full details in §13–§17.
 | `android_client/` | Flutter + Android | Pinned Flutter 3.10.4 build harness, Pigeon bindings, CameraX frame source, keystore evidence signer. Not the full Registration Client. |
 | `docs/` | Markdown | Cross-project documentation (this file included). |
 | `training/` | Python / TensorFlow | Synthetic-data training pipeline for the MiniFASNet liveness model. Runs on a workstation; **not** covered by CI and not wired into the service. |
-| `vendor/github setup/` | Node | Separate vendored third-party workspace. Neither built nor tested by this repository's CI. |
 | `scripts/` | Shell + Node | Repository gates: boundary check, jar smoke, jar size, cold-boot median, Docker smoke, `start.sh` / `start.bat`. |
 
-Size at a glance: **703 tracked files**, 156 Java main classes, 76 Java test classes (six more
+Size at a glance: 156 Java main classes, 76 Java test classes (six more
 files under `src/test/java` are support helpers) with 596 `@Test` methods, 46 Python tests,
-10 Flyway migrations, 13 CI jobs, 6 repository gate scripts.
+13 Flyway migrations (V1–V13), 13 CI jobs, 6 repository gate scripts.
 
 ---
 
@@ -806,9 +805,6 @@ A **workstation-only** synthetic-data pipeline for MiniFASNet: `generate_synthet
   measured.
 - Deliberately **not** covered by CI (`boundary-allow-no-ci`): there are no tests.
 
-### 15.3 Vendor workspace (`vendor/github setup/`)
-A separate vendored Node/React app with its own `AGENTS.md`. Neither built nor tested by this
-repository's CI.
 
 ---
 
@@ -939,9 +935,8 @@ smoke tests.
   **unvalidated** end to end. *Assumed.*
 - The Android README's "349 green" test-count claim is stale/unverifiable. *Gap.*
 
-**Deliberately out of CI** — `training/` (no tests; workstation TensorFlow environment) and
-`vendor/github setup/` (vendored third-party). Both are declared via `boundary-allow-no-ci` in
-the root project map.
+**Deliberately out of CI** — `training/` (no tests; workstation TensorFlow environment),
+declared via `boundary-allow-no-ci` in the root project map.
 
 ---
 

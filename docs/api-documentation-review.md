@@ -250,3 +250,20 @@ grep -rn "mayRetrySession\|threshold-sweep\|CONFIG_CHANGED" src/   # → nothing
 ```
 
 Startup logs used for this review: `target/api-doc-check.log`, `target/api-doc-check2.log` (git-ignored `target/`).
+
+---
+
+## 11. Implementation and Resolution (October 2026)
+
+All 8 recommended fixes identified in this review have since been implemented and verified in the codebase:
+
+1. **CORS:** Switched `allowedOrigins` to `allowedOriginPatterns` matching localhost development ports.
+2. **Authentication & Authorization:** Implemented account-based authentication with `SUPERVISOR` role gating (`SupervisorGateFilter`) for `PUT /api/v1/config/{workflowType}`, `GET /api/v1/eval/threshold-sweep`, and `/api/v1/users/**`. Replaced shared admin key with individual sessions and operator API keys (`OperatorKeyFilter`).
+3. **Audit Trail & Integrity:** Config changes write `CONFIG_CHANGED` audit events in `audit_logs` (V7–V9 Flyway migrations). Rows are cryptographically chained (`prev_hash` → `entry_hash`) with HMAC-SHA-256 verification via `GET /api/v1/config/audit/verify`.
+4. **Rate Limiting:** `RateLimitFilter` implements in-memory token buckets for `session-create`, `frames`, `operator-key`, and `auth-login`, returning `X-RateLimit-*` headers and HTTP 429 with `Retry-After`.
+5. **Security Headers:** `SecurityHeadersFilter` attaches strict CSP (`script-src 'self'`, `style-src 'self'`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and `Permissions-Policy`.
+6. **Request & Frame Caps:** `MAX_REQUEST_BODY_BYTES` (24 MB) caps request bodies, and frame decoding enforces payload and dimension limits against decompression attacks.
+7. **Challenge & Policy Execution:** Challenge windows enforce the 15 s minimum window with `continue` actions; per-workflow policy snapshots are frozen on session creation (V4 migration); repeated failure policies (`LOCK`, `ESCALATE`, `ALLOW_RETRY`) are wired into terminal verdicts.
+8. **Anti-Replay Validation:** Session nonces (`V13__session_anti_replay.sql`) and `AntiReplayValidator` bind tokens to sessions, with client evidence verification via `POST /api/v1/sessions/{sessionId}/evidence`.
+9. **Endpoint Surface:** All 28 routes are classified in `RouteInventory.java` across Client-Facing (16 endpoints, of which 7 are session-scoped), Authenticated (3 endpoints), Operator-Keyed (3 endpoints), and Supervisor-Keyed (6 endpoints) tiers.
+

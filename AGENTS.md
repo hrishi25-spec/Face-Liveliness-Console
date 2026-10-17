@@ -7,7 +7,6 @@
 - [`android_client/`](android_client/) contains a pinned Flutter/Android build harness and MOSIP host-integration fragments, not the full Registration Client; follow its [`AGENTS.md`](android_client/AGENTS.md).
 - [`docs/`](docs/) contains repository and integration documentation; follow [`docs/AGENTS.md`](docs/AGENTS.md).
 - [`training/`](training/) holds the synthetic-data model training pipeline (Python/TensorFlow); follow its [`AGENTS.md`](training/AGENTS.md). Its outputs stay local and are not wired into the service or covered by CI. boundary-allow-no-ci: no tests, and it runs on a workstation with its own TensorFlow environment
-- [`vendor/github setup/`](vendor/github%20setup/) is a separate vendor app with its own [`AGENTS.md`](vendor/github%20setup/AGENTS.md). boundary-allow-no-ci: vendored third-party workspace, neither built nor tested by this repository's CI
 
 ## Rules that apply across this repository
 

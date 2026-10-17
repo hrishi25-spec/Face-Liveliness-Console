@@ -13,10 +13,16 @@ src/main/java/io/mosip/liveness/
     PadLivenessApplication.java     # Spring Boot entry point
     config/AppConfig.java           # Bean config, CORS, OpenCV init
   api/                              # REST controllers (HTTP endpoints)
-    SessionsController.java         # POST /sessions, GET /sessions/{id}, POST /close
+    SessionsController.java         # POST /sessions, GET /sessions/{id}, POST /close, POST /sessions/{id}/evidence, GET /sessions
     FramesController.java           # POST /sessions/{id}/frames
     ChallengesController.java       # POST /sessions/{id}/challenges/validate
-    ConfigController.java           # GET/PUT /config/{workflow_type}
+    ActiveLivenessController.java   # POST /sessions/{id}/active-liveness
+    ConfigController.java           # GET/PUT /config/{workflow_type}, GET /config/audit, GET /config/audit/verify
+    AuthController.java             # POST /auth/login, GET /auth/me, POST /auth/logout, POST /auth/change-password, GET /auth/role
+    UsersController.java            # GET/POST /users, POST /users/{username}/*
+    CalibrationController.java      # GET /eval/threshold-sweep
+    DiagnosticsController.java      # GET /diagnostics
+    RejectionsController.java       # GET /sessions/rejections
     MetricsController.java          # GET /metrics
     AuditController.java            # GET /sessions/{id}/audit
     HealthController.java           # GET /health
@@ -27,6 +33,8 @@ src/main/java/io/mosip/liveness/
     FrameProcessResult.java
     ChallengeValidateRequest.java
     ChallengeValidationResult.java
+    EvidenceVerificationRequest.java
+    EvidenceVerificationResponse.java
     ConfigPolicyUpdate.java
     ConfigPolicyResponse.java
     OperationalMetrics.java
@@ -56,8 +64,11 @@ src/main/java/io/mosip/liveness/
     LivenessEngineService.java      # Passive scoring + active challenge validation
     PadEngineService.java           # Presentation attack detection
     ChallengeSelectorService.java   # Dynamic/unpredictable challenge selection
+    LivenessEvidenceVerifier.java   # Verifies client-signed liveness evidence & nonces
     ImageUtils.java                 # Frame decode, face detect, quality scoring
-  core/                             # (existing) Engine types, config, backends
+  security/                         # Anti-replay validation & guards
+    AntiReplayValidator.java        # Nonce generation, validation, and session anti-replay
+  core/                             # (existing) Engine types, config, backends, localisation keys
     ...
   engine/                           # (existing) FaceLivenessEngine, LivenessSession
     ...
@@ -70,7 +81,7 @@ src/main/java/io/mosip/liveness/
 src/main/resources/
   application.yml                   # Spring Boot config (DB, liveness params)
   application-dev.yml               # Dev profile (H2 in-memory DB)
-  db/migration/V1__init_schema.sql  # Flyway migration (applied at startup)
+  db/migration/                     # Flyway migrations (V1__init_schema.sql through V13__session_anti_replay.sql)
 ```
 
 ### Pluggable liveness/PAD engines

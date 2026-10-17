@@ -3,8 +3,7 @@
    Strict CSP compliant: no inline styles or external fonts required. */
 
 :root {
-  /* Surfaces and backgrounds — the institutional palette of
-     stitch_markdown_ui_page_designer/liveness_verification_console/DESIGN.md:
+  /* Surfaces and backgrounds — the modern institutional enterprise palette:
      a tinted, anti-glare canvas under crisp white containers. */
   --color-bg: #f8fafc;
   --color-surface: #ffffff;

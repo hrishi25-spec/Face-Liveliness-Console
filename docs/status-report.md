@@ -154,8 +154,8 @@ Proceed with ONNX Runtime pivot (user delegated); TFLite backend left untouched;
 |---|---|---|
 | 1 | ~~**Real-model eval:** download + SHA-verify `minifasnet_v2.onnx`, add ORT dependency, implement `OnnxMiniFasNetBackend`, refactor harness to accept injected backends, build proxy corpus, run end-to-end~~ | ✅ **Done (2026-10-03).** Real MiniFASNet-V2 scores run through the full pipeline; proxy APCER/BPCER measured via the sweep endpoint; runner reusable for real captures later |
 | 2 | ~~**Device adapter layer:**~~ SBI STREAM consumer + burst-rCapture fallback + mock L0/L1 device (Bonus task #1) | ✅ **Done.** Closes the frame-source gap between this library and actual biometric devices |
-| 3 | **UI/UX deliverable:** screen-by-screen design (Desktop + Android) per problem-statement §10 | Second required deliverable, not yet written |
-| 4 | **Model integrity checks:** checksum/signature verification on model load in backends | Security hardening flagged in design §16 |
+| 3 | **UI/UX deliverable:** screen-by-screen design (Desktop + Android + Console) per problem-statement §10 | ✅ **Done.** Implemented in `docs/ui-ux-design.md`, `src/main/resources/static/`, and Android Flutter `LivenessView` |
+| 4 | **Model integrity checks:** checksum/signature verification on model load in backends | ✅ **Done.** Implemented via `ModelManifestTool`, `SignedManifestModelStore`, and `SignedModelManifest` |
 | 5 | **Resolve design-doc open questions Q1–Q10** (recovery path, packet persistence, STREAM capability probe, factory fork, etc.) | Locks implementation defaults before host-app integration |
 | 6 | **Host-app integration phases 2–7** once 1–5 land | The actual registration-client workstreams |
 
