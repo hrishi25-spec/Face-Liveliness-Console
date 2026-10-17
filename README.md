@@ -1,6 +1,6 @@
 <div align="center">
 
-# MOSIP Face Liveness & PAD Service
+# Face Liveliness Console
 
 **Local-first face liveness and presentation attack detection for the [MOSIP](https://mosip.io/) Registration Client.**
 Passive scoring, active challenges and a terminal PAD gate, decided on the capture host with no network call on the decision path.
