@@ -167,7 +167,7 @@ also read on dim enrolment workstations.
 
 ### 7.3 Components
 
-- **Header** — two-line identity (MOSIP / Liveness Console), live service
+- **Header** — two-line identity (Face Liveliness / Console) beside the face-scan mark, live service
   chips as dot + uppercase state text (`service: ok`, `engine: available`,
   `chain: intact`, `session <id>`), signed-in name, role badge, Log out / Switch
   role.

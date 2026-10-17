@@ -1,7 +1,9 @@
 # MOSIP Face Liveness & PAD Engine — Status Report
 
-**Date:** 2026-08-26 · **Branch:** `development` · **Artifact:** `io.mosip.liveness:face-liveness-engine:0.1.0-SNAPSHOT`
-**Last updated:** 2026-08-26 — Device adapter layer completed
+**Date:** 2026-10-17 · **Branch:** `main` · **Artifact:** `io.mosip.liveness:pad-liveness-backend:1.0.0-SNAPSHOT`
+**Last updated:** 2026-10-17 — reconciled with the current tree (accounts, ONNX default,
+anti-replay evidence, 751 Java tests). Earlier sections keep their original dates where
+they record a measurement or a decision rather than current state.
 
 ---
 
@@ -17,7 +19,9 @@
 
 ## 2. Existing Code — What Is Implemented
 
-49 Java source files, 12 test classes. **All 86 tests pass.**
+190 Java source files, 95 files under `src/test/java` (88 test classes plus 7 support
+helpers). **All 751 Java tests pass**, and the 49-test Python backend suite is green in its
+own job.
 
 ### 2.1 Architecture layers (`docs/design.md`)
 
@@ -26,7 +30,8 @@ Host Application ──▶ FaceLivenessEngine (session mgr · decision logic · 
                                         audit · metrics · config resolver)
                           │ LivenessBackend interface (pluggable)
                           ▼
-             MockLivenessBackend / TfLiteMiniFasNetBackend / MediaPipeFaceMeshBackend / (vendor swap)
+             OnnxMiniFasNetBackend (default) / MockLivenessBackend /
+             MediaPipeFaceMeshBackend / TfLiteMiniFasNetBackend / (vendor swap)
 
 Device Layer:
   DeviceAdapter interface ──▶ SbiStreamDeviceAdapter (L1 STREAM endpoint)
@@ -50,6 +55,8 @@ Device Layer:
 | Distinct resident / operator / supervisor behaviour (incl. real `LOCK`/`ESCALATE`/`ALLOW_RETRY` outcomes) | ✅ `DecisionEngineService` + `V4__session_policy_snapshot.sql` |
 | Error handling codes (face not detected, multiple faces, poor quality, engine errors) | ✅ `core.LivenessErrorCode`, retryable vs terminal distinction |
 | Audit & diagnostic logging (no PII) + anonymized metrics | ✅ `audit.StructuredAuditLogger`, `MetricsCollector` |
+| Account-based admin (BCrypt, `HttpOnly` session cookies, supervisor-gated writes, last-supervisor safeguard) | ✅ `auth.*`, `V12__auth_users_and_tokens.sql`, `AuthContextFilter`, `SupervisorGateFilter` |
+| Session anti-replay nonce + client evidence check | ✅ `AntiReplayValidator`, `V13__session_anti_replay.sql`, `POST /api/v1/sessions/{id}/evidence` |
 | ISO/IEC 30107 alignment (APCER/BPCER/ACER + evaluation harness) | ✅ `eval.PadMetrics`, `eval.AttackScenarioHarness` |
 | Retry policy + LOCK_OUT / FALLBACK / ESCALATE_TO_OPERATOR | ✅ `RepeatedFailureAction` |
 | Device adapter layer (L0/L1 frame sources, mock device, MJPEG decode) | ✅ `device.*` — `SbiStreamDeviceAdapter`, `BurstRCaptureDeviceAdapter`, `MockL0L1Device` |
@@ -58,9 +65,10 @@ Device Layer:
 
 | Backend | Role | Notes |
 |---|---|---|
+| `OnnxMiniFasNetBackend` | Real PAD, **default** (`auto`) | Bundled MiniFASNet-V2 ONNX model, SHA-256 verified on load, raw 0–255 BGR input, class index 1 is live |
 | `MockLivenessBackend` | CI/regression | Fully scriptable subject signals; no native deps |
-| `TfLiteMiniFasNetBackend` | Real PAD | Reflection-loaded TFLite + OpenCV Haar detection; ⚠️ see §4 blocker |
-| `MediaPipeFaceMeshBackend` | High-fidelity landmarks | 468-pt mesh, iris gaze, solvePnP head pose w/ roll |
+| `TfLiteMiniFasNetBackend` | Android/embedded only | Reflection-loaded TFLite + OpenCV Haar detection; there is no desktop-JVM interpreter (§4) |
+| `MediaPipeFaceMeshBackend` | High-fidelity landmarks | 468-pt mesh, iris gaze, solvePnP head pose w/ roll; needs a TFLite runtime and model that the repo does not bundle |
 
 ### 2.4 Device adapter layer (completed 2026-08-26)
 
@@ -75,7 +83,8 @@ Device Layer:
 | `SyntheticScene` | Scriptable deterministic scene with face-like subject for testing |
 | `DeviceCapabilities` | Static capability description (L0 vs L1, formats, max FPS) |
 
-All 31 device adapter tests pass. `SbiStreamDeviceAdapter` integration test validated end-to-end against `MockL0L1Device`'s embedded HTTP server.
+The device adapter layer is covered by `DeviceAdapterTest`, including an end-to-end
+`SbiStreamDeviceAdapter` run against `MockL0L1Device`'s embedded HTTP server.
 
 ### 2.5 Current evaluation numbers (mock backend)
 
@@ -161,7 +170,7 @@ Proceed with ONNX Runtime pivot (user delegated); TFLite backend left untouched;
 
 ---
 
-## 6. Files Changed This Session
+## 6. Files Changed in the 2026-08-26 Session (historical)
 
 | File | Change |
 |---|---|

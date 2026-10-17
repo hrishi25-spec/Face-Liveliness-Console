@@ -3,6 +3,7 @@
    Strict CSP compliant: no inline styles or external fonts required. */
 
 :root {
+  color-scheme: light;
   /* Surfaces and backgrounds — the modern institutional enterprise palette:
      a tinted, anti-glare canvas under crisp white containers. */
   --color-bg: #f8fafc;
@@ -112,47 +113,55 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #0b1220;
-    --color-surface: #131c2e;
-    --color-surface-subtle: #17203a;
-    --color-subtle: #1c2740;
-    --color-subtle-2: #26334f;
-    --color-border: #26334f;
-    --color-border-hover: #3b4a6b;
-    --color-border-strong: #5b6b8c;
-    --color-text-primary: #eaf1ff;
-    --color-text-secondary: #b6c2d9;
-    --color-text-muted: #8494b0;
-    --color-primary: #6f9bff;
-    --color-primary-hover: #8cb0ff;
-    --color-primary-active: #b4c5ff;
-    --color-primary-subtle: #172b53;
-    --color-primary-border: #2b4a8f;
-    --color-success: #4ade80;
-    --color-success-surface: #0a2618;
-    --color-success-border: #134e2c;
-    --color-success-text: #4ade80;
-    --color-danger: #fca5a5;
-    --color-danger-surface: #2d1214;
-    --color-danger-border: #591d21;
-    --color-danger-text: #fca5a5;
-    --color-warning: #fcd34d;
-    --color-warning-surface: #291c06;
-    --color-warning-border: #54390b;
-    --color-warning-text: #fcd34d;
-    --banner-success-bg: #0a2618;
-    --banner-success-title: #86efac;
-    --banner-success-body: #bbf7d0;
-    --banner-danger-bg: #2d1214;
-    --banner-danger-title: #fca5a5;
+    color-scheme: dark;
+    --color-bg: #090d16;
+    --color-surface: #111827;
+    --color-surface-subtle: #0b0f19;
+    --color-subtle: #161f30;
+    --color-subtle-2: #273647;
+    --color-video-bg: #030712;
+    --color-border: #1f293d;
+    --color-border-hover: #2d3748;
+    --color-border-strong: #424754;
+    --color-text-primary: #f1f5f9;
+    --color-text-secondary: #94a3b8;
+    --color-text-muted: #64748b;
+    --color-primary: #3b82f6;
+    --color-primary-hover: #60a5fa;
+    --color-primary-active: #93c5fd;
+    --color-primary-subtle: rgba(59, 130, 246, 0.12);
+    --color-primary-border: rgba(59, 130, 246, 0.28);
+    --color-focus-ring: rgba(59, 130, 246, 0.35);
+    --color-success: #34d399;
+    --color-success-surface: rgba(16, 185, 129, 0.12);
+    --color-success-border: rgba(16, 185, 129, 0.28);
+    --color-success-text: #34d399;
+    --color-danger: #f87171;
+    --color-danger-hover: #ef4444;
+    --color-danger-surface: rgba(244, 63, 94, 0.12);
+    --color-danger-border: rgba(244, 63, 94, 0.28);
+    --color-danger-text: #f87171;
+    --color-warning: #fbbf24;
+    --color-warning-surface: rgba(245, 158, 11, 0.12);
+    --color-warning-border: rgba(245, 158, 11, 0.28);
+    --color-warning-text: #fbbf24;
+    --banner-success-bg: rgba(16, 185, 129, 0.12);
+    --banner-success-title: #34d399;
+    --banner-success-body: #a7f3d0;
+    --banner-danger-bg: rgba(244, 63, 94, 0.12);
+    --banner-danger-title: #f87171;
     --banner-danger-body: #fecaca;
-    --banner-warning-bg: #291c06;
-    --banner-warning-border: #54390b;
-    --banner-warning-title: #fcd34d;
+    --banner-warning-bg: rgba(245, 158, 11, 0.12);
+    --banner-warning-border: rgba(245, 158, 11, 0.28);
+    --banner-warning-title: #fbbf24;
     --banner-warning-body: #fde68a;
-    --banner-neutral-bg: #1c2740;
-    --banner-neutral-title: #eaf1ff;
-    --banner-neutral-body: #b6c2d9;
+    --banner-neutral-bg: #161f30;
+    --banner-neutral-title: #f1f5f9;
+    --banner-neutral-body: #94a3b8;
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.22);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.18);
+    --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.32), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 12px 16px -4px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
   }
 }
 
@@ -224,6 +233,13 @@ h1, h2, h3, h4, p {
   box-shadow: var(--shadow-xs);
   user-select: none;
   flex-shrink: 0;
+}
+
+/* The face-scan mark inherits the tile's white via currentColor. */
+.brand-logo svg {
+  width: 22px;
+  height: 22px;
+  display: block;
 }
 
 /* Two-line identity block: product above, surface below (DESIGN.md brand bar) */
@@ -340,7 +356,7 @@ button {
 button,
 button.secondary {
   background: var(--color-surface);
-  color: #344054;
+  color: var(--color-text-secondary);
   border: 1px solid var(--color-border-hover);
   box-shadow: var(--shadow-xs);
 }
@@ -430,7 +446,7 @@ button.danger:disabled {
 
 .pill-badge.pill-neutral {
   background: var(--color-subtle);
-  color: #344054;
+  color: var(--color-text-secondary);
 }
 .pill-badge.pill-neutral .pill-dot {
   background: #667085;
@@ -923,8 +939,8 @@ video {
 }
 
 .camera-oval {
-  width: 212px;
-  height: 286px;
+  width: min(400px, calc(100% - 32px));
+  aspect-ratio: 212 / 286;
   border: 2px dashed rgba(255, 255, 255, 0.85);
   border-radius: 50%;
   margin-bottom: 16px;
@@ -1272,7 +1288,7 @@ video {
 
 .instruction-text {
   font-size: 13px;
-  color: #344054;
+  color: var(--color-text-secondary);
   line-height: 1.4;
 }
 
@@ -1407,7 +1423,7 @@ video {
 .data-table td {
   padding: 16px;
   border-bottom: 1px solid var(--color-subtle);
-  color: #344054;
+  color: var(--color-text-secondary);
   vertical-align: middle;
 }
 
@@ -1467,7 +1483,7 @@ video {
 }
 
 .segmented-btn.active {
-  background: #ffffff;
+  background: var(--color-surface);
   color: var(--color-text-primary);
   box-shadow: var(--shadow-sm);
 }
@@ -1889,7 +1905,7 @@ video {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--shadow-lg);
 }
 
 .auth-modal-head {

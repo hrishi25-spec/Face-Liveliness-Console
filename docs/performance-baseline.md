@@ -92,6 +92,13 @@ cp target/pad-liveness-backend-*.jar /tmp/pad-full.jar      # keep it: the slim 
 > described in §9. §9 re-measures them on this host with the same harness; the
 > boot, RSS, jar-size and CPU rows are unaffected by that change and stand as
 > measured.
+>
+> **Cold boot re-measured 2026-10-17:** the same `./scripts/boot-median.sh` on the
+> same host, with the native cache cleared before every run, reported **15.8 s
+> median** (16.66, 15.69, 15.76, 15.67, 15.75 s; Spring 13.7–14.9 s) against the
+> 120 s budget. The 58.3 s run above was taken while the machine was under load, so
+> the two are the same metric under different contention, not a speed-up. The jar
+> sizes in this table were re-confirmed the same day: 200 MiB full, 89 MiB slim.
 
 ## 5. How each number was taken
 
@@ -100,6 +107,7 @@ cp target/pad-liveness-backend-*.jar /tmp/pad-full.jar      # keep it: the slim 
 ```bash
 BOOT_MEDIAN_RUNS=5 BOOT_MEDIAN_MAX_SECONDS=120 ./scripts/boot-median.sh
 # → median cold boot: 58.3 s over 5 runs (budget 120 s); per-run logs in /tmp/boot-median
+#   On an idle host the same command reports ~16 s — see the re-measurement note in §4.
 ```
 
 "Cold" means the extracted OpenCV native cache (`/tmp/opencv_openpnp*`) is deleted

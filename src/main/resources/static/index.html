@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- Inline empty icon: stops the browser from requesting /favicon.ico on every load. -->
 <link rel="icon" href="data:,">
-<title>MOSIP Liveness Console</title>
-<link rel="stylesheet" href="console.css">
+<title>Face Liveliness Console</title>
+<link rel="stylesheet" href="console.css?v=oval-400">
 </head>
 <body>
 
@@ -14,10 +14,20 @@
 <header class="topbar">
   <div class="topbar-inner">
     <div class="brand">
-      <div class="brand-logo" aria-hidden="true">M</div>
+      <!-- Face-scan mark: viewfinder corners around a face, the shape the capture
+           guide draws. Inline SVG, so the console keeps its no-CDN CSP footprint
+           and opens no extra request on load. -->
+      <div class="brand-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" focusable="false">
+          <path d="M3 8.5V6a3 3 0 0 1 3-3h2.5M15.5 3H18a3 3 0 0 1 3 3v2.5M21 15.5V18a3 3 0 0 1-3 3h-2.5M8.5 21H6a3 3 0 0 1-3-3v-2.5"/>
+          <circle cx="12" cy="10.5" r="3.1"/>
+          <path d="M6.6 18.4a6.3 6.3 0 0 1 10.8 0"/>
+        </svg>
+      </div>
       <span class="brand-text">
-        <span class="brand-name">MOSIP</span>
-        <span class="brand-sub">Liveness Console</span>
+        <span class="brand-name">Face Liveliness</span>
+        <span class="brand-sub">Console</span>
       </span>
     </div>
 

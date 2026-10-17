@@ -1751,8 +1751,8 @@
       "id": "verify-evidence",
       "method": "POST",
       "path": "/api/v1/sessions/{sessionId}/evidence",
-      "summary": "Verify client-signed liveness evidence",
-      "description": "Verifies client-signed biometric liveness evidence, validating session nonce binding, timing window, and challenge verification claims.",
+      "summary": "Check client liveness evidence against its session",
+      "description": "Checks a client-produced liveness evidence payload against the session the server holds. Rejects when the session is not ACTIVE/PASSED, the nonce does not match the session nonce (V13), completedEpochMs precedes startedEpochMs, or any challengeResults entry is false. Warns (still verified) on a bypassed gate, a completion timestamp well before session creation, or a missing signatureHex: presence of a signature is checked, not its cryptographic validity.",
       "auth": "session-scoped (X-Subject-Ref ownership claim)",
       "tier": "CLIENT_FACING",
       "rate_limited": true,
@@ -1767,7 +1767,7 @@
         },
         "400": {
           "error": "VALIDATION_ERROR",
-          "when": "invalid payload or missing signature/nonce"
+          "when": "invalid payload, or a missing/blank sessionId or nonceHex"
         },
         "404": {
           "error": "NOT_FOUND",
