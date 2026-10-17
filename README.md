@@ -1,581 +1,324 @@
-# Face Liveness & PAD Service (Spring Boot)
+<div align="center">
 
-Backend service implementing the Face Liveness Detection and Presentation
-Attack Detection (PAD) requirements for the MOSIP Registration Client
-(Desktop and Android), covering resident registration, operator
-authentication, and supervisor authentication.
+# MOSIP Face Liveness & PAD Service
 
-## Architecture
+**Local-first face liveness and presentation attack detection for the [MOSIP](https://mosip.io/) Registration Client.**
+Passive scoring, active challenges and a terminal PAD gate, decided on the capture host with no network call on the decision path.
 
-```
-src/main/java/io/mosip/liveness/
-  app/
-    PadLivenessApplication.java     # Spring Boot entry point
-    config/AppConfig.java           # Bean config, CORS, OpenCV init
-  api/                              # REST controllers (HTTP endpoints)
-    SessionsController.java         # POST /sessions, GET /sessions/{id}, POST /close, POST /sessions/{id}/evidence, GET /sessions
-    FramesController.java           # POST /sessions/{id}/frames
-    ChallengesController.java       # POST /sessions/{id}/challenges/validate
-    ActiveLivenessController.java   # POST /sessions/{id}/active-liveness
-    ConfigController.java           # GET/PUT /config/{workflow_type}, GET /config/audit, GET /config/audit/verify
-    AuthController.java             # POST /auth/login, GET /auth/me, POST /auth/logout, POST /auth/change-password, GET /auth/role
-    UsersController.java            # GET/POST /users, POST /users/{username}/*
-    CalibrationController.java      # GET /eval/threshold-sweep
-    DiagnosticsController.java      # GET /diagnostics
-    RejectionsController.java       # GET /sessions/rejections
-    MetricsController.java          # GET /metrics
-    AuditController.java            # GET /sessions/{id}/audit
-    HealthController.java           # GET /health
-  dto/                              # Request/response schemas (JSON DTOs)
-    SessionCreateRequest.java
-    SessionResponse.java
-    FrameSubmitRequest.java
-    FrameProcessResult.java
-    ChallengeValidateRequest.java
-    ChallengeValidationResult.java
-    EvidenceVerificationRequest.java
-    EvidenceVerificationResponse.java
-    ConfigPolicyUpdate.java
-    ConfigPolicyResponse.java
-    OperationalMetrics.java
-    AuditLogEntry.java
-  models/
-    enums/                          # Database enums
-      WorkflowType.java             # RESIDENT | OPERATOR | SUPERVISOR
-      SessionStatus.java            # ACTIVE | PASSED | FAILED | EXPIRED
-      LivenessStage.java            # PASSIVE | ACTIVE | COMPLETED
-      ChallengeType.java            # BLINK | SMILE | TURN_LEFT | TURN_RIGHT
-      ChallengeStatus.java          # ISSUED | PASSED | FAILED | TIMEOUT
-      FailurePolicy.java            # LOCK | ESCALATE | ALLOW_RETRY
-    entity/                         # JPA ORM models
-      LivenessSession.java
-      FrameEvent.java
-      ChallengeEntity.java
-      AuditLog.java
-      ConfigPolicy.java
-  crud/                             # JPA repositories (DB access)
-    LivenessSessionRepository.java
-    FrameEventRepository.java
-    ChallengeRepository.java
-    AuditLogRepository.java
-    ConfigPolicyRepository.java
-  services/                         # Business logic
-    DecisionEngineService.java      # Orchestrates passive -> active -> accept/reject
-    LivenessEngineService.java      # Passive scoring + active challenge validation
-    PadEngineService.java           # Presentation attack detection
-    ChallengeSelectorService.java   # Dynamic/unpredictable challenge selection
-    LivenessEvidenceVerifier.java   # Verifies client-signed liveness evidence & nonces
-    ImageUtils.java                 # Frame decode, face detect, quality scoring
-  security/                         # Anti-replay validation & guards
-    AntiReplayValidator.java        # Nonce generation, validation, and session anti-replay
-  core/                             # (existing) Engine types, config, backends, localisation keys
-    ...
-  engine/                           # (existing) FaceLivenessEngine, LivenessSession
-    ...
-  backend/                          # (existing) LivenessBackend interface + impls
-    ...
-  audit/                            # (existing) StructuredAuditLogger, MetricsCollector
-    ...
-  device/                           # (existing) Device adapter layer
-    ...
-src/main/resources/
-  application.yml                   # Spring Boot config (DB, liveness params)
-  application-dev.yml               # Dev profile (H2 in-memory DB)
-  db/migration/                     # Flyway migrations (V1__init_schema.sql through V13__session_anti_replay.sql)
+![Java](https://img.shields.io/badge/Java-17%2B-ED8B00?logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.3.3-6DB33F?logo=springboot&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-4.9-5C3EE8?logo=opencv&logoColor=white)
+![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-MiniFASNet--V2-005CED)
+![Flutter](https://img.shields.io/badge/Flutter-3.10.4-02569B?logo=flutter&logoColor=white)
+![ISO/IEC 30107](https://img.shields.io/badge/ISO%2FIEC_30107--3-aligned%2C_not_certified-lightgrey)
+![Offline](https://img.shields.io/badge/decision_path-offline-success)
+
+</div>
+
+---
+
+## Why this exists
+
+A face matcher cannot tell a live person from a printed photo, a phone screen, a replayed video or a mask. MOSIP's Registration Client captures faces in the field, often on low-cost hardware and sometimes with no connectivity, so the liveness check has to run **locally, in real time, on the capture host**.
+
+This service sits above the capture device. A Registration Client streams decoded frames to it, and it returns one actionable verdict: `proceed`, `retry_passive`, `escalate_to_active` or `reject`. It never returns a template or an image.
+
+It covers all three MOSIP workflows with one interaction model:
+
+| Workflow | Purpose |
+|---|---|
+| **Resident registration** | Verify a resident's face during ID enrolment |
+| **Operator authentication** | Verify the operator signing in to the workstation |
+| **Supervisor authentication** | Verify the supervisor approving registrations |
+
+## Highlights
+
+| | |
+|---|---|
+| **Defence in depth** | PAD runs on every frame before scoring, then passive liveness, then a randomised active challenge only when passive is inconclusive |
+| **Terminal PAD** | A confirmed attack ends the session. No retry, a distinct audit event, and only a generic message shown to the user so attackers learn nothing |
+| **Median-window voting** | The passive decision is the median of the last 7 scores once 5 exist, so one blurry frame cannot escalate a session and one lucky frame cannot pass it |
+| **Offline by design** | No network call anywhere on the decision path. Only policy and model updates need connectivity |
+| **Pluggable scoring** | One SPI (`LivenessBackend`) with four implementations: mock, ONNX MiniFASNet-V2, MediaPipe FaceMesh and TFLite MiniFASNet. A vendor SDK drops in without touching the pipeline |
+| **Per-role policy, frozen per session** | Resident, operator and supervisor each get their own operating point, resolved and snapshotted at session start so an edit cannot move an in-flight session |
+| **Tamper-evident audit** | HMAC-SHA-256 hash-chained audit trail, with PostgreSQL triggers blocking `UPDATE`/`DELETE` on `audit_logs` |
+| **Account-based admin** | BCrypt accounts, `HttpOnly` session cookies, supervisor-gated policy writes and a last-supervisor safeguard. The shared admin key is gone |
+| **ISO/IEC 30107-3 tooling** | APCER/BPCER/ACER harness with per-attack-species APCER and a threshold-sweep calibration endpoint |
+| **Three client surfaces** | Browser console, JavaFX desktop overlay and Flutter/Android view, all driven by the same state machine and message keys |
+
+## How a decision is made
+
+```mermaid
+flowchart TD
+    A[POST /sessions<br/>policy resolved + frozen] --> B[POST /sessions/id/frames]
+    B --> C{Face gate<br/>1 face, quality ok?}
+    C -- no --> R1[retry_passive]
+    C -- yes --> D{PAD<br/>confirmed on 2 consecutive frames?}
+    D -- attack --> X[reject<br/>session FAILED, PAD_REJECTED audit]
+    D -- bona fide --> E[Passive score<br/>MiniFASNet-V2 or heuristic fallback]
+    E --> F{Median of last 7 scores<br/>>= threshold?<br/>needs 5 frames}
+    F -- warming up --> R1
+    F -- yes --> P[proceed<br/>session PASSED]
+    F -- no --> G{Active liveness enabled?}
+    G -- no --> X2[reject]
+    G -- yes --> H[escalate_to_active<br/>random challenge: blink, smile, turn, gaze]
+    H --> I[POST /challenges/validate<br/>burst of frames]
+    I -- passed, more needed --> H
+    I -- passed, enough --> P
+    I -- failed, budget left --> H
+    I -- budget spent --> T[locked / escalate_to_operator / failed<br/>per workflow policy]
 ```
 
-### Pluggable liveness/PAD engines
+## Quick start
 
-`io.mosip.liveness.backend.LivenessBackend` is the SPI everything above depends
-on — `id()`, `initialize()`, `analyzeFrame()`, `scorePassiveLiveness()`,
-`assessPad()` and `shutdown()`. Four implementations ship here (`mock`,
-`onnx-minifasnet-v2`, `mediapipe-facemesh`, `tflite-minifasnet`), and the
-`mosip.liveness.backend` property selects one for **both** scoring paths: the
-HTTP path (`PassiveScoringService`) and the SPI bean
-(`AppConfig.livenessBackend`). `LivenessBackendSelection` owns that vocabulary
-and parses it once for both paths: `auto` and `heuristic` preserve the earlier
-behaviour (bundled ONNX model on the HTTP path, scripted mock on the SPI path);
-an explicitly named backend is honoured strictly — no silent fallback if it
-cannot load — and an unknown value fails at startup instead of quietly picking
-a different scorer.
-
-The `mock` backend is a scripted placeholder and the model-backed backends are
-reference integrations: replace them with a real, ISO/IEC 30107-3 evaluated
-model or vendor SDK before production use, by implementing `LivenessBackend`
-and naming it in `mosip.liveness.backend`. Per-backend runtime dependencies,
-determinism and observed behaviour are measured in
-[docs/backend-interoperability-report.md](docs/backend-interoperability-report.md).
-
-### Decision flow (matches spec)
-
-1. `POST /api/v1/sessions` — start a session for a workflow (`resident` |
-   `operator` | `supervisor`).
-2. `POST /api/v1/sessions/{id}/frames` — push a frame. Runs passive liveness + PAD.
-   - PAD attack detected → immediate reject, session `FAILED`.
-   - Score ≥ configured threshold → `proceed`, session `PASSED`.
-   - Score < threshold → `escalate_to_active`, returns a dynamically
-     selected `challenge` (blink / smile / turn / look direction).
-3. `POST /api/v1/sessions/{id}/challenges/validate` — submit the frame stream
-   captured during the challenge. Returns `proceed` / `retry_challenge`
-   (new challenge issued) / `reject` (after `max_retry_count` exceeded).
-   A challenge stays open for `challengeTimeoutMs`, raised to a **15 s floor**
-   (`mosip.liveness.min-challenge-window-ms`, hard minimum 1 s) so a shortened
-   policy row cannot fail someone who just needed a moment; polls return
-   `continue` until the window truly elapses, and only then is a retry spent.
-4. `POST /api/v1/sessions/{id}/close` — explicit close + summary.
-5. `GET /api/v1/sessions/{id}/audit` — full structured audit trail.
-6. `GET/PUT /api/v1/config/{workflow_type}` — read/update per-workflow policy
-   (threshold, challenge types, timeout, retry count, failure policy) —
-   no redeploy required. **PUT requires a signed-in `SUPERVISOR` account** (see
-   [Security](#security)); reads are open. Every successful `PUT` is recorded in
-   the audit trail: `GET /api/v1/config/audit` returns which account changed
-   which workflow, which fields moved, and their old → new values.
-7. `GET /api/v1/metrics` — anonymized operational metrics (pass rate, escalation
-   rate, retry rate, PAD rejection rate, etc.) plus rate-limiter tallies:
-   `rateLimitAllowedRequests`, `rateLimitedRequests` and the per-rule split
-   `rateLimitedSessionCreate` / `rateLimitedFrames` /
-   `rateLimitedOperatorKey` / `rateLimitedAuthLogin`, with
-   `rateLimitRejectionRate`. Those come from
-   in-process counters, so they start at zero on restart while the session
-   metrics come from the database.
-
-All decisions are logged to the `audit_logs` table (session created, each
-frame's verdict is in `frame_events`, challenges issued/passed/failed,
-PAD rejections, final outcome) without exposing model internals to the
-end-user response (per the spec's UI/UX guidance — generic failure
-messages only).
-
-## Running locally
-
-### 1. One command — `start.sh` / `start.bat`
-
-Builds if needed, starts the service, waits until it reports healthy, then opens
-the browser console. Runs on **macOS, Linux and Windows** and needs only a
-**JDK 25+** — Maven is not required, because the bundled Maven wrapper fetches it.
-The service artifact stays Java 17 bytecode-compatible for the MOSIP Android host.
+**Requirements:** JDK 17+ (the Maven wrapper is bundled, no local Maven needed).
 
 ```bash
-./start.sh                 # macOS / Linux / Git Bash
+./start.sh            # macOS / Linux / Git Bash
+start.bat             # Windows
 ```
 
-```bat
-start.bat                  rem Windows
-```
+The launcher builds the jar, runs it on the `dev` profile (in-memory H2, no PostgreSQL needed), waits for `/health` and opens the console.
 
 | Option | Effect |
 |---|---|
-| `--no-build` | skip Maven and relaunch the existing jar (fast restart) |
-| `--rebuild` | clean build plus the full test suite |
-| `--test` | run tests during the build |
-| `--port N` | serve on port N (default 8000) |
-| `--profile NAME` | Spring profile: `dev` (H2, default) or `default` (PostgreSQL) |
-| `--lowmem` | tune for the 2-core / 2 GB target: capped heap, Serial GC, class-data-sharing archive, `lowmem` Spring profile (see [configuration.md](docs/configuration.md)) |
-| `--no-browser` | do not open a browser |
-| `--doctor` | `start.bat` only: report what would block a start — JDK, port and jar, plus the engine: the live `/health` of a service already on the port, or the jar's Windows-native entries when nothing is running. Never builds, starts or stops anything. Exits 1 when something would block a start. |
-| `--help` | show the options and exit |
+| `--no-build` / `--rebuild` | Skip Maven / clean build |
+| `--port N` | Change the port (default `8000`) |
+| `--lowmem` | JVM flags and profile for a 2-core / 2 GB host (see [Performance](#performance)) |
+| `--no-browser`, `--test`, `--profile NAME`, `--help` | As named |
 
-A successful launch looks like:
+| URL | What |
+|---|---|
+| `http://localhost:8000/` | Browser test console (use `localhost`; browsers only expose the camera on a secure origin) |
+| `http://localhost:8000/swagger-ui/index.html` | Interactive API docs |
+| `http://localhost:8000/health` | Health, including whether the OpenCV engine loaded |
 
-```
-✓ JDK 25 → /opt/homebrew/Cellar/openjdk@25/.../bin/java
-✓ Build complete
-✓ Port 8000 is free
-✓ Service is up (started in 5s)
-  Console      http://localhost:8000/
-  API docs     http://localhost:8000/swagger-ui/index.html
-  Health       http://localhost:8000/health
-  Engine       available (OpenCV native library loaded)
-```
-
-Press `Ctrl+C` (or any key in the Windows window) to stop the service cleanly.
-
-On **Windows** the launcher to use is `start.bat`; the older minimal `run.bat` is
-kept for compatibility only. It needs a stock JDK 25+, and the arrangement CI
-tests is an install under `C:\Program Files\Eclipse Adoptium` — what
-`winget install EclipseAdoptium.Temurin.25.JDK` gives you — because that space in
-the path is what used to break `start.bat`'s version probe. See
-[Tests and gates](#tests-and-gates) for the gate and how to run it locally.
-
-`http://localhost:8000/` serves a **zero-dependency test console** that drives the
-real API — no build step and no CDN, so it works fully offline. It creates a
-session, captures webcam frames, runs passive liveness, performs the active
-challenge, and shows the decision log, audit trail and operational metrics side
-by side. A passive score above the threshold passes the session and skips the
-challenge by design; **Run active liveness** then becomes available and starts
-one extra challenge on request (`POST /api/v1/sessions/{id}/active-liveness`). The
-extra check is marked `manual`: its result is recorded on the challenge row and
-in the audit trail, and it **never changes the session verdict** — a missed
-action leaves the session PASSED. The console also edits the **config policy**
-per workflow: loads are open `GET`s,
-saving issues a `PUT` that the server authorises from your signed-in session — the
-console asks for a supervisor **username and password in a prompt** and holds
-neither (the credential never enters the page's markup, its storage or its memory,
-and the session itself is kept by the browser in an `HttpOnly` cookie no script can
-read). **Sign out** ends the session, and so does **Switch role**, which hands the
-workstation to the next person. The console
-also shows the **Request budget** panel: live meters for both limiter budgets
-(how many submissions remain and when the window resets, counting down each
-second), turning amber near the limit and red on a 429 with its retry time — so
-a tester can watch the limiter work instead of only seeing it fail. It also shows
-the **policy change history** — who changed a workflow, which fields
-moved, and their previous and new values — refreshed automatically after each
-save. The policy form has a **dirty-form guard**: edits show an amber "unsaved
-changes" marker, and switching workflow, pressing Load or closing the tab asks
-before discarding them (the workflow select snaps back if you cancel), so a
-tuned threshold can't vanish without a word.
-
-It must be opened at `localhost`: browsers only expose the camera on a secure
-origin, and `localhost` counts as one.
-
-### 3. Without Docker — manual quick start (H2)
-
-Requires only **JDK 25+**. No PostgreSQL, no Docker.
+### Try the decision flow
 
 ```bash
-# Build the executable jar (also runs the full test suite)
-./mvnw clean package
+BASE=http://localhost:8000
 
-# Run with the dev profile: in-memory H2, schema created by Hibernate
-java -jar target/pad-liveness-backend-1.0.0-SNAPSHOT.jar --spring.profiles.active=dev
-```
-
-The default jar is ~209 MB because `org.openpnp:opencv` bundles natives for
-eight platforms and `onnxruntime` bundles four (plus a 54 MB macOS `.dSYM`).
-For linux x86_64 targets — CI runners and the Docker image — build the slim
-variant, which keeps the Java bindings and the one native it actually loads:
-
-```bash
-./mvnw clean package -DskipTests -Pslim
-# -> target/pad-liveness-backend-1.0.0-SNAPSHOT-slim.jar  (~92 MB)
-
-java -jar target/pad-liveness-backend-1.0.0-SNAPSHOT-slim.jar --spring.profiles.active=dev
-```
-
-`clean` matters: `-Pslim` unpacks the filtered natives into `target/classes`, so
-a slim build followed by a plain build would leave a linux-only `.so` ahead of
-the full library on the classpath. The slim jar runs the real pipeline on linux
-x86_64; on any other OS the natives are simply absent and the app degrades to
-`engine: "unavailable"` rather than failing to start.
-
-To reproduce what CI does before publishing, boot the jar and check it serves:
-
-```bash
-./scripts/smoke-jar.sh                 # the full jar (default)
-SMOKE_JAR=slim ./scripts/smoke-jar.sh  # the slim jar — CI boots both
-# {"status":"ok","service":"MOSIP Face Liveness & PAD Service","engine":"available"}
-# packaged jar booted and reports the engine available
-
-./scripts/check-jar-size.sh 'target/pad-liveness-backend-*-slim.jar' 110 'slim jar'
-# slim jar: 89 MiB / 110 MiB budget
-```
-
-Both jars get the same `engine: available` assertion, because both are supposed
-to have a working engine on linux x86_64. That is what catches a dependency bump
-which quietly breaks the slim profile's native filter: the jar still builds, still
-boots, and then rejects every frame.
-
-**Artifacts from CI.** Every run publishes two, on the default branch and on `v*`
-tags: `pad-liveness-backend-jar` — the slim linux-x86_64 build, which is the
-primary download and the one the Docker image is built from — and
-`pad-liveness-backend-full-jar` for macOS/Windows consumers. The run summary
-reports each jar's size, and a jar that outgrows its budget fails the build rather
-than quietly doubling artifact storage.
-
-Then check it is up:
-
-```bash
-curl localhost:8000/health
-# {"status":"ok","service":"MOSIP Face Liveness & PAD Service","engine":"available"}
-```
-
-OpenAPI UI: `http://localhost:8000/swagger-ui/index.html`
-
-### 4. Against PostgreSQL (default profile)
-
-Set the `POSTGRES_*` variables (or create `.env` from `.env.example`) and run
-**without** `--spring.profiles.active=dev`. Flyway applies
-`db/migration/V1__init_schema.sql` on startup and Hibernate validates the schema
-(`ddl-auto: validate`) rather than creating it:
-
-```bash
-POSTGRES_HOST=localhost POSTGRES_USER=mosip POSTGRES_PASSWORD=... POSTGRES_DB=pad_liveness \
-  java -jar target/pad-liveness-backend-1.0.0-SNAPSHOT.jar
-```
-
-There is no Flyway Maven plugin configured; migrations are applied by the
-application at startup, and `spring.flyway.baseline-on-migrate: true` is set.
-
-### 5. Haar cascade data (bundled)
-
-Face detection needs OpenCV's `haarcascade_frontalface_default.xml` and
-`haarcascade_eye.xml`. OpenCV's Java bindings do not ship them, so they are
-**vendored in `src/main/resources/`** and loaded from the classpath (with a
-filesystem fallback). Both files retain their original Intel/OpenCV BSD-3-Clause
-licence header.
-
-If they are ever removed, the service does not fail — it silently reports
-`faceDetected: false` for every frame and no session can pass, logging a single
-clear warning on the first detection attempt. `ImageUtilsCascadeTest` fails the
-build in that case rather than letting it regress.
-
-A real face passes the pipeline end to end:
-
-```
-{"faceDetected": true, "faceQuality": 0.87, "livenessScore": 0.90,
- "padFlag": false, "action": "proceed", "message": "Liveness verified."}
-```
-
-### 6. With Docker (alternative)
-
-```bash
-# The image is built from the slim profile, so package it first:
-./mvnw clean package -DskipTests -Pslim
-
-cp .env.example .env      # edit credentials as needed
-docker compose up --build
-```
-
-The image drops the natives for platforms a container can never run, which takes
-it from ~620 MB to ~294 MB of layers. The base is Alpine (musl) and the OpenCV
-native is glibc-linked, so frame processing stays unavailable inside the container
-— the API, config/audit, rate limiting and the console all serve normally. Use
-the slim **jar** on a glibc host when you need the engine.
-
-To check the image path the same way CI does:
-
-```bash
-./scripts/smoke-docker.sh
-# health: {"status":"ok",...,"engine":"unavailable"}
-# image size: 293 MiB of layers (runs as 'mosip')
-```
-
-API available at `http://localhost:8000`, docs at `http://localhost:8000/swagger-ui.html`.
-
-## Tests and gates
-
-CI runs every gate below on each push and pull request, and each one is
-runnable locally — that is the point of listing them. Two of them live outside
-Maven because Maven cannot reach what they check:
-
-- `node src/test/js/console-guards.test.mjs` drives the real `index.html` and
-  `console.js` in a DOM and exercises the dirty marker, the per-field diff, the
-  discard guard and the unload warnings. The console is plain browser JS with no
-  build step, so a green Java suite says nothing about whether it is still
-  wired.
-- `./scripts/boot-median.sh` boots the packaged jar five times, each from a cold
-  OpenCV native cache, and fails if the median time to a serving `/health`
-  exceeds `BOOT_MEDIAN_MAX_SECONDS`. A new eager bean or an extra migration
-  ships green everywhere else and shows up only as "deployments are slow now".
-
-| Gate | Run it locally | CI job |
-| --- | --- | --- |
-| Java unit + integration suites | `./mvnw --batch-mode test` | *Unit tests*, *Integration tests* |
-| PostgreSQL schema gate (entities vs Flyway migrations) | `./mvnw --batch-mode test -Dtest='PostgresSchemaTest'` | *PostgreSQL schema gate* |
-| Cross-backend contract (one spent retry budget, both services) | `./mvnw --batch-mode test -Dtest='CrossBackendContractTest'` | *Cross-backend contract* |
-| Console DOM guards | `node src/test/js/console-guards.test.mjs` | *Console DOM tests* |
-| Project boundaries (guidance, instruction scope, documented gates) | `node scripts/check-project-boundaries.mjs` | *Project boundaries* |
-| Secret scan (committed credentials, keys, real biometrics) | `./scripts/check-secrets.sh` | *Secret scan* |
-| Packaged jar boots and serves | `./scripts/smoke-jar.sh` | *Package … jar* |
-| Windows launcher boots the full jar (JDK under a path with a space) | `pwsh -NoProfile -File ./scripts/smoke-windows-launcher.ps1` | *Windows launcher (full jar)* |
-| Jar size ceiling | `./scripts/check-jar-size.sh 'target/pad-liveness-backend-*-slim.jar' 110 'slim jar'` | *Package … jar* |
-| Cold boot time (median of 5) | `./scripts/boot-median.sh` | *Cold boot time (median)* |
-| Docker image boots, non-root, `/health` ok | `./scripts/smoke-docker.sh` | *Docker image* |
-| Python backend suite | see [pad_liveness_backend/README.md](pad_liveness_backend/README.md) | *Python liveness backend tests* |
-| Android client build gates | see [android_client/README.md](android_client/README.md) | *Android/Flutter client build* |
-
-The *Cross-backend contract* gate needs both toolchains on the machine running
-it: the Java test boots this service (H2, real OpenCV) and drives
-[pad_liveness_backend](pad_liveness_backend/)'s scenario script over a
-subprocess. Point `PAD_LIVENESS_PYTHON` at an interpreter with
-`pad_liveness_backend/requirements-dev.txt` installed (the default is
-`python3`); without one the test skips with the reason, and
-`PAD_LIVENESS_REQUIRE_PYTHON=1` — which CI sets — turns that skip into a
-failure instead.
-
-The *Project boundaries* gate keeps this table honest: it fails if a command
-documented here or in a project README is not run by a workflow, and equally if
-a workflow runs a gate that no document mentions. Adding a gate means writing it
-down and wiring it up in the same change.
-
-## Example flow (curl)
-
-```bash
-# 1. Create a session
-SESSION_ID=$(curl -s -X POST localhost:8000/api/v1/sessions \
+# 1. Open a session (policy is resolved and frozen here)
+SESSION_ID=$(curl -s -X POST $BASE/api/v1/sessions \
   -H "Content-Type: application/json" \
-  -d '{"workflowType":"RESIDENT","deviceId":"L1-CAM-01"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+  -d '{"workflowType":"RESIDENT","deviceId":"L1-CAM-01"}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
 
-# 2. Submit a frame (base64 JPEG)
-curl -s -X POST localhost:8000/api/v1/sessions/$SESSION_ID/frames \
+# 2. Stream frames (base64 JPEG). Keep going while action == retry_passive
+curl -s -X POST $BASE/api/v1/sessions/$SESSION_ID/frames \
   -H "Content-Type: application/json" \
   -d "{\"frameBase64\":\"$(base64 -w0 face.jpg)\"}"
 
-# If action == "escalate_to_active", prompt the user with `message`,
-# capture a short frame burst, then:
-curl -s -X POST localhost:8000/api/v1/sessions/$SESSION_ID/challenges/validate \
+# 3. Only if action == escalate_to_active: submit the burst for the issued challenge
+curl -s -X POST $BASE/api/v1/sessions/$SESSION_ID/challenges/validate \
   -H "Content-Type: application/json" \
-  -d "{\"challengeId\":\"<from previous response>\",\"framesBase64\":[\"<f1>\",\"<f2>\",\"<f3>\"]}"
+  -d '{"challengeId":"<from step 2>","framesBase64":["<f1>","<f2>","<f3>"]}'
 
-# 3. Check the audit trail
-curl -s localhost:8000/api/v1/sessions/$SESSION_ID/audit
+# 4. Close and read the audit trail
+curl -s -X POST $BASE/api/v1/sessions/$SESSION_ID/close
+curl -s $BASE/api/v1/sessions/$SESSION_ID/audit
 ```
 
-## Security
-
-Hardening built into the service (no extra dependencies):
-
-- **Accounts instead of a shared admin key** — `PUT /api/v1/config/{workflow}`,
-  `GET /api/v1/eval/threshold-sweep` and every route under `/api/v1/users`
-  require a session whose account holds `SUPERVISOR`. The check is
-  **fail-closed**: with no usable session it is 401, and with a session for the
-  smaller `OPERATOR` role it is 403, so an unauthenticated caller can never lower
-  `passiveThreshold` and defeat PAD. Reads stay open for clients.
-  ```bash
-  # sign in — the session arrives as an HttpOnly cookie, so a jar is all curl needs
-  curl -s -c jar.txt -X POST localhost:8000/api/v1/auth/login \
-    -H "Content-Type: application/json" \
-    -d '{"username":"$MOSIP_AUTH_BOOTSTRAP_USERNAME","password":"$MOSIP_AUTH_BOOTSTRAP_PASSWORD"}'
-  curl -s -b jar.txt -X PUT localhost:8000/api/v1/config/RESIDENT \
-    -H "Content-Type: application/json" \
-    -d '{"passiveThreshold": 0.85}'
-  ```
-  The session token is 256 bits, returned exactly once in a `Set-Cookie` header
-  (`HttpOnly`, `SameSite=Lax`) and never in a body; it is stored server-side as a
-  SHA-256 digest, so a database snapshot is not a set of usable sessions. Signing
-  out revokes it, a password change revokes every session the account held, and
-  expiry is a column rather than a job. See
-  [docs/configuration.md](docs/configuration.md#who-may-do-what-accounts-roles-and-the-operator-key).
-- **Operator key and the role probe** — `GET /api/v1/auth/role` reports which
-  role the caller proved, so the console can choose its surface from the service's
-  answer instead of guessing: a `SUPERVISOR` session → `{"role":"SUPERVISOR"}`,
-  an `OPERATOR` session or `X-Operator-API-Key` matching `MOSIP_OPERATOR_API_KEY`
-  → `{"role":"OPERATOR"}`, anything else → **401**. A key is never answered
-  `SUPERVISOR`. The comparisons are constant time and **fail closed** (a blank
-  operator key means nobody is ever answered `OPERATOR`, and an empty header never
-  matches one), and the response holds the role and nothing else — no credential,
-  not even a fingerprint of one. Key and sign-in attempts spend the existing
-  per-IP rate-limit budget (under their own `operator-key` and `auth-login`
-  buckets), so guessing is throttled rather than free.
-- **Policy edits are audited** — an account alone must not be enough to weaken
-  liveness silently. Each successful `PUT` writes a `CONFIG_CHANGED` entry in
-  the *same transaction* as the policy update: which workflow, which fields
-  actually moved with old → new values, `CREATED` vs `UPDATED`, the username of
-  the supervisor who made the edit (never a credential), and a **risk classification**
-  — an edit that lowers `passiveThreshold` or switches liveness (or active
-  liveness) off is flagged `HIGH`, with the weakening move named, so the
-  console shows the alert at a glance. Rejected requests record
-  nothing. Read it back with `GET /api/v1/config/audit?limit=50`, or in the
-  console's **Policy change history** panel.
-  ```bash
-  curl -s "localhost:8000/api/v1/config/audit?limit=5"
-  # one workflow only — filtered in the database, not in the browser
-  curl -s "localhost:8000/api/v1/config/audit?workflowType=OPERATOR"
-  ```
-- **The audit trail is tamper-evident, and optionally tamper-proof** — each
-  `CONFIG_CHANGED` row is chained (`prev_hash` → `entry_hash`), and PostgreSQL
-  rejects `UPDATE` / `DELETE` on `audit_logs` with triggers, so an edited row
-  invalidates its own hash and a deleted one leaves every successor pointing at
-  a hash that no longer follows. `GET /api/v1/config/audit/verify` walks the
-  whole chain and reports the first break, distinguishing an **edited** row
-  from a **deleted** one.
-  An unkeyed hash only stops attackers who do not rebuild the chain — anyone
-  with database write access can read the stored hashes and recompute them. Set
-  `MOSIP_AUDIT_HMAC_SECRET` (≥ 16 characters; shorter values fail at startup,
-  since a guessable key is no key) to key the hash with **HMAC-SHA-256** over
-  the same canonical form: the secret lives on the app server, not in the
-  database, so a rebuilt chain fails verification instead of verifying
-  perfectly. Left unset, the hash falls back to plain SHA-256 — tamper-detecting
-  only — and `/audit/verify` reports `"hmac": false` so the weaker mode is
-  visible rather than assumed. Keep the secret **stable**: without an explicitly
-  configured previous key, a rotated or missing secret reports old entries as
-  broken (fail loudly, never accept the downgrade). During a keyed rotation,
-  `MOSIP_AUDIT_HMAC_PREVIOUS_SECRET` lets verification accept old hashes while
-  new writes use the current key; `/audit/verify` and the console badge report
-  whether that key is configured and whether history still needs it. Rows are
-  immutable, so the previous key cannot be retired until history is archived or
-  re-keyed by a trusted process (not provided here); see `docs/configuration.md`.
-  ```bash
-  curl -s localhost:8000/api/v1/config/audit/verify
-  # {"eventType":"CONFIG_CHANGED","chainedEntries":5,"headHash":"…",
-  #  "hmac":true,"rotationWindowOpen":false,"retiredKeyHashes":false,
-  #  "intact":true}
-  ```
-- **Security headers on every response** (`SecurityHeadersFilter`):
-  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
-  `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy`,
-  `Permissions-Policy` (camera self-only), and a strict
-  `Content-Security-Policy` (`script-src 'self'`, `style-src 'self'`,
-  `frame-ancestors 'none'`) — the browser console now loads its script/style
-  from `static/console.js` / `static/console.css` so no `unsafe-inline` is
-  needed. Swagger UI is exempt from CSP only (its webjar boots inline).
-- **Request size limits** — POST/PUT bodies over `MAX_REQUEST_BODY_BYTES`
-  (default 24 MB) are rejected with 413 before reaching a controller; frame
-  DTOs cap each frame (`@Size`) and the decode step enforces payload and
-  dimension caps (decompression-bomb guard) and downscales oversized frames
-  to ≤1280 px before analysis.
-- **Rate limiting** (`RateLimitFilter`, in-memory fixed windows, no extra
-  dependency) — `POST /api/v1/sessions` is capped per client IP (default
-  30/min) and `POST .../frames` + `POST .../challenges/validate` share a
-  per-session budget (default 60 per 10 s), so one client or one session
-  cannot flood the service. Over-limit requests get `429` + `Retry-After` in
-  the standard error shape, before any body parsing or DB work. GETs are never
-  limited. **Budget headers**: every limited route also returns
-  `X-RateLimit-Bucket` (`session-create` / `frames`), `X-RateLimit-Limit`,
-  `X-RateLimit-Remaining` and `X-RateLimit-Reset` (seconds into the window) —
-  on *allowed* requests too, so a client can pace itself instead of only
-  discovering the limiter through a failure (they are in CORS
-  `Access-Control-Expose-Headers` for a console on another dev port). Tune via
-  `mosip.security.rate-limit.*` (or `SESSION_CREATE_LIMIT`, `FRAME_LIMIT`,
-  `RATE_LIMIT_ENABLED`).
-  **Behind a proxy or Docker**: the per-IP budget keys on the socket address by
-  default, so every client behind NAT collapses onto one budget. Set
-  `TRUSTED_PROXIES` to the proxy's IP or CIDR (e.g. `172.16.0.0/12,127.0.0.1`)
-  and the limiter reads `X-Forwarded-For` (right-to-left, skipping trusted hops)
-  then `X-Real-IP` — **only** from those peers. Forwarded headers from anyone
-  else are ignored, so a client cannot mint extra budgets by sending them; never
-  list a range that includes untrusted addresses. Frame budgets are keyed by
-  session id and are unaffected.
-- **CORS** is an allow-list of `localhost` origins via `allowedOriginPatterns`
-  (wildcard ports actually match now), methods limited to GET/POST/PUT,
-  credentials off.
-- **Error responses** never include stack traces or exception messages
-  (`server.error.include-*=never` plus the structured `GlobalExceptionHandler`).
-- **Containers**: the image runs as a non-root user, the JVM is capped with
-  `-XX:MaxRAMPercentage=50 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError`, and
-  PostgreSQL is published on `127.0.0.1` only.
-
-Create the first supervisor before exposing the service — on a brand-new
-database these two variables are the only way in, since every account is created
-by an account and there is not one yet:
+### Production-style run (PostgreSQL)
 
 ```bash
-export MOSIP_AUTH_BOOTSTRAP_USERNAME=supervisor
-export MOSIP_AUTH_BOOTSTRAP_PASSWORD=$(openssl rand -base64 24)
-# ...then sign in at /api/v1/auth/login and change that password. The bootstrap
-# only ever runs on a database with no accounts at all, so leaving the pair set
-# afterwards is a no-op rather than a backdoor.
-# keys the audit chain's hashes so a database-write attacker cannot rebuild it;
-# keep it stable across restarts. For keyed rotations, see docs/configuration.md
-# — immutable history may still require the previous key for verification.
-export MOSIP_AUDIT_HMAC_SECRET=$(openssl rand -hex 32)
+cp .env.example .env              # set POSTGRES_PASSWORD, MOSIP_AUDIT_HMAC_SECRET, ...
+docker compose up --build         # PostgreSQL 16 + the API
 ```
 
-## Notes on the spec's non-functional requirements
+> **Container caveat.** The Docker image is Alpine (musl) and the OpenCV native is glibc-linked, so **frame processing is unavailable inside the container**. `/health` reports `status: ok` but not `engine: available`. The API, policy, audit, rate limiting and console all work. Run the **jar on a glibc host** when you need the engine.
 
-- **Offline support**: this service is designed to run as a local process
-  on the Desktop/Android Registration Client host (or an embedded service
-  reachable without WAN connectivity) so liveness/PAD enforcement never
-  depends on network availability; only policy/model updates require
-  connectivity, and should be synced through a separate secure update
-  channel (out of scope for this scaffold).
-- **Vendor independence**: device integration is expected to sit upstream
-  of this service (Common Face Capture Device Interface / Device Adapter
-  pattern on the Registration Client side) — this service only consumes
-  decoded frames, so it works with any compliant L0/L1 device.
-- **ISO/IEC 30107 alignment**: replace the mock engines with a properly
-  evaluated model, and use the `io.mosip.liveness.eval` harness
-  (`AttackScenarioHarness`, `PadMetrics`, `ThresholdSweep`) over a labeled
-  corpus — including the per-PAI-species APCER breakdown in `ScenarioReport` —
-  to report APCER/BPCER/ACER during evaluation, as
-  [docs/backend-interoperability-report.md](docs/backend-interoperability-report.md)
-  does for the shipped backends.
+### First supervisor and policy writes
+
+On an empty database, set both bootstrap variables once. The account must change its password at first sign-in, and leaving the variables set afterwards is a no-op.
+
+```bash
+export MOSIP_AUTH_BOOTSTRAP_USERNAME=first-supervisor
+export MOSIP_AUTH_BOOTSTRAP_PASSWORD='<at least 12 characters>'
+export MOSIP_AUDIT_HMAC_SECRET=$(openssl rand -hex 32)   # >= 16 chars, keys the audit chain
+
+# Sign in; the session arrives as an HttpOnly cookie, never in a body
+curl -s -c jar.txt -X POST $BASE/api/v1/auth/login -H "Content-Type: application/json" \
+  -d "{\"username\":\"$MOSIP_AUTH_BOOTSTRAP_USERNAME\",\"password\":\"$MOSIP_AUTH_BOOTSTRAP_PASSWORD\"}"
+
+# Replace the bootstrap password (revokes the old session, issues a new cookie)
+curl -s -b jar.txt -c jar.txt -X POST $BASE/api/v1/auth/change-password \
+  -H "Content-Type: application/json" \
+  -d '{"currentPassword":"<bootstrap password>","newPassword":"<a longer replacement>"}'
+
+# Tune a threshold at runtime (SUPERVISOR session required; the edit is audited)
+curl -s -b jar.txt -X PUT $BASE/api/v1/config/RESIDENT \
+  -H "Content-Type: application/json" -d '{"passiveThreshold": 0.85}'
+```
+
+## Per-role policy
+
+The user type is chosen once, at session creation, and that workflow's policy is frozen on the session. A later `PUT /api/v1/config/{workflow}` affects only new sessions.
+
+| Workflow | Passive threshold | Challenges required | Challenge window | Retry budget | On budget exhausted |
+|---|---|---|---|---|---|
+| `RESIDENT` | 0.80 | 1 | 20 s | 3 | `ESCALATE_TO_OPERATOR` |
+| `OPERATOR` | 0.82 | 1 | 15 s | 2 | `FALLBACK` (new session allowed) |
+| `SUPERVISOR` | 0.85 | 2 | 15 s | 1 | `LOCK_OUT` |
+
+A resident may be physically assisted by an officer, so a failed resident check escalates to an operator. Operator and supervisor authentication never escalate to an operator. They fail or retry. The defaults are starting points. Calibrate them on real hardware.
+
+## API at a glance
+
+All session routes live under `/api/v1`. The full contract is in [docs/PRD.md](docs/PRD.md) §7 and the live Swagger UI.
+
+| Tier | Auth | Endpoints |
+|---|---|---|
+| **Client-facing** | none (session routes honour `X-Subject-Ref` ownership) | `POST /sessions` · `GET /sessions/{id}` · `POST /sessions/{id}/frames` · `POST /sessions/{id}/challenges/validate` · `POST /sessions/{id}/active-liveness` · `POST /sessions/{id}/close` · `GET /sessions/{id}/audit` · `GET /config/{workflow}` and `/effective` · `GET /config/audit` and `/audit/verify` · `GET /metrics` · `GET /diagnostics` (loopback, opt-in) · `GET /health` |
+| **Authenticated** | session cookie or `Bearer` | `GET /auth/me` · `POST /auth/change-password` · `POST /auth/logout` |
+| **Operator-keyed** | `X-Operator-API-Key` or an operator/supervisor session | `GET /auth/role` · `GET /sessions` (feed) · `GET /rejections` |
+| **Supervisor-only** | `SUPERVISOR` session, fail-closed | `PUT /config/{workflow}` · `GET /eval/threshold-sweep` · `GET/POST/PUT/DELETE /users` |
+
+Every error is `{"error", "message", "status", "timestamp"}`. Stack traces and exception text are never returned, and PAD failures show only a generic message.
+
+## Security model
+
+- **Fail-closed admin surface.** Policy writes, threshold sweeps and user management need a `SUPERVISOR` session. No session gives `401`, a smaller role gives `403`. Each policy edit is attributed to a named account and risk-classified (`HIGH` when it lowers the threshold or disables a check).
+- **Tokens never rest in the clear.** 256-bit CSPRNG token, delivered once in an `HttpOnly; SameSite=Lax` cookie and stored only as a SHA-256 digest. Sign-in failures are one generic `401`, and an unknown username still pays a full BCrypt verification, so the endpoint is neither a username nor a timing oracle.
+- **Keyed audit chain.** Hashes are HMAC-SHA-256 under a secret held outside the database, so an attacker with database write access cannot rebuild history. `GET /config/audit/verify` reports `hmac: true/false`, so the weaker unkeyed mode is never mistaken for the keyed one.
+- **Abuse resistance.** Per-IP session-create, sign-in and operator-key limits plus a per-session frame budget, with trusted-proxy-aware client IPs. A 24 MiB body cap and frame byte, dimension and pixel caps apply.
+- **Strict headers.** Strict self-only CSP, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and `Permissions-Policy`.
+- **Privacy.** Responses carry derived signals only. Frames are never persisted, and metrics are anonymised aggregates.
+- **Session ownership.** A session created with `subjectRef` answers only callers presenting it in `X-Subject-Ref`. This isolates honest clients from each other and is **not** authentication, so keep the service on loopback or behind the host's authenticated transport.
+- **Injection attacks** (virtual camera, hooked camera API, frame replay) are modelled as a separate threat class with layered countermeasures and explicit residual risk in [docs/design.md](docs/design.md) §6.
+
+## Evaluation and ISO/IEC 30107
+
+The `io.mosip.liveness.eval` harness reports **APCER, BPCER and ACER**, with APCER broken out per presentation-attack-instrument species (printed photo, screen replay, video replay). `GET /api/v1/eval/threshold-sweep` evaluates the same median-window decision the live path uses and recommends the strictest threshold within a BPCER budget. APCER is reported as `null`, never a fabricated zero, when no attack data exists.
+
+> **This is not a certified PAD.** The repository ships methodology and tooling. The bundled MiniFASNet-V2 model is a reference integration, and self-testing is not certification. Attack data is a **proxy corpus** (simulated degradations, labelled `attackDataIsProxy: true`) until real print, screen and replay captures exist. Replace the reference scorer with a properly evaluated model or vendor SDK, and re-measure thresholds on real capture hardware, before making production claims.
+
+## Performance
+
+Measured, not estimated. Host: Intel Core i3-1005G1 (2 cores / 4 threads), 7.7 GiB RAM, OpenJDK 17, ONNX backend, `dev` profile, and a **busy shared machine**. Target hardware is 2 cores / 2 GB, so treat these as a baseline for comparison, not a guarantee. Method and caveats are in [docs/performance-baseline.md](docs/performance-baseline.md).
+
+| Metric | Result |
+|---|---|
+| Cold boot to `/health` (median of 5, cold OpenCV cache) | **58.3 s** (budget 120 s) |
+| Slim jar / full jar | **89.4 MiB** / 200.7 MiB (ceilings 110 / 245) |
+| Per-frame cost at the SPI, distinct frames | **61.8 ms** mean, ~16 fps (was 160.9 ms before the one-detection-one-inference fix) |
+| Per-frame pipeline over HTTP, distinct payloads | **167.8 ms** server-side (was 304.7 ms) |
+| Console frame payload | **12 KB** per frame (was 42.9 KB): 640 px long edge, JPEG q0.7, 8 frames/s ceiling |
+| `--lowmem` on 2 pinned cores | boot 23.1 s → 19.0 s, RSS 314 MB → 277 MB |
+
+The capture-budget change reduces margin as well as cost. On one fixture the passive score fell from 0.9495 to 0.8555, still above the 0.80 threshold, with decision fields unchanged. That trade-off is documented rather than hidden.
+
+## Console and client UX
+
+One state machine drives every surface, and all of them render the same states and the same i18n message keys.
+
+- **Browser console** (`src/main/resources/static/`): plain JS with no build step, a "modern institutional" design system with a dark palette, a role-aware entry tab (supervisor → Policy, operator → Sessions), an in-page credential dialog (no `window.prompt`) and a diff-aware policy editor. The screen never asserts what it has not read: unknown values say `UNKNOWN`, and placeholders are tagged `SAMPLE`.
+- **Desktop (JavaFX):** `LivenessChallengeOverlay` (FXML + CSS), headless-smoke-tested on Monocle.
+- **Android (Flutter):** `LivenessView` with a Pigeon bridge, a CameraX frame source, a keystore-backed evidence signer and signed model manifests.
+- **No technical exposure.** The UI shows generic, localised messages only. Scores, PAD detail and model internals live in the audit trail.
+
+## Pluggable backends
+
+Everything depends on one seam, selected by the single key `mosip.liveness.backend`.
+
+```java
+String id();
+void initialize(Map<String, String> options);
+FaceSignals analyzeFrame(Frame frame);
+double scorePassiveLiveness(Frame frame, FaceSignals signals);
+PadVerdict assessPad(Frame frame, FaceSignals signals);
+void shutdown();
+```
+
+| Backend | Notes |
+|---|---|
+| `onnx-minifasnet-v2` | **Default** (`auto`). Bundled 1.7 MB model, SHA-256 verified on load, live class is output index 1, input is raw 0–255 BGR |
+| `mock` | Scripted and deterministic, for CI and the attack harness |
+| `mediapipe-facemesh` | 468-point landmarks. Needs the TFLite runtime and model, which are not bundled |
+| `tflite-minifasnet` | Android and embedded only. The TFLite runtime has no desktop-JVM interpreter |
+
+Explicit backends never silently fall back. An unavailable one fails closed with a coded error, and an unknown value stops startup. See [docs/backend-swapping.md](docs/backend-swapping.md) and the measured [interoperability report](docs/backend-interoperability-report.md).
+
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `src/`, `pom.xml` | **The active codebase.** Spring Boot service and shared engine (156 main classes, 76 test classes) |
+| `android_client/` | Pinned Flutter 3.10.4 / Dart 3.0.3 harness, Pigeon bindings, CameraX source. Not the full Registration Client |
+| `pad_liveness_backend/` | Independent FastAPI + PostgreSQL reference implementation (Python 3.12, Alembic), not wired into the Java build |
+| `training/` | Workstation-only synthetic-data pipeline for MiniFASNet. No real faces, not in CI |
+| `docs/` | Cross-project documentation (below) |
+| `scripts/` | Repo gates: boundary check, jar smoke, jar size, cold-boot median, Docker and Windows-launcher smoke |
+
+Inside `io.mosip.liveness`: `api/` (controllers and filters), `auth/`, `services/`, `engine/` (embedded state machine), `backend/` (the SPI), `challenge/`, `config/`, `audit/`, `device/` (SBI stream, burst capture and mock L0/L1 device), `eval/`, `client/` and `android/`.
+
+## Testing and CI
+
+```bash
+./mvnw --batch-mode test                         # Java unit + integration (76 test classes)
+node src/test/js/console-guards.test.mjs        # console DOM guards, no Maven needed
+node scripts/check-project-boundaries.mjs       # docs-vs-CI consistency gate
+cd pad_liveness_backend && python -m pytest -q   # 46 Python tests
+```
+
+Fourteen CI jobs cover unit and integration, console DOM guards, project boundaries, secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging, a Windows launcher smoke test (JDK under a path with a space), the Docker image, a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, and tagged releases. Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
+
+## Configuration essentials
+
+Everything is overridable by environment variable. See [docs/configuration.md](docs/configuration.md) for the full reference.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `POSTGRES_PASSWORD` | **required** (default profile) | Database password. Never commit it |
+| `MOSIP_AUDIT_HMAC_SECRET` | empty | Keys the audit chain, minimum 16 chars (blank falls back to plain SHA-256, tamper-*detecting* only) |
+| `MOSIP_AUTH_BOOTSTRAP_USERNAME` / `_PASSWORD` | empty | First supervisor on an empty database, password ≥ 12 chars |
+| `MOSIP_OPERATOR_API_KEY` | blank (operator routes refuse everyone) | Read-only operator feeds, minimum 16 chars |
+| `MOSIP_AUTH_COOKIE_SECURE` | `false` | Set `true` behind TLS |
+| `SERVER_PORT` | `8000` | HTTP port |
+| `mosip.liveness.backend` | `auto` | Scoring backend selection |
+| `mosip.liveness.passive-threshold` | `0.80` | Calibrate with the sweep endpoint |
+| `LIVENESS_DIAGNOSTICS_ENABLED` | `false` | Loopback-only diagnostics, identical `404` otherwise |
+
+Use synthetic values only in examples, and keep live keys and real biometrics out of source, tests, logs and docs.
+
+## Known limitations
+
+Stated up front, because a liveness service that overclaims is worse than one that does not exist.
+
+- The bundled model is a reference integration and is not field-evaluated. There is no physical-presentation corpus yet.
+- Host integration against a real MOSIP Registration Client is **unvalidated**. The Android project is a build harness and fragment set.
+- No physical L0/L1 vendor-device matrix has been run, and there are no on-device benchmarks for the Android optimisation or hardware-acceleration work.
+- Compromised-camera injection is out of ISO/IEC 30107 scope. The residual risk is documented, not eliminated.
+- Open compliance items: the operator/supervisor face-auth assumption (MOSIP docs describe username/password), the Android SBI intent transport (blocked on a vendor answer), and the desktop 4501–4600 discovery scan.
+- Java (0.80) and Python (0.75) default thresholds differ, so bring them to one operating point deliberately before treating the two services as interchangeable.
+- Audit-chain key rotation has no re-key operation, so the previous secret must stay configured while historical hashes need it.
+
+## Documentation
+
+| Document | Covers |
+|---|---|
+| [docs/PRD.md](docs/PRD.md) | Product requirements and full system reference |
+| [docs/design.md](docs/design.md) | Architecture, frame pipeline, ISO alignment, injection threat model |
+| [docs/configuration.md](docs/configuration.md) | Policy, audit chain, accounts and roles, `--lowmem` |
+| [docs/client-integration-guide.md](docs/client-integration-guide.md) | Wiring the Desktop and Android Registration Clients |
+| [docs/ui-ux-design.md](docs/ui-ux-design.md) | Interaction model, message catalogue, console design system |
+| [docs/backend-swapping.md](docs/backend-swapping.md) | Replacing the scorer, including licensed SDKs |
+| [docs/backend-interoperability-report.md](docs/backend-interoperability-report.md) | Measured mock/ONNX/MediaPipe comparison |
+| [docs/performance-baseline.md](docs/performance-baseline.md) | Measured boot, memory, latency and payload numbers |
+| [docs/resource-compliance.md](docs/resource-compliance.md) | Audit against ISO 30107-1/-3, ISO 19794-5 and the MOSIP specs |
+| [docs/acceptance-audit.md](docs/acceptance-audit.md) | Task checklist vs implementation |
+| [docs/known-quirks.md](docs/known-quirks.md) | Intentional behaviours that look like bugs |
+| [docs/brain.md](docs/brain.md) | Long-form codebase walkthrough |
+
+## Contributing
+
+Keep a public contract and its documentation in sync in the same change, never weaken a check to make it pass, and run `node scripts/check-project-boundaries.mjs` after editing guidance, a README or a workflow. Per-project `AGENTS.md` files are authoritative for how to change each project.
+
+## Context
+
+Built for MOSIP Problem Statement 04, *Face Liveness Detection and Presentation Attack Detection*.
+
+## License
+
+<!-- TODO: add a LICENSE file and state it here before publishing. -->
+Third-party: the bundled MiniFASNet-V2 model is Apache-2.0.
