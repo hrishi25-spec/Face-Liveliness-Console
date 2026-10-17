@@ -34,3 +34,8 @@ target/
 
 # Local README preview output — regenerate with python .readme-preview/build_preview.py
 .readme-preview/readme.html
+
+.claude/
+.claude-flow/
+.freebuff/
+.readme-preview/
