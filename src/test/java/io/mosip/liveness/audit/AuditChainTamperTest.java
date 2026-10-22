@@ -5,7 +5,7 @@ import io.mosip.liveness.models.enums.WorkflowType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,7 +13,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -218,6 +217,12 @@ class AuditChainTamperTest {
     void rehashingAloneDoesNotRepairTheChain() {
         seedChain(3);
         AuditLog middle = chain().get(1);
+        // The exact stored row, column for column: the restore below must not
+        // pass through JPA, which could re-derive the hash and turn this into a
+        // test of nothing.
+        Map<String, Object> stored = jdbc.queryForMap(
+                "SELECT session_id, event_type, workflow_type, details, prev_hash, entry_hash, "
+                        + "created_at FROM audit_logs WHERE id = ?", middle.getId());
         jdbc.update("DELETE FROM audit_logs WHERE id = ?", middle.getId());
         entityManagerClear();
 
@@ -226,15 +231,18 @@ class AuditChainTamperTest {
         // Putting the row back with its old hash cannot fix anything: the
         // successor is chained to a hash that no longer exists, so the walk
         // still cannot get past the gap.
-        repo.saveAndFlush(AuditLog.builder()
-                .id(middle.getId())
-                .eventType(middle.getEventType())
-                .workflowType(middle.getWorkflowType())
-                .details(middle.getDetails())
-                .prevHash(middle.getPrevHash())
-                .entryHash(middle.getEntryHash())
-                .createdAt(middle.getCreatedAt())
-                .build());
+        //
+        // Raw SQL, not repo.saveAndFlush: Hibernate 7 throws
+        // StaleObjectStateException when merge() is handed a detached entity
+        // whose assigned id has no row, where Hibernate 6 inserted it. The
+        // chain logic under test does not depend on which of the two wrote the
+        // row, and the exact bytes are what has to come back.
+        jdbc.update("INSERT INTO audit_logs "
+                        + "(id, session_id, event_type, workflow_type, details, prev_hash, entry_hash, created_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                middle.getId(), stored.get("session_id"), stored.get("event_type"),
+                stored.get("workflow_type"), stored.get("details"), stored.get("prev_hash"),
+                stored.get("entry_hash"), stored.get("created_at"));
         entityManagerClear();
 
         assertTrue(AuditChain.verify(chain(), UNKEYED).isEmpty(),
@@ -406,8 +414,9 @@ class AuditChainTamperTest {
     @DisplayName("the repository reports the newest chained entry as the link target")
     void headLookupSkipsUnchainedLegacyRows() {
         // A legacy row: no hashes at all, as written before V9.
+        // No assigned id: Hibernate 7's merge() rejects a detached entity whose
+        // id has no row, and this row is meant to be a fresh insert.
         repo.saveAndFlush(AuditLog.builder()
-                .id(UUID.randomUUID())
                 .eventType(AuditEventType.CONFIG_CHANGED.name())
                 .workflowType(WorkflowType.OPERATOR)
                 .details(Map.of("workflowType", "OPERATOR"))

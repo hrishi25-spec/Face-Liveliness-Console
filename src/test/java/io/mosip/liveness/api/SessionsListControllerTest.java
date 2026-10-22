@@ -1,8 +1,8 @@
 package io.mosip.liveness.api;
 
 import io.mosip.liveness.testing.AuthTestFixture;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import io.mosip.liveness.config.WorkflowPolicyDefaults;
 import io.mosip.liveness.crud.LivenessSessionRepository;
 import io.mosip.liveness.models.entity.LivenessSession;
@@ -13,7 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -163,7 +163,7 @@ class SessionsListControllerTest {
 
         JsonNode row = objectMapper.readTree(body).get(0);
         Set<String> fields = new TreeSet<>();
-        row.fieldNames().forEachRemaining(fields::add);
+        row.propertyNames().forEach(fields::add);
         assertEquals(Set.of("id", "workflowType", "deviceId", "status", "currentStage",
                         "retryCount", "finalResult", "failureReason", "createdAt", "closedAt"),
                 fields, "the feed returns these fields and no others: " + body);

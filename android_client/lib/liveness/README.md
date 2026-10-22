@@ -6,6 +6,12 @@
   orchestrator state machine; exposes `captureEnabled` (PASSED + valid gate).
 - `liveness_view.dart` — widget rendering preview, oval overlay, challenge
   prompts, hints, generic failure messages; all text resolved from i18n keys.
+  Its state→UI mapping, retry/lockout rules and message catalogue are the twin
+  of the Desktop `LivenessOverlayPresenter`: same cards per state, Retry only
+  in `ATTEMPT_FAILED` / `RETRY_WAIT` / recoverable `DEVICE_ERROR`, recovery
+  guidance with no retry on `TERMINAL_FAILURE`, a ticking `LOCK_OUT`
+  countdown, localised Retry/Cancel, and the `liveness.challenge.index`
+  template. An unknown state renders nothing, as the Desktop overlay hides.
 
 Wire-up sketch (resident capture screen):
 

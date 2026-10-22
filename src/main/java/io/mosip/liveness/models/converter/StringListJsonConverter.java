@@ -1,13 +1,14 @@
 package io.mosip.liveness.models.converter;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Persists a {@code List<String>} as a JSON array in a text column, e.g.
@@ -23,7 +24,8 @@ import java.util.List;
 @Converter
 public class StringListJsonConverter implements AttributeConverter<List<String>, String> {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** Stateless and immutable in Jackson 3, so one shared mapper is safe. */
+    private static final JsonMapper MAPPER = JsonMapper.shared();
     private static final TypeReference<List<String>> LIST_OF_STRING = new TypeReference<>() {};
 
     @Override
@@ -33,7 +35,7 @@ public class StringListJsonConverter implements AttributeConverter<List<String>,
         }
         try {
             return MAPPER.writeValueAsString(attribute);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalArgumentException("Cannot serialise challenge types to JSON", e);
         }
     }
@@ -45,7 +47,7 @@ public class StringListJsonConverter implements AttributeConverter<List<String>,
         }
         try {
             return new ArrayList<>(MAPPER.readValue(dbData, LIST_OF_STRING));
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalArgumentException(
                     "Cannot deserialise challenge types from JSON: " + dbData, e);
         }

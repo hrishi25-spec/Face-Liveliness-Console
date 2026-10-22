@@ -1,11 +1,12 @@
 package io.mosip.liveness.models.converter;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.mosip.liveness.config.EffectivePolicy;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Persists a frozen {@link EffectivePolicy} as a JSON object in a text column.
@@ -19,11 +20,13 @@ import jakarta.persistence.Converter;
 @Converter
 public class EffectivePolicyJsonConverter implements AttributeConverter<EffectivePolicy, String> {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper()
+    private static final JsonMapper MAPPER = JsonMapper.builder()
             // The snapshot is written by this class and read back by this class;
             // unknown fields are tolerated so an older row still loads after a
-            // policy field is added.
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            // policy field is added. Jackson 3 mappers are immutable, so the
+            // setting belongs on the builder — ObjectMapper.configure() is gone.
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
 
     @Override
     public String convertToDatabaseColumn(EffectivePolicy attribute) {
@@ -32,7 +35,7 @@ public class EffectivePolicyJsonConverter implements AttributeConverter<Effectiv
         }
         try {
             return MAPPER.writeValueAsString(attribute);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalArgumentException("Cannot serialise effective policy to JSON", e);
         }
     }
@@ -44,7 +47,7 @@ public class EffectivePolicyJsonConverter implements AttributeConverter<Effectiv
         }
         try {
             return MAPPER.readValue(dbData, EffectivePolicy.class);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalArgumentException(
                     "Cannot deserialise effective policy from JSON: " + dbData, e);
         }

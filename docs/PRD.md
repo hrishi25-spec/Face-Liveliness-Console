@@ -4,7 +4,7 @@
 [MOSIP](https://mosip.io/) Registration Client
 **Artifact:** `io.mosip.liveness:pad-liveness-backend` (Spring Boot fat jar / Docker image)
 **Version:** `${revision}`, `1.0.0-SNAPSHOT` by default; release tags stamp the version
-**Runtime:** Java 17+ (CI builds and tests on 17; the Mockito/ByteBuddy test stack does not run on 25 yet), Spring Boot 3.3.3, native OpenCV, optional ONNX / MediaPipe / TFLite backends (artifact bytecode remains Java 17-compatible for the MOSIP Android host)
+**Runtime:** Java 17+ (CI builds and tests on 17; the Mockito/ByteBuddy test stack does not run on 25 yet), Spring Boot 4.1.1, native OpenCV, optional ONNX / MediaPipe / TFLite backends (artifact bytecode remains Java 17-compatible for the MOSIP Android host)
 **Default branch:** `development`
 
 This document is a **self-contained product requirements and system reference**: what the
@@ -835,10 +835,13 @@ parallel, independent jobs so one failure cannot cancel the other.
 | Gate | Script | Enforces |
 | --- | --- | --- |
 | Project boundaries | `node scripts/check-project-boundaries.mjs` | Guidance per project, project-map entries, no cross-scope toolchain instructions, **every documented verification command actually runs in CI**, and **every CI gate is documented**. |
+| systemd floor | `./scripts/smoke-systemd-compat.sh` | Boots the unit on the oldest supported systemd (Debian 11 / Ubuntu 22.04 in containers) and fails when that host would silently ignore a directive: every property must exist with the declared value, and the service must still answer `/health` and restart. The kernel floor (5.8) is a precondition of the gate. |
+| Documentation links | `node scripts/check-doc-links.mjs` | Every relative markdown link resolves from the file that contains it (so a root-relative path written inside `docs/` is reported), and every `#heading` anchor matches a heading in the target, with GitHub's duplicate suffixes. External URLs are not fetched. |
 | Java imports | `node scripts/check-java-imports.mjs` | Every `io.mosip.liveness.*` import under `src` names a source file that declares it, annotated with the commit that removed the class and a `git show` restore command. |
 | Java packages | `node scripts/check-java-packages.mjs` | Every Java file's declared package matches its directory; a package declaration at a source root is rejected. |
 | Secret scan | `./scripts/check-secrets.sh` | The checkout and its history carry no committed credential, private key or production identifier. |
-| Packaged jar boots | `./scripts/smoke-jar.sh` | The fat jar boots and reports the engine available. |
+| Release publish rehearsal | `./scripts/release-assets.sh rehearse` | Staging, checksum, asset-count and stamped-name guards, plus the exact `gh` argv for create, upload and canary — with no tag, token or network; the same script publishes the real release. |
+| Packaged jar boots | `./scripts/smoke-jar.sh` | The jar's `BOOT-INF/lib` matches the runtime classpath `pom.xml` resolves (nothing dropped, nothing leaked), then the fat jar boots and reports the engine available. |
 | Windows launcher | `pwsh -NoProfile -File ./scripts/smoke-windows-launcher.ps1` | The full jar boots through `start.bat` on Windows — JDK probe, port check, `/health` wait and engine report — with a JDK under a path with a space. |
 | Jar size | `./scripts/check-jar-size.sh 'target/pad-liveness-backend-*-slim.jar' 110 'slim jar'` | Size ceilings (110 MiB slim / 245 MiB full — pass the pattern, ceiling and label). |
 | Cold boot median | `./scripts/boot-median.sh` | Median of 5 cold-cache boots under budget. |

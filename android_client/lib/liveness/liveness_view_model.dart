@@ -20,9 +20,13 @@ enum LivenessUiState {
   aborted,
 }
 
+/// Unknown or null state names fail closed to [LivenessUiState.idle], which
+/// renders nothing — the same fallback as the Desktop overlay presenter, which
+/// hides itself rather than inventing a device error for an event it does not
+/// understand.
 LivenessUiState uiStateFrom(String? name) => LivenessUiState.values.firstWhere(
       (state) => state.name.toUpperCase() == (name ?? '').toUpperCase(),
-      orElse: () => LivenessUiState.deviceError,
+      orElse: () => LivenessUiState.idle,
     );
 
 /// Small host seam for the generated Pigeon client and the no-host harness.

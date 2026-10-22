@@ -1,7 +1,5 @@
 package io.mosip.liveness.api;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.mosip.liveness.crud.LivenessSessionRepository;
 import io.mosip.liveness.models.entity.LivenessSession;
 import io.mosip.liveness.models.enums.SessionStatus;
@@ -11,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.Optional;
 import java.util.UUID;

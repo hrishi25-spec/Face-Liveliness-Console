@@ -97,12 +97,12 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 | Tool | Version | Purpose |
 |------|---------|---------|
 | **Java** | 17 | Runtime language |
-| **Spring Boot** | 3.3.3 | Web framework, DI, JPA, validation |
+| **Spring Boot** | 4.1.1 | Web framework, DI, JPA, validation |
 | **Spring Data JPA** | (via starter) | ORM / database access |
 | **Hibernate** | (via starter) | JPA implementation |
 | **Flyway** | (via starter) | Database migration management |
 | **Lombok** | (latest) | Boilerplate reduction (@Data, @Builder, etc.) |
-| **SpringDoc OpenAPI** | 2.6.0 | Swagger UI / API documentation |
+| **SpringDoc OpenAPI** | 3.1.1 | Swagger UI / API documentation |
 
 ### Computer Vision & ML
 | Tool | Version | Purpose |
@@ -120,9 +120,9 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 ### Testing
 | Tool | Version | Purpose |
 |------|---------|---------|
-| **JUnit Jupiter** | 5.10.2 | Unit and integration testing |
+| **JUnit Jupiter** | 6.0.3 | Unit and integration testing |
 | **Spring Boot Test** | (via starter) | MockMvc, @WebMvcTest, test context |
-| **Maven Surefire** | 3.2.5 | Test runner |
+| **Maven Surefire** | 3.6.0 | Test runner |
 
 ### DevOps
 | Tool | Version | Purpose |

@@ -41,11 +41,11 @@ There is no `ConfigAuditController`, no `EvalController`, no `ThresholdSweepResu
 The document's flagship security claim is `PUT /api/v1/config/{workflowType}` protected by a fail-closed `X-Admin-API-Key`.
 
 * **`X-Admin-API-Key` appears nowhere in the repository** (`grep -r "X-Admin"` → 0 hits, checked on `development`, `main`, `master`, `stagging` and the sibling clone).
-* `ConfigController.setPolicy` ([ConfigController.java:49-52](src/main/java/io/mosip/liveness/api/ConfigController.java#L49-L52)) performs **no authentication at all** — it validates, writes, and returns.
+* `ConfigController.setPolicy` ([ConfigController.java:49-52](../src/main/java/io/mosip/liveness/api/ConfigController.java#L49-L52)) performs **no authentication at all** — it validates, writes, and returns.
 * **Verified:** `PUT /api/v1/config/RESIDENT` with **no** auth header and body `{"passiveThreshold":0.85}` → **`200`**, and the stored policy really changed to `0.85`. The document says this must be `403` and must change nothing.
 * No `mosip.security.admin-api-key` property, no `MOSIP_ADMIN_API_KEY`, no `MessageDigest.isEqual` comparison, no key fingerprint, no `CONFIG_CHANGED` audit row.
-* The document's claim that a weakening edit records `risk.level = HIGH` with reasons cannot happen: audit rows are session-scoped (`audit_logs.session_id` is `NOT NULL`, see [V1__init_schema.sql](src/main/resources/db/migration/V1__init_schema.sql)), so a config change **cannot** be recorded in the audit table even if someone wanted to.
-* `FORBIDDEN` (403) is present in the error-code switch in [GlobalExceptionHandler.java:61](src/main/java/io/mosip/liveness/api/GlobalExceptionHandler.java#L61) but **nothing in the API throws it** — it is unreachable.
+* The document's claim that a weakening edit records `risk.level = HIGH` with reasons cannot happen: audit rows are session-scoped (`audit_logs.session_id` is `NOT NULL`, see [V1__init_schema.sql](../src/main/resources/db/migration/V1__init_schema.sql)), so a config change **cannot** be recorded in the audit table even if someone wanted to.
+* `FORBIDDEN` (403) is present in the error-code switch in [GlobalExceptionHandler.java:61](../src/main/java/io/mosip/liveness/api/GlobalExceptionHandler.java#L61) but **nothing in the API throws it** — it is unreachable.
 
 The document's `audit_chain_integrity` scheme (HMAC-SHA-256 keyed chain, `minimum_length: 16`, `GET …/audit/verify` reporting `hmac: true/false`) has no counterpart in the code: there are no `prev_hash`/`hash` columns and no chain verifier.
 
@@ -70,7 +70,7 @@ curl -s -D - -o /dev/null .../health | grep -iE 'content-security|x-frame|x-cont
 
 So `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy` and the strict CSP (with the "Swagger UI exempt from CSP only" carve-out) are all invented.
 
-**CORS is documented wrong *and* is broken in the code.** [AppConfig.java:119](src/main/java/io/mosip/liveness/app/config/AppConfig.java#L119) uses `allowedOrigins("http://localhost:*", "http://127.0.0.1:*")`. In Spring, wildcard *patterns* require `allowedOriginPatterns`, so those are treated as two **literal** origins. Verified:
+**CORS is documented wrong *and* is broken in the code.** [AppConfig.java:119](../src/main/java/io/mosip/liveness/app/config/AppConfig.java#L119) uses `allowedOrigins("http://localhost:*", "http://127.0.0.1:*")`. In Spring, wildcard *patterns* require `allowedOriginPatterns`, so those are treated as two **literal** origins. Verified:
 
 | Origin sent | Preflight `OPTIONS /api/v1/sessions` |
 |---|---|
@@ -87,7 +87,7 @@ Consequences: (a) the document's `allowed_origin_patterns` claim is false; (b) a
 | Documented | Reality |
 |---|---|
 | `max_request_body_bytes: 25165824` rejected with **413 `PAYLOAD_TOO_LARGE`** by `SecurityHeadersFilter` | **No body-size filter and no 413 anywhere.** A 26 MB body produced **400** `VALIDATION_ERROR` ("Request body is malformed or unreadable"); 9 MB produced **422** `INVALID_FRAME` |
-| `frame_payload.max_base64_chars_per_frame: 8000000`, `enforced_by: @Size`, violation **400** | `FrameSubmitRequest.frameBase64` carries only `@NotBlank` ([FrameSubmitRequest.java:19](src/main/java/io/mosip/liveness/dto/FrameSubmitRequest.java#L19)). The **real** ceiling is Jackson's `StreamReadConstraints` default max string length: verified 19,900,000 chars → `422` (reached the decoder) vs 21,000,000 chars → `400`. That is an undocumented ~20 M-char limit, nothing like 8 M |
+| `frame_payload.max_base64_chars_per_frame: 8000000`, `enforced_by: @Size`, violation **400** | `FrameSubmitRequest.frameBase64` carries only `@NotBlank` ([FrameSubmitRequest.java:19](../src/main/java/io/mosip/liveness/dto/FrameSubmitRequest.java#L19)). The **real** ceiling is Jackson's `StreamReadConstraints` default max string length: verified 19,900,000 chars → `422` (reached the decoder) vs 21,000,000 chars → `400`. That is an undocumented ~20 M-char limit, nothing like 8 M |
 | `challenge_validation_frame_count: max 60`, violation **400** | No `@Size` on `ChallengeValidateRequest.framesBase64` (only `@NotEmpty`, so `min: 1` is the one part that is real). Verified: a 61-element burst is **not** rejected on count — it passed validation and failed later with `404 NOT_FOUND` for the fake challenge id |
 | `decoded_frame: max 6000000 bytes / 8192 px / 40000000 pixels`, violation **422 `INVALID_FRAME`** | No byte, dimension or pixel cap exists in `ImageUtils.decodeBase64Frame`; there is no `MAX_DIM`/`maxPixels` constant anywhere |
 | "frames larger than 1280px on the long edge are downscaled before analysis" | No downscale in the request path at all. The only `resize` calls in the repo are inside the unused `backend/MediaPipeFaceMeshBackend` |
@@ -98,15 +98,15 @@ Consequences: (a) the document's `allowed_origin_patterns` claim is false; (b) a
 
 These are the claims an integrator would actually build against.
 
-| Documented behaviour | Code ([DecisionEngineService.java](src/main/java/io/mosip/liveness/services/DecisionEngineService.java)) |
+| Documented behaviour | Code ([DecisionEngineService.java](../src/main/java/io/mosip/liveness/services/DecisionEngineService.java)) |
 |---|---|
-| Session creation **freezes the workflow policy** and returns it as `SessionResponse.policy` | **No snapshot.** `SessionsController.createSession` stores only workflow/device/subjectRef/online. Verified: the created session body has no `policy` field. The policy is re-read from the DB on **every frame** ([line 55](src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L55)), so a config edit **does** affect in-flight sessions — the opposite of the documented guarantee |
+| Session creation **freezes the workflow policy** and returns it as `SessionResponse.policy` | **No snapshot.** `SessionsController.createSession` stores only workflow/device/subjectRef/online. Verified: the created session body has no `policy` field. The policy is re-read from the DB on **every frame** ([line 55](../src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L55)), so a config edit **does** affect in-flight sessions — the opposite of the documented guarantee |
 | Session creation validates cross-field invariants and returns **400 `BAD_REQUEST`** | No `EffectivePolicyValidator` exists; no invariant is checked at session creation |
-| Passive decision uses the **median** of the last `passiveWindowFrames` scores after `passiveMinFrames` (cold start returns `retry_passive`) | **No median, no window, no cold start.** A **single** frame's score is compared to the threshold ([line 126](src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L126)). `passiveMinFrames`/`passiveWindowFrames`/`minFaceQuality` are hard-coded to 5/7/0.50 in `ConfigService` and never consulted by the HTTP path. *The median-window logic does exist — in `io.mosip.liveness.engine`, which is referenced only by itself, the eval harness and tests, never by `api/` or `services/`* |
-| PAD rejects only on a **confirmed** attack (current frame + preceding one); the first flagged frame returns `retry_passive` | **Single-frame reject** ([line 97](src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L97)). No two-frame confirmation anywhere |
+| Passive decision uses the **median** of the last `passiveWindowFrames` scores after `passiveMinFrames` (cold start returns `retry_passive`) | **No median, no window, no cold start.** A **single** frame's score is compared to the threshold ([line 126](../src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L126)). `passiveMinFrames`/`passiveWindowFrames`/`minFaceQuality` are hard-coded to 5/7/0.50 in `ConfigService` and never consulted by the HTTP path. *The median-window logic does exist — in `io.mosip.liveness.engine`, which is referenced only by itself, the eval harness and tests, never by `api/` or `services/`* |
+| PAD rejects only on a **confirmed** attack (current frame + preceding one); the first flagged frame returns `retry_passive` | **Single-frame reject** ([line 97](../src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L97)). No two-frame confirmation anywhere |
 | PAD = "heuristics **OR'd with the ONNX model**" | The HTTP path runs `PadEngineService` only — pure OpenCV heuristics, no ONNX/TFLite model. (The model backends exist under `backend/` but `DecisionEngineService` never uses them.) Note `PadEngineService` line 57 is `double freqRatio = 0.1; // Placeholder`, below its own `0.35` threshold, so the **`SCREEN_REPLAY` branch is unreachable dead code** |
 | Challenge validation returns `action: "continue"` (same challenge id, window still open, "…12s left for this action") | **No `continue` action exists.** The only literals emitted are `proceed`, `retry_challenge`, `reject` (challenges) and `proceed`, `escalate_to_active`, `retry_passive`, `reject` (frames). No challenge window is ever enforced; no `ChallengeStatus.TIMEOUT` is ever written by the HTTP path; the "seconds remaining" message string does not exist |
-| A failed burst only consumes retry budget when the **window has elapsed** | The first `validate` after a non-detected action already fails the challenge and increments `retryCount` ([line 273](src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L273)) |
+| A failed burst only consumes retry budget when the **window has elapsed** | The first `validate` after a non-detected action already fails the challenge and increments `retryCount` ([line 273](../src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L273)) |
 | `livenessEnabled: false` skips passive scoring and challenges, and audits `LIVENESS_DISABLED` | `livenessEnabled` is **never read** in `services/` or `api/` (`grep` → only `ConfigController` copying it into the response). The bypass and its audit event do not exist |
 | Per-workflow frozen policies: RESIDENT `0.80/1/20000/3/ESCALATE_TO_OPERATOR`, OPERATOR `0.82/1/15000/2/FALLBACK`, SUPERVISOR `0.85/2/15000/1/LOCK_OUT` | **All three workflows are seeded identically.** Verified `GET /api/v1/config/{RESIDENT,OPERATOR,SUPERVISOR}`: `0.75`, `minChallengeCount 1`, `challengeTimeoutMs 8000`, `maxRetryCount 3`, `LOCK`, `[blink,smile,turn_left,turn_right]` for all three. `ConfigController.getOrCreatePolicy()` builds **one** hard-coded default for any workflow; the document's own claim that "the three workflows never silently collapse onto one operating point" is exactly what happens |
 | `frameSamplingRate` / `frameSamplingMinFps` / combined weights are part of the operating point | Carried in `EffectivePolicy` as constants (2 / 15 / 0.4 / 0.6) and never used for sampling or weighting |
@@ -156,7 +156,7 @@ The documented `pipelineTimings` block (with `decode/facedetect/onnxscore/heuris
 
 **`PadAttackType`** — the enum also has `OTHER`, so `padAttackType` and `presentation_attack:<TYPE>` can legitimately carry a fourth value the document omits.
 
-**base64 convention** — the document says "no data-URI prefix"; `ImageUtils` actually *strips* a `data:…,` prefix if present ([ImageUtils.java:132](src/main/java/io/mosip/liveness/services/ImageUtils.java#L132)), so both forms are accepted.
+**base64 convention** — the document says "no data-URI prefix"; `ImageUtils` actually *strips* a `data:…,` prefix if present ([ImageUtils.java:132](../src/main/java/io/mosip/liveness/services/ImageUtils.java#L132)), so both forms are accepted.
 
 ---
 
@@ -166,7 +166,7 @@ The documented `pipelineTimings` block (with `decode/facedetect/onnxscore/heuris
 |---|---|
 | `source_revision: development @ 05839c9` | **No such commit object** in this repository or the sibling clone (`git cat-file -t 05839c9` → fatal). `development` HEAD is `1ed5eaa` |
 | `authoritative_sources` includes `api/RateLimitFilter.java`, `api/SecurityHeadersFilter.java` | **Neither file exists** in any branch |
-| `start_service: "./start.sh"`, `port_configurable_via: "./start.sh --port N"` | The launcher is [`scripts/start.sh`](scripts/start.sh) (and `scripts/start.bat`); `--port` is real, the root path is not |
+| `start_service: "./start.sh"`, `port_configurable_via: "./start.sh --port N"` | The launcher is [`scripts/start.sh`](../scripts/start.sh) (and `scripts/start.bat`); `--port` is real, the root path is not |
 | `not_in_scope`: Python scaffold `pad_liveness_backend/`, client adapters, L0/L1 device layer | **Correct** — all three exist as described |
 | `api_version 1.0.0-SNAPSHOT`, port 8000, `/swagger-ui/index.html`, `/` console, dev profile = H2 + Flyway off + `create-drop` | **Correct** (Swagger UI verified `200`; welcome page `static/index.html` logged at startup) |
 | `generated_for: MOSIP Hackathon 2026 — PS 04, Team Cyber Hub` | Not verifiable from this repository |
@@ -194,7 +194,7 @@ The documented `pipelineTimings` block (with `decode/facedetect/onnxscore/heuris
 * Enum vocabularies: `WorkflowType`, `SessionStatus`, `LivenessStage`, `ChallengeStatus`, `FailurePolicy` (LOCK/ESCALATE/ALLOW_RETRY ↔ LOCK_OUT/ESCALATE_TO_OPERATOR/FALLBACK) and the two `ChallengeType` wire spellings (`turn_left` ↔ `TURN_LEFT` ↔ core `TURN_HEAD_LEFT`) are all accurate, including the mapping note.
 * Frame `action` vocabulary `proceed` / `escalate_to_active` / `retry_passive` / `reject` and its meanings (including "no challenge is ever issued for an attack") — accurate.
 * Challenge validation: `409` when the challenge is not `ISSUED`, `404` when the challenge belongs to another session, and the client rule "always drive the next validation from the challenge object in the response" — accurate and useful.
-* `passive_liveness_below_threshold` + `reject` when active liveness is disabled ([line 145](src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L145)) — accurate.
+* `passive_liveness_below_threshold` + `reject` when active liveness is disabled ([line 145](../src/main/java/io/mosip/liveness/services/DecisionEngineService.java#L145)) — accurate.
 * `422 INVALID_FRAME` on undecodable frames, `404` unknown session, `409` non-ACTIVE session, `503 ENGINE_UNAVAILABLE` when OpenCV fails to load, lazy config-row creation on first `GET /api/v1/config/{workflowType}` — accurate.
 * `/api/v1/metrics` does return DB-derived rates with no PII, and rate/percentage rounding is to 4 decimals.
 
@@ -206,7 +206,7 @@ The documented `pipelineTimings` block (with `decode/facedetect/onnxscore/heuris
 
 **If the document is a specification the service is meant to meet (code fix), the order that pays off first:**
 
-1. **CORS** — switch `allowedOrigins` → `allowedOriginPatterns` in [AppConfig.java:119](src/main/java/io/mosip/liveness/app/config/AppConfig.java#L119). One word; currently every cross-origin browser client gets 403.
+1. **CORS** — switch `allowedOrigins` → `allowedOriginPatterns` in [AppConfig.java:119](../src/main/java/io/mosip/liveness/app/config/AppConfig.java#L119). One word; currently every cross-origin browser client gets 403.
 2. **Admin key on `PUT /api/v1/config/*`** — fail closed, constant-time compare, and record the change (this needs a config-scoped audit table, since `audit_logs.session_id` is `NOT NULL`).
 3. **Path-variable and unknown-path errors** — add handlers so a bad `{sessionId}` or an unknown `/api/v1/config/audit` returns 400/404 instead of 500 `INTERNAL_ERROR`.
 4. **Request-size and frame caps** — if the documented numbers are wanted, they must be added (`@Size` on the frame fields, an explicit decode cap, and a real 413); today the only ceiling is Jackson's implicit ~20 M-char string limit.

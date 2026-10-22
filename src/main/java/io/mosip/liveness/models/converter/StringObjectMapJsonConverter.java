@@ -1,13 +1,14 @@
 package io.mosip.liveness.models.converter;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 
 import java.util.HashMap;
 import java.util.Map;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Persists a {@code Map<String,Object>} as a JSON object in a text column.
@@ -18,7 +19,8 @@ import java.util.Map;
 @Converter
 public class StringObjectMapJsonConverter implements AttributeConverter<Map<String, Object>, String> {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** Stateless and immutable in Jackson 3, so one shared mapper is safe. */
+    private static final JsonMapper MAPPER = JsonMapper.shared();
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     @Override
@@ -28,7 +30,7 @@ public class StringObjectMapJsonConverter implements AttributeConverter<Map<Stri
         }
         try {
             return MAPPER.writeValueAsString(attribute);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalArgumentException("Cannot serialise audit details to JSON", e);
         }
     }
@@ -40,7 +42,7 @@ public class StringObjectMapJsonConverter implements AttributeConverter<Map<Stri
         }
         try {
             return new HashMap<>(MAPPER.readValue(dbData, MAP_TYPE));
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalArgumentException(
                     "Cannot deserialise audit details from JSON: " + dbData, e);
         }

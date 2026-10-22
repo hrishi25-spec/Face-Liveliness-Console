@@ -1,9 +1,9 @@
 package io.mosip.liveness;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import io.mosip.liveness.app.config.AppConfig;
 import io.mosip.liveness.testing.RawHttpSupport;
 import org.junit.jupiter.api.Assumptions;
@@ -12,7 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -72,6 +73,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </ul>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// Spring Boot 4 moved TestRestTemplate out of the core test autoconfiguration into
+// spring-boot-resttestclient and put the bean behind this annotation; without it the
+// field injection fails with "no qualifying bean of type TestRestTemplate".
+@AutoConfigureTestRestTemplate
 @ActiveProfiles("dev")
 @TestPropertySource(properties = {
         // Keys the audit chain, the way MOSIP_AUDIT_HMAC_SECRET would in a
@@ -907,7 +912,7 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
 
     private static Set<String> fieldNames(JsonNode changes) {
         Set<String> names = new LinkedHashSet<>();
-        changes.fieldNames().forEachRemaining(names::add);
+        changes.propertyNames().forEach(names::add);
         return names;
     }
 

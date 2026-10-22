@@ -1,7 +1,9 @@
 package io.mosip.liveness.client;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.net.URI;
@@ -20,7 +22,8 @@ import javax.net.ssl.SSLContext;
  *
  * <p>Calls the Spring Boot REST API endpoints. Suitable for both Desktop
  * (Java 11+ HttpClient) and Android (OkHttp or similar — adapt the
- * transport layer). The JSON mapping uses Jackson's {@link ObjectMapper}.</p>
+ * transport layer). The JSON mapping uses Jackson 3's {@link ObjectMapper}
+ * ({@code tools.jackson}, the mapper Spring Boot 4 serves with).</p>
  *
  * <h3>Usage from Desktop (JavaFX):</h3>
  * <pre>
@@ -71,7 +74,7 @@ public class LivenessHttpClient implements LivenessClient {
     public LivenessHttpClient(String baseUrl) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.httpClient = HttpClient.newHttpClient();
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = JsonMapper.shared();
     }
 
     /**
@@ -86,7 +89,7 @@ public class LivenessHttpClient implements LivenessClient {
         this.httpClient = HttpClient.newBuilder()
                 .sslContext(sslContext)
                 .build();
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = JsonMapper.shared();
     }
 
     // ---- Session lifecycle ----
@@ -267,7 +270,7 @@ public class LivenessHttpClient implements LivenessClient {
             if (message != null && !message.isNull()) {
                 return message.asText();
             }
-        } catch (IOException notJson) {
+        } catch (JacksonException notJson) {
             // fall through to the raw body
         }
         return body.length() > 200 ? body.substring(0, 200) : body;

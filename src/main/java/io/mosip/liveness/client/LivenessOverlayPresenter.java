@@ -86,11 +86,13 @@ public final class LivenessOverlayPresenter {
     /**
      * Default English strings (design §9 defaults) — byte-for-byte the
      * Flutter {@code LivenessView.defaultMessages} catalogue so Desktop and
-     * Android speak identically, plus the four Desktop-only action/template
-     * keys the design's screen sketch and failure table require
+     * Android speak identically. That catalogue also carries the action and
+     * template keys the design's screen sketch and failure table require
      * ({@code liveness.action.*}, {@code liveness.challenge.index},
      * {@code liveness.lockout.retry_in}, {@code liveness.cancelled},
-     * {@code liveness.device.disconnected}). Deployments override via i18n.
+     * {@code liveness.device.disconnected}); both surfaces render them, so
+     * {@link io.mosip.liveness.core.LivenessMessageKeys#DESKTOP_ONLY_KEYS} is
+     * empty. Deployments override via i18n.
      */
     public static final Map<String, String> DEFAULT_MESSAGES;
 
@@ -123,7 +125,8 @@ public final class LivenessOverlayPresenter {
         m.put("liveness.hint.lighting", "Improve the lighting and hold still.");
         m.put("liveness.hint.look_straight", "Look straight at the camera.");
         m.put("liveness.hint.hold_still", "Hold still.");
-        // --- Desktop-only additions (design §1 actions, §4 failure table) ---
+        // --- Actions and templates (design §1 actions, §4 failure table);
+        //     shared with the Flutter view, same keys and same text. ---
         m.put("liveness.cancelled", "Verification cancelled.");
         m.put("liveness.device.disconnected", "Device disconnected. Reconnect and try again.");
         m.put("liveness.action.retry", "Retry");

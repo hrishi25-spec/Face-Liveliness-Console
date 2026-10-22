@@ -16,6 +16,11 @@ training/scripts/__pycache__/
 *.tflite
 __pycache__/
 
+# Staging directory for scripts/release-assets.sh. Running the publish path by
+# hand (including against a scratch repo) leaves the release binaries here;
+# they are build output and must never be committed.
+/release-assets/
+
 # Backup files
 *.bak
 *.log

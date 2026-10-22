@@ -84,9 +84,13 @@ spring:
     password: ${POSTGRES_PASSWORD}
 
   # ---- Jackson ----
+  # Spring Boot 4 binds spring.jackson.serialization.* straight onto
+  # tools.jackson.databind.SerializationFeature (Jackson 3). Jackson 3 dropped
+  # WRITE_DATES_AS_TIMESTAMPS: instants are always written as ISO-8601 strings,
+  # so the Jackson 2 key `write-dates-as-timestamps` is not a valid value here
+  # and fails binding at startup ("No enum constant ... write-dates-as-timestamps").
+  # Do not restore it — there is no feature to turn on or off any more.
   jackson:
-    serialization:
-      write-dates-as-timestamps: false
     default-property-inclusion: non_null
 
 # ---- MOSIP Liveness Engine ----

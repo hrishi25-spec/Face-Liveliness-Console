@@ -15,8 +15,7 @@ import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
 
 import io.mosip.liveness.diagnostics.DiagnosticsSnapshot.FrameSample;
 import io.mosip.liveness.dto.FrameProcessResult;
@@ -33,7 +32,9 @@ class DiagnosticsServiceTest {
     private static final long EPOCH = 1_000_000L;
     private static final long MS = 1_000_000L; // nanos in a millisecond
 
-    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+    // Jackson 3 carries java.time support in databind itself: the Jackson 2
+    // JavaTimeModule no longer exists as a separate registration.
+    private final ObjectMapper mapper = new ObjectMapper();
 
     // ------------------------------------------------------------ opt-in is fail-closed
 

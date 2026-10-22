@@ -351,18 +351,22 @@ class LivenessOverlayPresenterTest {
         }
         assertTrue(shared >= 20, "expected the full Flutter catalogue, parsed " + shared + " keys");
 
-        // Desktop may only add its documented extras — nothing else diverges.
-        Set<String> desktopOnly = Set.of(
-                "liveness.cancelled", "liveness.device.disconnected",
-                "liveness.action.retry", "liveness.action.cancel",
-                "liveness.challenge.index", "liveness.lockout.retry_in");
+        // The Flutter view now renders the same catalogue as the Desktop
+        // overlay — localised Retry/Cancel, the challenge-index and lockout
+        // templates, and the cancelled/disconnected status lines used to be
+        // Desktop-only. Any key the Desktop has beyond the Flutter source is
+        // therefore a real divergence, not a documented addition.
         Set<String> extra = new java.util.HashSet<>(LivenessOverlayPresenter.DEFAULT_MESSAGES.keySet());
         matcher = Pattern.compile("'([A-Za-z0-9_.]+)':\\s*'([^']*)'").matcher(block);
+        int parsed = 0;
         while (matcher.find()) {
             extra.remove(matcher.group(1));
+            parsed++;
         }
-        assertEquals(desktopOnly, extra,
-                "Desktop-only keys must be exactly the documented additions");
+        assertTrue(extra.isEmpty(),
+                "the Desktop catalogue must not carry keys the Flutter view lacks: " + extra);
+        assertEquals(LivenessOverlayPresenter.DEFAULT_MESSAGES.size(), parsed,
+                "the two catalogues must declare exactly the same keys");
     }
 
     // ------------------------------------------------------------ helpers

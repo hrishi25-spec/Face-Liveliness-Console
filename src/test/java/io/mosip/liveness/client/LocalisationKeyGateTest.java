@@ -1,16 +1,14 @@
 package io.mosip.liveness.client;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.mosip.liveness.core.LivenessMessageKeys;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -48,9 +46,9 @@ class LocalisationKeyGateTest {
 
         JsonNode root = mapper.readTree(arbPath.toFile());
         Set<String> arbKeys = new HashSet<>();
-        Iterator<String> fieldNames = root.fieldNames();
-        while (fieldNames.hasNext()) {
-            String field = fieldNames.next();
+        // Jackson 3 replaced fieldNames() with propertyNames(), which returns a
+        // Collection rather than an Iterator.
+        for (String field : root.propertyNames()) {
             if (!field.startsWith("@")) {
                 arbKeys.add(field);
             }

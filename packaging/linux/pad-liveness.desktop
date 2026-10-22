@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=MOSIP Face Liveness Console
+GenericName=Face Liveness and PAD Service
+Comment=Start the MOSIP face liveness and PAD service and open its browser console
+Exec=pad-liveness
+Icon=pad-liveness
+Terminal=true
+Categories=Utility;
+Keywords=liveness;pad;mosip;face;
+StartupNotify=false

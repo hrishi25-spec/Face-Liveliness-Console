@@ -33,7 +33,13 @@
     <revision>1.0.0-SNAPSHOT</revision>
     <!-- Desktop (JavaFX) overlay UI. Provided by the MOSIP Registration Client
          host at runtime — see the javafx-controls dependency below. -->
-    <javafx.version>21.0.2</javafx.version>
+    <!-- Pinned to the JDK 17 the project targets (`java.version` below) and the
+         CI runners use. JavaFX 21 itself is Java-17 bytecode, but TestFX's
+         openjfx-monocle 21.0.2 build is class-file 65 (Java 21), so bumping
+         this silently breaks the headless overlay tests with
+         UnsupportedClassVersionError on a JDK 17 fork. Move both together, and
+         only with a JDK 21 toolchain. -->
+    <javafx.version>17.0.10</javafx.version>
   </properties>
 
   <dependencies>
@@ -83,9 +89,14 @@
     </dependency>
 
     <!-- Flyway (DB migrations, replaces Alembic) -->
+    <!-- Spring Boot 4 moved Flyway autoconfiguration out of spring-boot-autoconfigure
+         into the spring-boot-flyway module. flyway-core alone is no longer
+         wired, so without this starter no migration ever runs and the service
+         fails validation on a fresh database ("missing table [audit_logs]").
+         The starter brings the same flyway-core, plus the auto-configuration. -->
     <dependency>
-      <groupId>org.flywaydb</groupId>
-      <artifactId>flyway-core</artifactId>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
     </dependency>
     <dependency>
       <groupId>org.flywaydb</groupId>
@@ -97,6 +108,26 @@
       <groupId>org.springdoc</groupId>
       <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
       <version>3.1.1</version>
+    </dependency>
+
+    <!-- Jackson 3 — Boot 4's JSON mapper, in the `tools.jackson` packages.
+         Declared directly because this service uses it itself: the JPA
+         attribute converters and LivenessHttpClient hold an ObjectMapper. It
+         previously resolved only transitively, so those classes compiled
+         against the Jackson 2 jar springdoc drags in — a coupling that worked
+         by accident and broke silently when the mapper that Spring MVC
+         actually uses changed. The version is managed by spring-boot-starter-parent.
+
+         Note on the Jackson 2 jars still in the tree: springdoc 3.x emits the
+         OpenAPI document through swagger-core 2.2.x, which is Jackson 2 based,
+         so swagger-core keeps its own mapper at runtime. Nothing in this
+         service's code may use it; JacksonRuntimeGateTest enforces that.
+         Jackson's annotations are shared: Jackson 3 uses
+         com.fasterxml.jackson.annotation, which is why the DTOs' @JsonInclude
+         imports stay as they are. -->
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
     </dependency>
 
     <!-- H2 in-memory database (dev profile / zero-dependency local run) -->
@@ -170,10 +201,50 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Spring Boot 4 split the test slices out of spring-boot-test-autoconfigure
+         into per-technology modules. WebMvcTest/AutoConfigureMockMvc live in
+         spring-boot-webmvc-test, DataJpaTest in spring-boot-data-jpa-test
+         (which pulls spring-boot-jpa-test for TestEntityManager and
+         spring-boot-jdbc-test for AutoConfigureTestDatabase), and
+         TestRestTemplate in spring-boot-resttestclient. Without these the
+         slice imports do not resolve at all. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-webmvc-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-data-jpa-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-resttestclient</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Boot 4 moved RestTemplate/RestTemplateBuilder out of spring-web into
+         spring-boot-restclient. TestRestTemplate's autoconfiguration needs the
+         builder on the classpath, otherwise it fails to introspect and the
+         integration context will not start. Test scope only: the service
+         itself talks to the engine over java.net.http, not RestTemplate. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-restclient</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- JUnit's version belongs to spring-boot-starter-parent (Boot 4.1.1
+         manages 6.0.3), not to this pom. Pinning the aggregator alone does not
+         move the tests: dependency management keeps junit-jupiter-api,
+         -params and -engine on the parent's version, so a 6.1.3 pin here put
+         the aggregator at 6.1.3 next to 6.0.3 modules - every test green, and
+         the engine a version the pom never mentioned.
+         DependencyOwnershipGateTest.versionFamiliesStayInStep now fails a
+         half-upgraded family. To move JUnit, move all of it: set
+         junit-jupiter.version or import org.junit:junit-bom. -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>6.1.3</version>
       <scope>test</scope>
     </dependency>
 
@@ -408,6 +479,149 @@
                 </exclude>
               </excludes>
             </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!--
+      Linux installers: a plain `./mvnw package` also produces
+
+        target/dist/pad-liveness_<version>_amd64.deb          (systemd unit inside)
+        target/dist/pad-liveness-<version>-x86_64.AppImage    (AppRun opens the console)
+
+      The work lives in scripts/package-linux.sh: jpackage is a CLI over an
+      application image and the AppImage step has no Maven equivalent, so the
+      profile only names the phase and passes the version through.
+
+      Activated by the OS, not activeByDefault, and on purpose:
+      - activeByDefault is switched off by any -P on the command line, so
+        `./mvnw package -Pslim` would silently stop building installers. The OS
+        condition survives that.
+      - It is inert on macOS and Windows, where jpackage cannot make a .deb.
+
+      Skipping is not fatal outside strict mode, because packaging is not a
+      test: a workstation without dpkg-deb still gets its jar and AppImage plus
+      a warning, and the existing CI package jobs keep building jars on a runner
+      where a tool is missing. The *Linux packages* CI job runs with
+      -Dlinux.package.strict=true and boots the result, which is what actually
+      guarantees both artifacts.
+
+      -Dlinux.package.skip=true disables it for a jar-only build.
+    -->
+    <profile>
+      <id>linux-package</id>
+      <activation>
+        <os>
+          <family>unix</family>
+          <name>linux</name>
+        </os>
+      </activation>
+      <properties>
+        <linux.package.skip>false</linux.package.skip>
+        <linux.package.strict>false</linux.package.strict>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <version>3.5.0</version>
+            <executions>
+              <execution>
+                <id>linux-installers</id>
+                <!-- After repackage: the script picks up the jar the previous
+                     phase just wrote. -->
+                <phase>package</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${linux.package.skip}</skip>
+                  <executable>${project.basedir}/scripts/package-linux.sh</executable>
+                  <environmentVariables>
+                    <PAD_PACKAGE_STRICT>${linux.package.strict}</PAD_PACKAGE_STRICT>
+                  </environmentVariables>
+                  <arguments>
+                    <argument>--version</argument>
+                    <argument>${project.version}</argument>
+                    <argument>--target</argument>
+                    <argument>${project.build.directory}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!--
+      Windows installer: on Windows a plain `\mvnw.cmd package` also produces
+
+        target\dist\pad-liveness-<version>.exe
+
+      through scripts/package-windows.ps1, which builds the jpackage
+      application image with the console subsystem enabled (this is a server,
+      so its startup log has to be visible) and then the WiX-backed installer
+      from it.
+
+      Same shape as `linux-package` above, and for the same reasons: activated
+      by the OS so it is inert on Linux and macOS and cannot be switched off by
+      a stray -P, and a missing tool (jpackage, or WiX for the .exe) skips that
+      half with a warning rather than failing a developer's jar build. The
+      *Windows installer* CI job passes -Dwindows.package.strict=true so a
+      missing WiX is a red build there.
+
+      -Dwindows.package.skip=true disables it for a jar-only build.
+    -->
+    <profile>
+      <id>windows-package</id>
+      <activation>
+        <os>
+          <family>windows</family>
+        </os>
+      </activation>
+      <properties>
+        <windows.package.skip>false</windows.package.skip>
+        <windows.package.strict>false</windows.package.strict>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <version>3.5.0</version>
+            <executions>
+              <execution>
+                <id>windows-installer</id>
+                <!-- After repackage: the script picks up the jar the previous
+                     phase just wrote. -->
+                <phase>package</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${windows.package.skip}</skip>
+                  <executable>powershell.exe</executable>
+                  <environmentVariables>
+                    <PAD_PACKAGE_STRICT>${windows.package.strict}</PAD_PACKAGE_STRICT>
+                  </environmentVariables>
+                  <arguments>
+                    <argument>-NoProfile</argument>
+                    <argument>-NonInteractive</argument>
+                    <argument>-ExecutionPolicy</argument>
+                    <argument>Bypass</argument>
+                    <argument>-File</argument>
+                    <argument>${project.basedir}\scripts\package-windows.ps1</argument>
+                    <argument>-Version</argument>
+                    <argument>${project.version}</argument>
+                    <argument>-Target</argument>
+                    <argument>${project.build.directory}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
           </plugin>
         </plugins>
       </build>

@@ -94,14 +94,14 @@ public final class LivenessMessageKeys {
             LIVENESS_LOCKOUT_RETRY_IN
     );
 
-    public static final Set<String> DESKTOP_ONLY_KEYS = Set.of(
-            LIVENESS_CANCELLED,
-            LIVENESS_DEVICE_DISCONNECTED,
-            LIVENESS_ACTION_RETRY,
-            LIVENESS_ACTION_CANCEL,
-            LIVENESS_CHALLENGE_INDEX,
-            LIVENESS_LOCKOUT_RETRY_IN
-    );
+    /**
+     * Keys that only the Desktop surfaces carry. Empty: the Flutter view now
+     * renders the same catalogue as the Desktop overlay — the localised Retry
+     * and Cancel actions, the "Challenge {index} / {total}" and "Try again in
+     * {seconds}s" templates, and the cancelled/disconnected status lines — so a
+     * key missing from either surface is a real gap, not a platform choice.
+     */
+    public static final Set<String> DESKTOP_ONLY_KEYS = Set.of();
 
     public static final Set<String> FLUTTER_KEYS;
     static {

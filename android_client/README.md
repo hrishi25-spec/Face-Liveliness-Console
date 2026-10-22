@@ -167,7 +167,7 @@ v1.1.1).
   (records require ≥ 16): raise that build to ≥ 17; there is no source-level
   fallback that keeps records off the table.
 - **Backend platform:** the Java 11 figure belongs to MOSIP platform
-  1.2.0.1. This repo's Spring Boot **service** (3.3.3) requires JDK ≥ 17, so
+  1.2.0.1. This repo's Spring Boot **service** (4.1.1) requires JDK ≥ 17, so
   it cannot run *on* a Java-11 platform runtime — deploy it on 17+ or follow
   the platform's own j11→j21 path. The Android embed takes only the
   `io.mosip.liveness` classes, never Spring.

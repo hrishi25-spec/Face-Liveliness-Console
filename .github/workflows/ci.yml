@@ -9,8 +9,8 @@ concurrency:
 on:
   push:
     # Every branch push runs the suites and builds the jar. Tag pushes (v*)
-    # additionally publish a GitHub Release with both jars and their
-    # checksums attached.
+    # additionally publish a GitHub Release with both jars, the Linux .deb and
+    # AppImage, and a .sha256 beside every one of them.
     branches: ['**']
     tags: ['v*']
   # Branches get the identical gate before merging — unit + integration
@@ -109,6 +109,26 @@ jobs:
 
       - name: Check project guidance and instruction scope
         run: node scripts/check-project-boundaries.mjs
+
+  # Documentation links: `docs/` and the READMEs describe classes, migrations
+  # and scripts by relative path, and nothing resolved those paths. A file that
+  # moves leaves the link 404-ing while the prose still claims it is there, and
+  # the reader concludes the whole document is stale. The gate resolves each
+  # relative link from the file that contains it — the way a reader's browser
+  # does, so `src/main/...` written from inside `docs/` is caught even though
+  # the file exists at the root — and verifies `#heading` anchors against the
+  # target's real headings. It checks the whole tree, including the sibling
+  # projects' READMEs, and needs no network: external URLs are out of scope.
+  docs-links:
+    name: Documentation links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check every relative documentation link resolves
+        run: node scripts/check-doc-links.mjs
 
   # Java source layout: two gates over the same tree, both reading it as text so
   # neither needs Maven, a compiler, or a setup step (the scripts are
@@ -439,6 +459,100 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The Linux installers are a delivery path of their own: nothing else here
+  # builds a .deb or an AppImage, so a unit installed to the wrong path, a
+  # payload that lost the unit, or an AppRun that cannot find the image would
+  # ship unseen. `./mvnw package` already produces both on Linux (pom.xml,
+  # linux-package profile) but skips a half whose tool is missing, because a
+  # developer without dpkg still needs a jar. This job passes
+  # -Dlinux.package.strict=true so nothing can be skipped, then boots what it
+  # built — "the build produced installers" is an assertion, not a log line.
+  linux-packages:
+    name: Linux packages (.deb + AppImage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # jpackage shells out to dpkg-deb and fakeroot for a .deb. The runner
+      # image carries both, but the job installs whatever is missing instead of
+      # depending on a runner image detail.
+      - name: Ensure the .deb toolchain
+        run: |
+          set -euo pipefail
+          missing=()
+          command -v dpkg-deb >/dev/null 2>&1 || missing+=(dpkg)
+          command -v fakeroot  >/dev/null 2>&1 || missing+=(fakeroot)
+          # The boot gate installs the .deb with dpkg -i, which does not resolve
+          # dependencies. xdg-utils is one jpackage declares for the menu entry;
+          # apt would pull it, so the job provides what an apt install would.
+          command -v xdg-desktop-menu >/dev/null 2>&1 || missing+=(xdg-utils)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            sudo apt-get update
+            sudo apt-get install -y "${missing[@]}"
+          fi
+
+      # The packaging script fetches appimagetool 1.9.1 (pinned by version and
+      # sha256, because the project's `continuous` tag moves) into this cache on
+      # first use. Caching it keeps the job off GitHub's rate limits and makes a
+      # re-run reproducible from what was verified the first time.
+      - name: Cache appimagetool
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pad-liveness/tools
+          key: appimagetool-1.9.1-x86_64
+
+      - name: Build the .deb and the AppImage
+        run: ./mvnw --batch-mode clean package -DskipTests -Pslim -Dlinux.package.strict=true
+
+      # SMOKE_UNIT_BOOT installs the .deb the way its README tells a user to and
+      # starts the unit, because a sandboxing directive that systemd silently
+      # cannot apply — or a StateDirectory the DynamicUser cannot own — passes
+      # every contents check and then never answers /health. The runner is a
+      # systemd host with passwordless sudo, which is what the script looks for.
+      - name: Boot the installers
+        env:
+          SMOKE_UNIT_BOOT: 1
+        run: ./scripts/smoke-linux-packages.sh
+
+      # The boot above runs on this runner's systemd, which is the newest LTS.
+      # The hosts the .deb lands on are older, and that is where a directive is
+      # dropped without a failure: systemd logs one "Unknown lvalue" line at
+      # load time and then runs the unit without that hardening. This boots the
+      # unit on the oldest systemd the project supports (Debian 11 / Ubuntu
+      # 22.04 in containers, so no VM), and fails if any directive in the unit
+      # is not understood there.
+      - name: Boot the unit on the oldest supported systemd
+        run: ./scripts/smoke-systemd-compat.sh
+
+      # Publishing is the one step with no undo, and it used to be reachable
+      # only by pushing a tag at the real repository. The staging, checksum,
+      # count and gh code now lives in scripts/release-assets.sh, and this runs
+      # its self-test: fixture assets, every guard in the direction that must
+      # fail, and the exact gh argv for create, upload and the canary flag —
+      # with no tag, no token and no network.
+      - name: Rehearse the release publish
+        run: ./scripts/release-assets.sh rehearse
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-installers
+          path: |
+            target/dist/*.deb
+            target/dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
   # The launcher is Windows-only, and without this job nothing that ships to a
   # Windows user is ever run: every other job here is ubuntu-latest. Two things
   # hide behind that gap, and both have broken before.
@@ -528,6 +642,81 @@ jobs:
       # path with a space: ./scripts/smoke-windows-launcher.ps1
       - name: Boot the packaged jar through start.bat
         run: pwsh -NoProfile -File ./scripts/smoke-windows-launcher.ps1
+
+  # The Windows installer is a delivery path of its own: nothing else here
+  # builds a .exe, so a launcher packaged without --win-console (a server with
+  # no visible log), an installer built from the -Pslim jar (installs, starts,
+  # rejects every frame) or a version resource that disagrees with the file name
+  # would all ship unseen. `\mvnw.cmd package` already builds it on Windows
+  # (pom.xml, windows-package profile), but it skips the .exe when WiX is
+  # missing because a developer without the toolchain still needs a jar. This
+  # job installs WiX, passes -Dwindows.package.strict=true so nothing can be
+  # skipped, and then boots the payload the installer deploys.
+  windows-installer:
+    name: Windows installer (.exe)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # jpackage builds a .exe by shelling out to WiX 3: candle.exe and light.exe
+      # have to be on PATH. Windows runners do not ship it, and jpackage does
+      # not support WiX 4/5, so the major is pinned here rather than "latest".
+      - name: Install WiX Toolset 3
+        run: |
+          choco install wixtoolset --version=3.14.1 --yes --no-progress
+          # Discovered, not hardcoded: the MSI's INSTALLDIR carries the WiX
+          # version, and baking the directory into the workflow would turn a
+          # patch release of the package into a red build with a confusing
+          # "candle.exe not found".
+          $root = Get-ChildItem 'C:\Program Files (x86)' -Directory -Filter 'WiX Toolset v3*' -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $root) {
+            throw "no 'WiX Toolset v3*' under C:\Program Files (x86) - jpackage cannot build a .exe"
+          }
+          $wix = Join-Path $root.FullName 'bin'
+          foreach ($tool in @('candle.exe', 'light.exe')) {
+            if (-not (Test-Path (Join-Path $wix $tool))) {
+              throw "$tool is not under $wix - jpackage cannot build a .exe"
+            }
+          }
+          Write-Host "WiX $((Get-Item (Join-Path $wix 'candle.exe')).VersionInfo.ProductVersion) at $wix"
+          Add-Content -Path $env:GITHUB_PATH -Value $wix
+
+      # The interface a developer uses, with the strict switch the profile
+      # documents: what this job builds is what `\mvnw.cmd package` builds.
+      # No -Pslim: the slim jar keeps linux/x86_64 natives, so an installer
+      # built from it would install and then reject every frame.
+      - name: Build the jar and the .exe installer
+        run: .\mvnw.cmd --batch-mode clean package -DskipTests -Dwindows.package.strict=true
+
+      # Asserts the installer is a PE image with a version resource matching its
+      # name, then boots the application image it deploys and probes /health for
+      # `engine: available` and the console for text/html. The installer's own
+      # interactive install/uninstall is not automated.
+      - name: Boot the payload the installer deploys
+        run: pwsh -NoProfile -File ./scripts/smoke-windows-installer.ps1
+
+      # Branch-gated like the jars: a pull request builds and boots the
+      # installer but writes nothing to artifact storage.
+      - name: Upload the installer
+        if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v'))
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: target/dist/*.exe
+          if-no-files-found: error
+          retention-days: 7
 
   # The image is a separate delivery path from the jar: the Dockerfile's COPY,
   # its Alpine base, the unprivileged user and the JVM flags exist nowhere else
@@ -655,15 +844,27 @@ jobs:
   # downloaders want. Each ships with a sibling .sha256 so a download can be
   # verified before it is trusted.
   #
+  # The Linux installers ride along, from the same slim build that produces the
+  # slim jar: the .deb is what a Debian/Ubuntu host installs, and the AppImage
+  # needs no root at all, so a release that carried only jars left the two
+  # artifacts people actually install to be rebuilt by hand or downloaded from
+  # ephemeral CI artifact storage that expires in a week. They go through the
+  # same gate as the jars — built with -Dlinux.package.strict=true so neither
+  # half can be skipped, booted by scripts/smoke-linux-packages.sh, and shipped
+  # with their own .sha256 — because a release is the one place an unverified
+  # artifact reaches a user.
+  #
   # A `-canary` tag (e.g. v1.1.0-canary.1) runs the identical pipeline —
-  # both jars, both boots, checksums — but publishes as a prerelease, so a
-  # canary is visible and installable without ever being the version GitHub
-  # surfaces as "the latest". The pattern is matched on the tag name below.
+  # both jars, both installers, every boot and checksum — but publishes as a
+  # prerelease, so a canary is visible and installable without ever being the
+  # version GitHub surfaces as "the latest". The pattern is matched on the tag
+  # name below.
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    # Two full builds plus two boots, so double the package job's budget.
-    timeout-minutes: 30
+    # Two full builds, two jar boots and an AppImage boot, so more than the
+    # package job's budget.
+    timeout-minutes: 45
     needs: [test, python-backend]
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     # Scoped to this job alone: the rest of the workflow stays read-only.
@@ -680,6 +881,36 @@ jobs:
           java-version: '17'
           cache: maven
 
+      # jpackage shells out to dpkg-deb and fakeroot for the .deb. The runner
+      # image carries both, but the release installs whatever is missing rather
+      # than depending on a runner image detail — with
+      # -Dlinux.package.strict=true a missing tool is a failed release, and the
+      # point is to fail on a broken package, not on an image that changed.
+      - name: Ensure the .deb toolchain
+        run: |
+          set -euo pipefail
+          missing=()
+          command -v dpkg-deb >/dev/null 2>&1 || missing+=(dpkg)
+          command -v fakeroot  >/dev/null 2>&1 || missing+=(fakeroot)
+          # The boot gate installs the .deb with dpkg -i, which does not resolve
+          # dependencies. xdg-utils is one jpackage declares for the menu entry;
+          # apt would pull it, so the job provides what an apt install would.
+          command -v xdg-desktop-menu >/dev/null 2>&1 || missing+=(xdg-utils)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            sudo apt-get update
+            sudo apt-get install -y "${missing[@]}"
+          fi
+
+      # Same cache and key as the Linux packages job: appimagetool is fetched
+      # once from its pinned 1.9.1 release (verified against a hard-coded
+      # sha256) instead of on every release, which keeps a publish off GitHub's
+      # rate limits and reproducible from what was verified the first time.
+      - name: Cache appimagetool
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pad-liveness/tools
+          key: appimagetool-1.9.1-x86_64
+
       # Release assets are the same artifact CI publishes elsewhere, so they go
       # through the identical gate: green tests, then a real boot.
       #
@@ -694,13 +925,19 @@ jobs:
       # Both jars are built here rather than downloaded from the package job:
       # those were built without the tag's revision, and a release must not
       # ship assets whose name and manifest carry a snapshot version.
+      #
+      # -Dlinux.package.skip=true because this is the full-jar build: the
+      # installers are made once, from the slim jar below, and the profile would
+      # otherwise spend minutes packaging a ~200 MB app image that the next
+      # `clean` deletes.
       - name: Package the full jar (version stamped from the tag)
         env:
           TAG: ${{ github.ref_name }}
         run: |
           set -uo pipefail
           VERSION="${TAG#v}"
-          ./mvnw --batch-mode -DskipTests -Drevision="$VERSION" package
+          ./mvnw --batch-mode -DskipTests -Drevision="$VERSION" \
+            -Dlinux.package.skip=true package
 
           JAR="target/pad-liveness-backend-$VERSION.jar"
           if [ ! -f "$JAR" ]; then
@@ -726,21 +963,29 @@ jobs:
           set -uo pipefail
           ./scripts/smoke-jar.sh
           VERSION="${TAG#v}"
-          mkdir -p release-assets
-          mv "target/pad-liveness-backend-$VERSION.jar" release-assets/
-          echo "staged release-assets/pad-liveness-backend-$VERSION.jar"
+          ./scripts/release-assets.sh add --version "$VERSION" \
+            "target/pad-liveness-backend-$VERSION.jar"
 
       # Same gate for the slim asset. `clean` is not optional for this build:
       # the slim profile unpacks the kept natives into target/classes, which
       # repackage embeds verbatim, so a target/ left over from the full build
       # could leak the wrong natives into the slim artifact (see pom.xml).
-      - name: Package the slim jar (version stamped from the tag)
+      #
+      # The Linux installers are built by this same invocation: the pom's
+      # linux-package profile runs scripts/package-linux.sh from the `package`
+      # phase, and package-linux.sh prefers the slim jar, so the .deb and
+      # AppImage carry exactly the artifact this step just stamped. Strict mode
+      # is what makes that an assertion: without it a missing dpkg or
+      # appimagetool would skip a half and still exit 0, publishing a release
+      # with an installer that is not there.
+      - name: Package the slim jar and the Linux installers (version stamped from the tag)
         env:
           TAG: ${{ github.ref_name }}
         run: |
           set -uo pipefail
           VERSION="${TAG#v}"
-          ./mvnw --batch-mode -DskipTests -Drevision="$VERSION" clean package -Pslim
+          ./mvnw --batch-mode -DskipTests -Drevision="$VERSION" \
+            clean package -Pslim -Dlinux.package.strict=true
 
           JAR="target/pad-liveness-backend-$VERSION-slim.jar"
           if [ ! -f "$JAR" ]; then
@@ -755,6 +1000,33 @@ jobs:
           fi
           echo "stamped $TAG as $VERSION (slim manifest Implementation-Version: $MANIFEST_VERSION)"
 
+          # One of each, carrying the tag's version. A stale target/dist from a
+          # previous build would otherwise publish an installer of an older
+          # version under this release's name.
+          shopt -s nullglob
+          DEBS=( target/dist/*.deb )
+          APPIMAGES=( target/dist/*.AppImage )
+          shopt -u nullglob
+          if [ "${#DEBS[@]}" -ne 1 ] || [ "${#APPIMAGES[@]}" -ne 1 ]; then
+            echo "::error::expected one .deb and one AppImage in target/dist, found ${#DEBS[@]} and ${#APPIMAGES[@]}"
+            ls -la target/dist 2>/dev/null || true
+            exit 1
+          fi
+          case "$(basename "${DEBS[0]}")" in
+            *"$VERSION"*) ;;
+            *) echo "::error::${DEBS[0]} does not carry $VERSION"; exit 1 ;;
+          esac
+          case "$(basename "${APPIMAGES[0]}")" in
+            *"$VERSION"*) ;;
+            *) echo "::error::${APPIMAGES[0]} does not carry $VERSION"; exit 1 ;;
+          esac
+          DEB_VERSION=$(dpkg-deb -f "${DEBS[0]}" Version)
+          case "$DEB_VERSION" in
+            "$VERSION"|"$VERSION"-*) ;;
+            *) echo "::error::${DEBS[0]} declares Version $DEB_VERSION, expected $VERSION"; exit 1 ;;
+          esac
+          echo "installers: $(basename "${DEBS[0]}") (Version $DEB_VERSION), $(basename "${APPIMAGES[0]}")"
+
       - name: Smoke test the slim jar
         env:
           SMOKE_JAR: slim
@@ -763,30 +1035,36 @@ jobs:
           set -uo pipefail
           ./scripts/smoke-jar.sh
           VERSION="${TAG#v}"
-          mkdir -p release-assets
-          mv "target/pad-liveness-backend-$VERSION-slim.jar" release-assets/
-          echo "staged release-assets/pad-liveness-backend-$VERSION-slim.jar"
+          ./scripts/release-assets.sh add --version "$VERSION" \
+            "target/pad-liveness-backend-$VERSION-slim.jar"
 
-      # One checksum per jar, named exactly like its jar with a .sha256
+      # The installers are release assets too, and the same rule applies: an
+      # artifact that only exists because the build said so is not evidence it
+      # boots. This is the Linux packages job's gate, run on the exact files
+      # this release would publish — the .deb's payload and unit, then the
+      # AppImage against /health and the console. A broken installer now fails
+      # the tag build instead of being replaced quietly by a re-run.
+      - name: Smoke test the Linux installers
+        env:
+          SMOKE_UNIT_BOOT: 1
+        run: ./scripts/smoke-linux-packages.sh
+
+      # Staged before the checksums because target/ is the build's scratch
+      # space, and a second build in this job must not be able to lose them.
+      - name: Stage the Linux installers
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          ./scripts/release-assets.sh add --version "${TAG#v}" \
+            target/dist/*.deb target/dist/*.AppImage
+
+      # One checksum per asset, named exactly like its file with a .sha256
       # suffix — the convention `sha256sum -c <file>.sha256` verifies from
       # the download directory with no path editing. The check run here
       # proves the files are well-formed before they are published.
       - name: Generate checksums for the release assets
-        run: |
-          set -uo pipefail
-          cd release-assets
-          shopt -s nullglob
-          JARS=( pad-liveness-backend-*.jar )
-          shopt -u nullglob
-          if [ "${#JARS[@]}" -ne 2 ]; then
-            echo "::error::expected the full and slim jars in release-assets/, found ${#JARS[@]}"
-            ls -la
-            exit 1
-          fi
-          for jar in "${JARS[@]}"; do
-            sha256sum "$jar" > "$jar.sha256"
-            sha256sum -c "$jar.sha256"
-          done
+        run: ./scripts/release-assets.sh checksums
 
       # `gh release create` fails if the release already exists, which is what a
       # re-pushed or moved tag looks like. Upload --clobber replaces the assets
@@ -802,47 +1080,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: |
-          set -uo pipefail
-          VERSION="${TAG#v}"
-          ASSETS=(
-            "release-assets/pad-liveness-backend-$VERSION.jar"
-            "release-assets/pad-liveness-backend-$VERSION.jar.sha256"
-            "release-assets/pad-liveness-backend-$VERSION-slim.jar"
-            "release-assets/pad-liveness-backend-$VERSION-slim.jar.sha256"
-          )
-          # All four must exist: gh skips a missing file without failing, which
-          # would publish a release with no slim jar and nobody would notice
-          # until someone went looking for it.
-          for asset in "${ASSETS[@]}"; do
-            if [ ! -f "$asset" ]; then
-              echo "::error::missing release asset: $asset"
-              exit 1
-            fi
-          done
-
-          # Canary pattern: any tag carrying a -canary segment (v1.1.0-canary,
-          # v1.1.0-canary.1, ...). Stable tags match nothing and publish
-          # normally.
-          PRERELEASE=()
-          if [[ "$TAG" == *-canary* ]]; then
-            echo "canary tag $TAG — publishing as a prerelease"
-            PRERELEASE=(--prerelease)
-          fi
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "release $TAG exists — replacing the assets"
-            gh release upload "$TAG" "${ASSETS[@]}" --clobber
-          else
-            # No --notes-start-tag: it errors when there is no previous release,
-            # which would make the very first tag unpublishable. Plain
-            # --generate-notes picks the previous release automatically when
-            # one exists and starts from scratch when it does not.
-            gh release create "$TAG" "${ASSETS[@]}" \
-              --title "$TAG" \
-              --generate-notes \
-              "${PRERELEASE[@]}"
-          fi
+        # The count, the stamped jar names, the create-vs-upload branch and the
+        # canary flag live in scripts/release-assets.sh, so the rehearsal in the
+        # Linux packages job runs the same code this tag build runs.
+        run: ./scripts/release-assets.sh attach --tag "$TAG"
 
   # Publishes the Docker image for a release tag. The jar ships as a
   # release asset (job above); this makes the container delivery path

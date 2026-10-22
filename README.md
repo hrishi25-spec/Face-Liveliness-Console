@@ -6,7 +6,7 @@
 Passive scoring, active challenges and a terminal PAD gate, decided on the capture host with no network call on the decision path.
 
 ![Java](https://img.shields.io/badge/Java-17%2B-ED8B00?logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.3.3-6DB33F?logo=springboot&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-4.1.1-6DB33F?logo=springboot&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.9-5C3EE8?logo=opencv&logoColor=white)
 ![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-MiniFASNet--V2-005CED)
 ![Flutter](https://img.shields.io/badge/Flutter-3.10.4-02569B?logo=flutter&logoColor=white)
@@ -151,6 +151,58 @@ curl -s -b jar.txt -X PUT $BASE/api/v1/config/RESIDENT \
   -H "Content-Type: application/json" -d '{"passiveThreshold": 0.85}'
 ```
 
+## Linux installers
+
+On Linux, `./mvnw package` also builds two installers next to the jar, in `target/dist/`:
+
+| File | What it is |
+|---|---|
+| `pad-liveness_<version>-1_amd64.deb` | Installs the service image under `/opt/pad-liveness` and the unit at `/lib/systemd/system/pad-liveness.service`, with a postinst that runs `systemctl daemon-reload` (`-1` is jpackage's Debian revision) |
+| `pad-liveness-<version>-x86_64.AppImage` | Self-contained; its `AppRun` starts the service, waits for `/health`, then opens the console at `http://127.0.0.1:8000/` in the browser |
+
+```bash
+./mvnw package -DskipTests                 # jar + .deb + AppImage
+./mvnw package -DskipTests -Pslim          # same, from the linux-only jar (~90 MB less)
+./mvnw package -DskipTests -Dlinux.package.skip=true   # jar only
+```
+
+```bash
+# .deb: the unit is installed but not enabled — binding port 8000 is a decision
+sudo dpkg -i target/dist/pad-liveness_*_amd64.deb
+sudo systemctl enable --now pad-liveness
+
+# AppImage: no install, no root
+./target/dist/pad-liveness-*-x86_64.AppImage
+```
+
+Both start the **`dev` profile**, which keeps its database in memory, so they work on a machine with no PostgreSQL. For the real schema set `PAD_LIVENESS_PROFILE=prod` (AppImage) or edit `Environment=PAD_LIVENESS_PROFILE` in the unit (package) and provide the `POSTGRES_*` variables listed in [docs/configuration.md](docs/configuration.md).
+
+- **The publish path is rehearsable without a tag.** The release job's staging, checksums and `gh` commands live in `scripts/release-assets.sh`, so the same code can be run by hand: `add` stages the four binaries under their release names, `checksums` writes and verifies the `.sha256` files, and `attach --tag <tag> --repo <owner/scratch>` publishes to a scratch repository instead of this one — `--dry-run` prints the exact `gh` command and touches nothing. `./scripts/release-assets.sh rehearse` runs the self-test (fixtures, every guard in the failing direction, both `gh` paths, the canary flag) that the *Linux packages* job runs on every push.
+- **A headless install is the normal case, not an edge case.** jpackage's postinst registers a desktop-menu entry with `xdg-desktop-menu`, which exits 1 where no system menu directory is writable — no desktop, a container, a CI runner. The repacked postinst tolerates that failure, so `dpkg -i` configures the package and the unit can be enabled on a server with no desktop at all.
+- **Packaging is best-effort locally and strict in CI.** jpackage comes with the JDK the build already needs; `dpkg-deb`/`fakeroot` come from `dpkg` (Arch: `pacman -S dpkg`) and appimagetool is fetched once from its pinned 1.9.1 release into `~/.cache/pad-liveness`. A missing tool skips that half with a warning; `-Dlinux.package.strict=true` turns every skip into a failure, which is how CI builds it.
+- **The unit is sandboxed.** The packaged `pad-liveness.service` runs under `DynamicUser` with `NoNewPrivileges`, an empty `CapabilityBoundingSet`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible`/`ProcSubset=pid`, and a `@system-service` syscall filter, so `/var/lib/pad-liveness` (its `StateDirectory`) and a private `/tmp` are the only writable paths. `MemoryDenyWriteExecute` is deliberately absent — HotSpot's JIT executes pages it has just written — and so is `PrivateUsers`, which would remap the transient user away from its own state directory. `systemd-analyze security pad-liveness` scores the result 1.5/10 (OK). `SMOKE_UNIT_BOOT=1 ./scripts/smoke-linux-packages.sh` installs the package, boots the unit, probes `/health` and the console, and purges it again; the *Linux packages* job runs exactly that. **The directives need systemd 247 and kernel 5.8 or newer** — `ProtectProc`/`ProcSubset` arrived in 247 and need 5.8, and an older host drops them with one log line and no failure — so `./scripts/smoke-systemd-compat.sh` boots the unit on Debian 11 and Ubuntu 22.04, the floor, and fails if either host does not understand every directive in it.
+- **A tagged release publishes both installers beside the jars.** A `v*` tag builds them from the same slim, version-stamped jar the release ships, boots them with `scripts/smoke-linux-packages.sh`, and attaches `.deb` and AppImage to the GitHub Release next to the two jars — each with a sibling `.sha256`, so `sha256sum -c pad-liveness_<version>-1_amd64.deb.sha256` verifies a download from the directory it landed in. CI artifact storage is a seven-day convenience; the release is where an installable file is expected to live.
+- **The profile is activated by the OS, not `activeByDefault`**, so `-Pslim` cannot silently switch packaging off, and macOS/Windows builds are untouched.
+- **Only Linux x86_64 is wired up.** jpackage cannot cross-build either format; on another architecture the script fails with the `ARCH` case to extend.
+
+## Windows installer
+
+On Windows, `\mvnw.cmd package` also builds an installer next to the jar, in `target\dist\`:
+
+| File | What it is |
+|---|---|
+| `pad-liveness-<version>.exe` | Self-contained jpackage + WiX installer with a bundled JRE. Installs per user with no elevation, adds a Start-menu entry under **MOSIP** plus a desktop shortcut, and launches the service with its console so the startup log and port conflicts are visible |
+
+```powershell
+.\mvnw.cmd package -DskipTests                                # jar + .exe
+.\mvnw.cmd package -DskipTests -Dwindows.package.skip=true    # jar only
+```
+
+- **Needs WiX Toolset 3.x** for the `.exe` (`choco install wixtoolset`): jpackage shells out to `candle.exe` and `light.exe`, and it does not support WiX 4/5. A missing toolchain skips the `.exe` with a warning and still builds the app image; `-Dwindows.package.strict=true` makes the skip fatal, which is how CI builds it.
+- **Build it from the full jar, never `-Pslim`.** The slim profile keeps linux/x86_64 native libraries only, so an installer built from it starts and then reports the engine unavailable to every frame. The packaging script refuses a slim jar rather than shipping that.
+- **Starts on the `dev` profile** (in-memory H2) like the Linux installers, so a fresh install runs on a machine with no PostgreSQL. Give the shortcut arguments, or run the installed `pad-liveness.exe`, with `--spring.profiles.active=prod` for the real schema — baked-in default arguments are only used when you pass none.
+- **The build is not code signed**, so Windows SmartScreen warns on first run. That is fine for internal use; sign the `.exe` before handing it to anyone else.
+
 ## Per-role policy
 
 The user type is chosen once, at session creation, and that workflow's policy is frozen on the session. A later `PUT /api/v1/config/{workflow}` affects only new sessions.
@@ -248,7 +300,8 @@ Explicit backends never silently fall back. An unavailable one fails closed with
 | `pad_liveness_backend/` | Independent FastAPI + PostgreSQL reference implementation (Python 3.12, Alembic), not wired into the Java build <!-- boundary-allow: repository map names each sibling project's own stack --> |
 | `training/` | Workstation-only synthetic-data pipeline for MiniFASNet. No real faces, not in CI |
 | `docs/` | Cross-project documentation (below) |
-| `scripts/` | Repo gates: secret scan, boundary check, Java import and package layout, jar smoke, jar size, cold-boot median, Docker and Windows-launcher smoke |
+| `packaging/` | Inputs to the desktop installers: Linux icon, AppRun, desktop entry and systemd unit; Windows `.ico` |
+| `scripts/` | Repo gates: secret scan, boundary and doc-link checks, Java import and package layout, jar smoke, jar size, cold-boot median, Docker, Windows-launcher and Linux-installer smoke |
 
 Inside `io.mosip.liveness`: `api/` (controllers and filters), `auth/`, `services/`, `engine/` (embedded state machine), `backend/` (the SPI), `challenge/`, `config/`, `audit/`, `device/` (SBI stream, burst capture and mock L0/L1 device), `eval/`, `client/` and `android/`.
 
@@ -258,12 +311,13 @@ Inside `io.mosip.liveness`: `api/` (controllers and filters), `auth/`, `services
 ./mvnw --batch-mode test                         # Java unit + integration (88 test classes, 751 tests)
 node src/test/js/console-guards.test.mjs        # console DOM guards, no Maven needed
 node scripts/check-project-boundaries.mjs       # docs-vs-CI consistency gate
+node scripts/check-doc-links.mjs                # every relative doc link and #anchor resolves
 node scripts/check-java-imports.mjs             # every Java import resolves to source
 node scripts/check-java-packages.mjs            # every package declaration matches its directory
 cd pad_liveness_backend && python -m pytest -q   # 49 Python tests — boundary-allow: sibling project's suite, documented from the repository root
 ```
 
-Fifteen CI jobs cover unit and integration, console DOM guards, project boundaries, Java source layout (imports and packages), secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging, a Windows launcher smoke test (JDK under a path with a space), the Docker image, a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, and tagged releases. Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
+Eighteen CI jobs cover unit and integration, console DOM guards, project boundaries, documentation links (every relative link and `#anchor` resolved), Java source layout (imports and packages), secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging (the jar's `BOOT-INF/lib` compared with the resolved runtime classpath, then booted), a Windows launcher smoke test (JDK under a path with a space), the Windows `.exe` installer (built strictly, then booted), the Docker image, the Linux `.deb` and AppImage (built strictly, then booted), a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, and tagged releases (both jars, both installers, and a `.sha256` beside every one of them). Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
 
 ## Configuration essentials
 
@@ -310,11 +364,14 @@ Stated up front, because a liveness service that overclaims is worse than one th
 | [docs/resource-compliance.md](docs/resource-compliance.md) | Audit against ISO 30107-1/-3, ISO 19794-5 and the MOSIP specs |
 | [docs/acceptance-audit.md](docs/acceptance-audit.md) | Task checklist vs implementation |
 | [docs/known-quirks.md](docs/known-quirks.md) | Intentional behaviours that look like bugs |
+| [docs/jackson-3.md](docs/jackson-3.md) | Jackson 3 rules: packages, immutable mappers, the shared annotation API |
 | [docs/brain.md](docs/brain.md) | Long-form codebase walkthrough |
 
 ## Contributing
 
 Keep a public contract and its documentation in sync in the same change, never weaken a check to make it pass, and run `node scripts/check-project-boundaries.mjs` after editing guidance, a README or a workflow. Per-project `AGENTS.md` files are authoritative for how to change each project.
+
+JSON goes through Jackson 3 (`tools.jackson`). Before adding a mapper or importing anything from `com.fasterxml.jackson`, read [docs/jackson-3.md](docs/jackson-3.md) — the Jackson 2 jars are on the classpath for springdoc's sake, so a wrong import compiles and then fails at runtime.
 
 ## Context
 

@@ -1,0 +1,91 @@
+[Unit]
+# Installed to /lib/systemd/system/pad-liveness.service by the .deb, which
+# ./mvnw package builds (see README.md, "Linux installers"). The unit is not
+# enabled on install: enabling a service that binds port 8000 is a decision for
+# whoever installs it.
+Description=MOSIP Face Liveness and PAD service (console on port 8000)
+After=network.target
+
+[Service]
+Type=simple
+# No account to create: systemd allocates a transient user and makes both
+# directories yours for the lifetime of the unit.
+DynamicUser=yes
+StateDirectory=pad-liveness
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/pad-liveness
+Environment=HOME=/var/lib/pad-liveness
+# Nothing the service writes should be readable by the next account on the box.
+UMask=0027
+# The dev profile keeps the sample database in memory, so the service starts on
+# a machine with no PostgreSQL. Switch to `prod` (and set POSTGRES_HOST,
+# POSTGRES_DB, POSTGRES_PASSWORD, POSTGRES_APP_USER, POSTGRES_MIGRATE_USER) to
+# use the real schema — see docs/configuration.md.
+Environment=PAD_LIVENESS_PROFILE=dev
+# Binds 0.0.0.0:8000. Add --server.address=127.0.0.1 to keep it on loopback.
+ExecStart=/opt/pad-liveness/bin/pad-liveness --spring.profiles.active=${PAD_LIVENESS_PROFILE} --server.port=8000
+Restart=on-failure
+RestartSec=5
+# systemctl stop sends SIGTERM; the Spring launcher exits 143 on a clean stop.
+SuccessExitStatus=143
+
+# --------------------------------------------------------------- sandboxing
+#
+# The service is a biometric endpoint: it accepts camera frames from the
+# network and returns PAD verdicts. It needs a listening socket, the JVM and
+# OpenCV out of its own /opt directory, and one writable directory. Everything
+# else below takes away what it does not need, so a bug in the engine cannot
+# read the host's filesystem, load a kernel module or ptrace another process.
+#
+# Two directives are deliberately absent because they break this workload and
+# would only show up as a service that will not start:
+#
+#   * MemoryDenyWriteExecute=yes — HotSpot JIT compiles to freshly written
+#     pages it then executes. With W^X enforced the JVM aborts during startup.
+#   * PrivateUsers=yes — remaps the DynamicUser onto itself; Java then cannot
+#     own its StateDirectory and fails at the first write.
+#
+# Both are worth revisiting only if the JVM gains a W^X-compatible mode.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# /usr, /boot, /etc and /opt read-only; the StateDirectory above and the
+# private /tmp below are the only writable locations.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# A private /dev gives the process null/zero/random/tty and keeps host devices
+# — disks, the webcam, /dev/mem — out of reach. OpenCV decodes frames from the
+# request body, so no device node is needed; if a future engine change reads
+# /dev/dri for GPU offload, this is the line to relax.
+PrivateDevices=yes
+
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# /proc shows only this service's own processes and only pid entries, so the
+# engine cannot enumerate or inspect anything else on the host.
+ProtectProc=invisible
+ProcSubset=pid
+
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+
+# AF_NETLINK is not for the service's own traffic: glibc opens it to pick a
+# source address during getaddrinfo, and blocking it makes name resolution
+# fail in ways that only appear against the production database host.
+# AF_UNIX covers the JVM's local sockets; no AF_PACKET, so no raw sniffing.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

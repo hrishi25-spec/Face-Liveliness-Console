@@ -8,9 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 /**

@@ -1,0 +1,88 @@
+#!/bin/sh
+#
+# AppRun for the AppImage — starts the bundled service, waits for it to answer,
+# then opens the browser console. Closing the console does not stop the service;
+# stopping this process (Ctrl+C in the terminal the AppImage was launched from,
+# or SIGTERM) does.
+#
+# Environment:
+#   PAD_LIVENESS_PORT=8000        port the service binds and the console opens
+#   PAD_LIVENESS_PROFILE=dev      Spring profile; `prod` expects PostgreSQL
+#   PAD_LIVENESS_NO_BROWSER=1     start the service without opening a browser
+set -eu
+
+APPDIR=$(dirname "$(readlink -f "$0")")
+APP="$APPDIR/usr/lib/pad-liveness"
+PORT="${PAD_LIVENESS_PORT:-8000}"
+PROFILE="${PAD_LIVENESS_PROFILE:-dev}"
+URL="http://127.0.0.1:${PORT}/"
+
+[ -x "$APP/bin/pad-liveness" ] || {
+    echo "AppRun: missing bundled launcher at $APP/bin/pad-liveness" >&2
+    exit 1
+}
+
+"$APP/bin/pad-liveness" --server.port="$PORT" --spring.profiles.active="$PROFILE" &
+APP_PID=$!
+
+cleanup() {
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+}
+# HUP too: closing the terminal the AppImage was launched from is the most
+# common way this thing ends.
+trap cleanup INT TERM HUP EXIT
+
+health_ok() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS "${URL}health" >/dev/null 2>&1
+    else
+        wget -q -O /dev/null "${URL}health" >/dev/null 2>&1
+    fi
+}
+
+# 60 s covers a cold boot of the fat jar on a slow disk (measured ~19 s here).
+# Without curl or wget there is nothing to poll, so fall back to a fixed grace
+# period and let the browser report a connection refused if it was not enough.
+if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+    i=0
+    while [ "$i" -lt 60 ]; do
+        if ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo "AppRun: the service exited during startup; see the log above" >&2
+            exit 1
+        fi
+        health_ok && break
+        sleep 1
+        i=$((i + 1))
+    done
+    if [ "$i" -ge 60 ]; then
+        echo "AppRun: the service did not answer ${URL}health within 60 s" >&2
+        exit 1
+    fi
+else
+    sleep 20
+fi
+
+echo "MOSIP Face Liveness Console: $URL"
+if [ "${PAD_LIVENESS_NO_BROWSER:-0}" != "1" ]; then
+    if command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$URL" >/dev/null 2>&1 || echo "Open $URL in a browser."
+    elif [ -n "${BROWSER:-}" ]; then
+        "$BROWSER" "$URL" >/dev/null 2>&1 || echo "Open $URL in a browser."
+    else
+        echo "Open $URL in a browser."
+    fi
+fi
+
+# Keep the service tied to the image that launched it. `wait` alone cannot do
+# that: if the AppImage runtime is torn down without forwarding a signal, this
+# script survives as an orphan and the JVM keeps serving from a vanished mount.
+# The mount going away is the reliable signal, so poll for it as well as for
+# the JVM's own exit.
+while kill -0 "$APP_PID" 2>/dev/null; do
+    if [ ! -e "$APP/bin/pad-liveness" ]; then
+        echo "AppRun: the AppImage was unmounted; stopping the service." >&2
+        exit 0
+    fi
+    sleep 2
+done
