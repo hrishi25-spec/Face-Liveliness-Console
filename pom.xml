@@ -39,7 +39,7 @@
          this silently breaks the headless overlay tests with
          UnsupportedClassVersionError on a JDK 17 fork. Move both together, and
          only with a JDK 21 toolchain. -->
-    <javafx.version>17.0.10</javafx.version>
+    <javafx.version>21.0.2</javafx.version>
   </properties>
 
   <dependencies>
