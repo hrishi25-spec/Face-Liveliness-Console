@@ -72,6 +72,7 @@ android {
                 'io/mosip/liveness/shared/**',
                 'io/mosip/liveness/dto/FrameProcessResult.java',
                 'io/mosip/liveness/models/enums/LivenessStage.java',
+                'io/mosip/liveness/shared/definitions/RepeatedFailureAction.java',
             ])
         }
     }
