@@ -511,7 +511,7 @@ jobs:
       # first use. Caching it keeps the job off GitHub's rate limits and makes a
       # re-run reproducible from what was verified the first time.
       - name: Cache appimagetool
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pad-liveness/tools
           key: appimagetool-1.9.1-x86_64
@@ -914,7 +914,7 @@ jobs:
       # sha256) instead of on every release, which keeps a publish off GitHub's
       # rate limits and reproducible from what was verified the first time.
       - name: Cache appimagetool
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pad-liveness/tools
           key: appimagetool-1.9.1-x86_64
