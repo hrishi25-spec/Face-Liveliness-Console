@@ -18,8 +18,9 @@ WORKDIR /app
 # one file), and `COPY --chown` costs nothing.
 RUN addgroup -S mosip && adduser -S -G mosip mosip
 
-# Built from the slim profile — build the jar first:
-#   ./mvnw clean package -DskipTests -Pslim
+# Built from the slim profile — build the jar first (the skip flag keeps this a
+# jar-only build; the image does not need a host installer):
+#   ./mvnw clean package -DskipTests -Pslim -Dlinux.package.skip=true
 #
 # This image runs on exactly one platform, and it is Alpine: the OpenCV native
 # is glibc-linked and cannot load there either way, so the other seven

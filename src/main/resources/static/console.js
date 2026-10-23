@@ -7,6 +7,109 @@
   const $ = id => document.getElementById(id);
   const video = $("video");
 
+  // ==================== THEME CONTROLLER ====================
+  // Automatically matches the browser's preferred color scheme (light or dark),
+  // using the Calm Sovereign Dark tokens from stitch_eye_soothing_dark_mode_ui.
+  // Supports cycling: Auto (System) -> Dark -> Light -> Auto.
+  const THEME_STORAGE_KEY = "mosip_liveness_theme_preference";
+
+  function initTheme() {
+    const toggleBtn = $("btn-theme-toggle");
+    const toggleText = $("theme-toggle-text");
+    const mediaQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+    function getSavedTheme() {
+      try {
+        return (typeof localStorage !== "undefined" && localStorage.getItem(THEME_STORAGE_KEY)) || "auto";
+      } catch {
+        return "auto";
+      }
+    }
+
+    function setSavedTheme(theme) {
+      try {
+        if (typeof localStorage === "undefined") return;
+        if (theme === "auto") {
+          localStorage.removeItem(THEME_STORAGE_KEY);
+        } else {
+          localStorage.setItem(THEME_STORAGE_KEY, theme);
+        }
+      } catch {
+        // Storage unavailable / sandboxed
+      }
+    }
+
+    function getSystemPreference() {
+      return mediaQuery && mediaQuery.matches ? "dark" : "light";
+    }
+
+    function applyTheme(theme) {
+      const root = typeof document !== "undefined" ? (document.documentElement || document.body) : null;
+      if (root) {
+        if (theme === "dark") {
+          if (root.setAttribute) root.setAttribute("data-theme", "dark");
+          if (root.classList) {
+            root.classList.add("dark");
+            root.classList.remove("light");
+          }
+        } else if (theme === "light") {
+          if (root.setAttribute) root.setAttribute("data-theme", "light");
+          if (root.classList) {
+            root.classList.add("light");
+            root.classList.remove("dark");
+          }
+        } else {
+          // "auto": remove manual overrides so browser @media (prefers-color-scheme: dark) rules apply
+          if (root.removeAttribute) root.removeAttribute("data-theme");
+          if (root.classList) root.classList.remove("dark", "light");
+        }
+      }
+
+      if (toggleBtn) {
+        toggleBtn.setAttribute("data-mode", theme);
+        const effective = theme === "auto" ? getSystemPreference() : theme;
+        if (toggleText) {
+          toggleText.textContent = theme === "auto"
+            ? (effective === "dark" ? "Auto (Dark)" : "Auto (Light)")
+            : (theme === "dark" ? "Dark" : "Light");
+        }
+        toggleBtn.setAttribute("aria-label", `Theme: ${theme} (Effective: ${effective}). Click to switch theme.`);
+        toggleBtn.setAttribute("title", `Current theme: ${theme} (${effective}). Click to cycle Auto / Dark / Light.`);
+      }
+    }
+
+    // Initialize with saved preference (defaults to 'auto' to match browser)
+    const initialTheme = getSavedTheme();
+    applyTheme(initialTheme);
+
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", () => {
+        const current = getSavedTheme();
+        // One predictable cycle, whatever the system preference is:
+        // Auto (follow the browser) -> Light -> Dark -> Auto.
+        const next = current === "auto" ? "light" : current === "light" ? "dark" : "auto";
+        setSavedTheme(next);
+        applyTheme(next);
+      });
+    }
+
+    // Update if the browser preference changes while in auto mode
+    if (mediaQuery) {
+      const handleMediaChange = () => {
+        if (getSavedTheme() === "auto") {
+          applyTheme("auto");
+        }
+      };
+      if (mediaQuery.addEventListener) {
+        mediaQuery.addEventListener("change", handleMediaChange);
+      } else if (mediaQuery.addListener) {
+        mediaQuery.addListener(handleMediaChange);
+      }
+    }
+  }
+
+  initTheme();
+
   let stream = null, running = false, sessionId = null, lastChallenge = null;
   // The manual extra check is offered only once the session has passed on the
   // passive stage (above threshold, so the engine issued no challenge).

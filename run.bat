@@ -1,5 +1,5 @@
 @echo off
-REM MOSSIP Face Liveness & PAD — minimal Windows runner
+REM MOSSIP Face Liveness & PAD — minimal Windows developer runner (jar only)
 REM Usage: run.bat [--port N] [--profile dev^|default] [--no-browser]
 
 setlocal enabledelayedexpansion
@@ -74,14 +74,18 @@ if %JMAJOR% LSS 17 (
 )
 echo Using JDK %JMAJOR%: %JAVA_BIN%
 
-REM Build if needed
+REM Build if needed.
+REM Skip both installer profiles: this is a developer launcher and only needs
+REM the jar. Without these flags `package` would build the WiX-backed .exe (or
+REM a .deb/.rpm on a unix-like host) as well.
 set JAR=target\pad-liveness-backend-1.0.0-SNAPSHOT.jar
+set SKIP_INSTALLERS=-Dlinux.package.skip=true -Dwindows.package.skip=true
 if not exist "%JAR%" (
   echo Building...
   if exist "mvnw.cmd" (
-    call mvnw.cmd -q package -DskipTests
+    call mvnw.cmd -q package -DskipTests %SKIP_INSTALLERS%
   ) else (
-    call mvn -q package -DskipTests
+    call mvn -q package -DskipTests %SKIP_INSTALLERS%
   )
 )
 

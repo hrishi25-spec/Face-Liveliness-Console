@@ -78,7 +78,15 @@ flowchart TD
 start.bat             # Windows
 ```
 
-The launcher builds the jar, runs it on the `dev` profile (in-memory H2, no PostgreSQL needed), waits for `/health` and opens the console.
+The launcher builds the jar, runs it on the `dev` profile (in-memory H2, no PostgreSQL needed), waits for `/health` and opens the console. It is a **developer** launcher: it passes `-Dlinux.package.skip=true -Dwindows.package.skip=true`, so it never builds an installer or downloads appimagetool. The minimal `./run.sh` / `run.bat` use the same flags.
+
+| Way to run | Command | Needs | Produces |
+|---|---|---|---|
+| **Developer launcher** | `./start.sh` or `./run.sh`; `start.bat` or `run.bat` | JDK 17+ | The jar, then a local console on port 8000 |
+| **Docker** | `docker compose up --build` | Docker | The API in a container, with PostgreSQL; separate from both other paths |
+| **Installer** | `.deb`, `.rpm`, AppImage or `.exe` from [Linux installers](#linux-installers) / [Windows installer](#windows-installer) | Nothing — the JRE is bundled | An installed service with a menu or Start-menu entry |
+
+The three paths are independent on purpose: the launchers never package, Docker never runs an installer, and an installed service never needs Maven or a JDK on the host.
 
 | Option | Effect |
 |---|---|
@@ -153,15 +161,16 @@ curl -s -b jar.txt -X PUT $BASE/api/v1/config/RESIDENT \
 
 ## Linux installers
 
-On Linux, `./mvnw package` also builds two installers next to the jar, in `target/dist/`:
+On Linux, `./mvnw package` also builds three installers next to the jar, in `target/dist/`:
 
 | File | What it is |
 |---|---|
 | `pad-liveness_<version>-1_amd64.deb` | Installs the service image under `/opt/pad-liveness` and the unit at `/lib/systemd/system/pad-liveness.service`, with a postinst that runs `systemctl daemon-reload` (`-1` is jpackage's Debian revision) |
+| `pad-liveness-<version>-1.x86_64.rpm` | The same payload and unit for Fedora/RHEL, installed under `/usr/lib/systemd/system`, with a scriptlet that runs `systemctl daemon-reload` |
 | `pad-liveness-<version>-x86_64.AppImage` | Self-contained; its `AppRun` starts the service, waits for `/health`, then opens the console at `http://127.0.0.1:8000/` in the browser |
 
 ```bash
-./mvnw package -DskipTests                 # jar + .deb + AppImage
+./mvnw package -DskipTests                 # jar + .deb + .rpm + AppImage
 ./mvnw package -DskipTests -Pslim          # same, from the linux-only jar (~90 MB less)
 ./mvnw package -DskipTests -Dlinux.package.skip=true   # jar only
 ```
@@ -171,17 +180,23 @@ On Linux, `./mvnw package` also builds two installers next to the jar, in `targe
 sudo dpkg -i target/dist/pad-liveness_*_amd64.deb
 sudo systemctl enable --now pad-liveness
 
+# .rpm: same decision, same unit
+sudo rpm -Uvh target/dist/pad-liveness-*-1.x86_64.rpm
+sudo systemctl enable --now pad-liveness
+
 # AppImage: no install, no root
 ./target/dist/pad-liveness-*-x86_64.AppImage
 ```
 
-Both start the **`dev` profile**, which keeps its database in memory, so they work on a machine with no PostgreSQL. For the real schema set `PAD_LIVENESS_PROFILE=prod` (AppImage) or edit `Environment=PAD_LIVENESS_PROFILE` in the unit (package) and provide the `POSTGRES_*` variables listed in [docs/configuration.md](docs/configuration.md).
+All three start the **`dev` profile**, which keeps its database in memory, so they work on a machine with no PostgreSQL. For the real schema set `PAD_LIVENESS_PROFILE=prod` (AppImage) or edit `Environment=PAD_LIVENESS_PROFILE` in the unit (package) and provide the `POSTGRES_*` variables listed in [docs/configuration.md](docs/configuration.md).
 
-- **The publish path is rehearsable without a tag.** The release job's staging, checksums and `gh` commands live in `scripts/release-assets.sh`, so the same code can be run by hand: `add` stages the four binaries under their release names, `checksums` writes and verifies the `.sha256` files, and `attach --tag <tag> --repo <owner/scratch>` publishes to a scratch repository instead of this one — `--dry-run` prints the exact `gh` command and touches nothing. `./scripts/release-assets.sh rehearse` runs the self-test (fixtures, every guard in the failing direction, both `gh` paths, the canary flag) that the *Linux packages* job runs on every push.
+Docker is deliberately **not** one of these installers: `docker compose up --build` runs the container path, while the packages install a bundled-JRE service on the host. Use one or the other, not both for the same instance.
+
+- **The publish path is rehearsable without a tag.** The release job's staging, checksums and `gh` commands live in `scripts/release-assets.sh`, so the same code can be run by hand: `add` stages the five binaries under their release names, `checksums` writes and verifies the `.sha256` files, and `attach --tag <tag> --repo <owner/scratch>` publishes to a scratch repository instead of this one — `--dry-run` prints the exact `gh` command and touches nothing. `./scripts/release-assets.sh rehearse` runs the self-test (fixtures, every guard in the failing direction, both `gh` paths, the canary flag) that the *Linux packages* job runs on every push.
 - **A headless install is the normal case, not an edge case.** jpackage's postinst registers a desktop-menu entry with `xdg-desktop-menu`, which exits 1 where no system menu directory is writable — no desktop, a container, a CI runner. The repacked postinst tolerates that failure, so `dpkg -i` configures the package and the unit can be enabled on a server with no desktop at all.
-- **Packaging is best-effort locally and strict in CI.** jpackage comes with the JDK the build already needs; `dpkg-deb`/`fakeroot` come from `dpkg` (Arch: `pacman -S dpkg`) and appimagetool is fetched once from its pinned 1.9.1 release into `~/.cache/pad-liveness`. A missing tool skips that half with a warning; `-Dlinux.package.strict=true` turns every skip into a failure, which is how CI builds it.
-- **The unit is sandboxed.** The packaged `pad-liveness.service` runs under `DynamicUser` with `NoNewPrivileges`, an empty `CapabilityBoundingSet`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible`/`ProcSubset=pid`, and a `@system-service` syscall filter, so `/var/lib/pad-liveness` (its `StateDirectory`) and a private `/tmp` are the only writable paths. `MemoryDenyWriteExecute` is deliberately absent — HotSpot's JIT executes pages it has just written — and so is `PrivateUsers`, which would remap the transient user away from its own state directory. `systemd-analyze security pad-liveness` scores the result 1.5/10 (OK). `SMOKE_UNIT_BOOT=1 ./scripts/smoke-linux-packages.sh` installs the package, boots the unit, probes `/health` and the console, and purges it again; the *Linux packages* job runs exactly that. **The directives need systemd 247 and kernel 5.8 or newer** — `ProtectProc`/`ProcSubset` arrived in 247 and need 5.8, and an older host drops them with one log line and no failure — so `./scripts/smoke-systemd-compat.sh` boots the unit on Debian 11 and Ubuntu 22.04, the floor, and fails if either host does not understand every directive in it.
-- **A tagged release publishes both installers beside the jars.** A `v*` tag builds them from the same slim, version-stamped jar the release ships, boots them with `scripts/smoke-linux-packages.sh`, and attaches `.deb` and AppImage to the GitHub Release next to the two jars — each with a sibling `.sha256`, so `sha256sum -c pad-liveness_<version>-1_amd64.deb.sha256` verifies a download from the directory it landed in. CI artifact storage is a seven-day convenience; the release is where an installable file is expected to live.
+- **Packaging is best-effort locally and strict in CI.** jpackage comes with the JDK the build already needs; `dpkg-deb`/`fakeroot` come from `dpkg` (Arch: `pacman -S dpkg`), `rpmbuild` from `rpm` (Fedora: `rpm-build`), and appimagetool is fetched once from its pinned 1.9.1 release into `~/.cache/pad-liveness`. A missing tool skips that half with a warning; `-Dlinux.package.strict=true` turns every skip into a failure, which is how CI builds it. A developer launcher (`./start.sh`, `run.sh`, `start.bat`, `run.bat`) passes the skip flags, so it never reaches any of this.
+- **The unit is sandboxed.** The packaged `pad-liveness.service` runs under `DynamicUser` with `NoNewPrivileges`, an empty `CapabilityBoundingSet`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectProc=invisible`/`ProcSubset=pid`, and a `@system-service` syscall filter, so `/var/lib/pad-liveness` (its `StateDirectory`) and a private `/tmp` are the only writable paths. `MemoryDenyWriteExecute` is deliberately absent — HotSpot's JIT executes pages it has just written — and so is `PrivateUsers`, which would remap the transient user away from its own state directory. `systemd-analyze security pad-liveness` scores the result 1.5/10 (OK). `SMOKE_UNIT_BOOT=1 ./scripts/smoke-linux-packages.sh` installs the `.deb`, boots the unit, probes `/health` and the console, and purges it again; the *Linux packages* job runs exactly that. **The directives need systemd 247 and kernel 5.8 or newer** — `ProtectProc`/`ProcSubset` arrived in 247 and need 5.8, and an older host drops them with one log line and no failure — so `./scripts/smoke-systemd-compat.sh` boots the unit on Debian 11 and Ubuntu 22.04, the floor, and fails if either host does not understand every directive in it.
+- **A tagged release publishes all three installers beside the jars.** A `v*` tag builds them from the same slim, version-stamped jar the release ships, checks the `.deb` and `.rpm` payloads and boots the AppImage with `scripts/smoke-linux-packages.sh`, then attaches all three to the GitHub Release next to the two jars — each with a sibling `.sha256`, so `sha256sum -c pad-liveness_<version>-1_amd64.deb.sha256` verifies a download from the directory it landed in. CI artifact storage is a seven-day convenience; the release is where an installable file is expected to live.
 - **The profile is activated by the OS, not `activeByDefault`**, so `-Pslim` cannot silently switch packaging off, and macOS/Windows builds are untouched.
 - **Only Linux x86_64 is wired up.** jpackage cannot cross-build either format; on another architecture the script fails with the `ARCH` case to extend.
 
@@ -202,6 +217,18 @@ On Windows, `\mvnw.cmd package` also builds an installer next to the jar, in `ta
 - **Build it from the full jar, never `-Pslim`.** The slim profile keeps linux/x86_64 native libraries only, so an installer built from it starts and then reports the engine unavailable to every frame. The packaging script refuses a slim jar rather than shipping that.
 - **Starts on the `dev` profile** (in-memory H2) like the Linux installers, so a fresh install runs on a machine with no PostgreSQL. Give the shortcut arguments, or run the installed `pad-liveness.exe`, with `--spring.profiles.active=prod` for the real schema — baked-in default arguments are only used when you pass none.
 - **The build is not code signed**, so Windows SmartScreen warns on first run. That is fine for internal use; sign the `.exe` before handing it to anyone else.
+
+## Android harness APK
+
+A `v*` tag also publishes `pad-liveness-android-harness-<version>.apk` (with a sibling `.sha256`), built from [`android_client/`](android_client/README.md) with the release version stamped into the APK.
+
+**It is not a service installer and not the MOSIP Registration Client.** The Android directory is the Flutter/Android integration harness: it is installable and opens on a device, but its session starts fail-closed until a host registers the native liveness API and camera pipeline. Read [android_client/README.md](android_client/README.md) before treating it as anything more than a host-integration artifact.
+
+```bash
+adb install pad-liveness-android-harness-<version>.apk   # debug-signed, sideload only
+```
+
+The release build is signed with the debug key (`android/app/build.gradle`), so it installs for testing but is not store-ready. To build it locally, follow the pinned Flutter toolchain in [android_client/README.md](android_client/README.md) and run `flutter build apk --release` from that directory. <!-- boundary-allow: the Flutter command documents the android_client harness, not the Maven service -->
 
 ## Per-role policy
 
@@ -317,7 +344,7 @@ node scripts/check-java-packages.mjs            # every package declaration matc
 cd pad_liveness_backend && python -m pytest -q   # 49 Python tests — boundary-allow: sibling project's suite, documented from the repository root
 ```
 
-Eighteen CI jobs cover unit and integration, console DOM guards, project boundaries, documentation links (every relative link and `#anchor` resolved), Java source layout (imports and packages), secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging (the jar's `BOOT-INF/lib` compared with the resolved runtime classpath, then booted), a Windows launcher smoke test (JDK under a path with a space), the Windows `.exe` installer (built strictly, then booted), the Docker image, the Linux `.deb` and AppImage (built strictly, then booted), a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, and tagged releases (both jars, both installers, and a `.sha256` beside every one of them). Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
+Nineteen CI jobs cover unit and integration, console DOM guards, project boundaries, documentation links (every relative link and `#anchor` resolved), Java source layout (imports and packages), secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging (the jar's `BOOT-INF/lib` compared with the resolved runtime classpath, then booted), a Windows launcher smoke test (JDK under a path with a space), the Windows `.exe` installer (built strictly, then booted), the Docker image, the Linux `.deb`, `.rpm` and AppImage (built strictly, then inspected and booted), a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, tagged releases (both jars, all three Linux installers, and a `.sha256` beside every one of them), and the Android harness APK. Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
 
 ## Configuration essentials
 

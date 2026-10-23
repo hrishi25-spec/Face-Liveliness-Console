@@ -3,29 +3,31 @@
 # Boot the Linux installers and prove they are installable artifacts, not just
 # files that exist.
 #
-# `./mvnw package` producing target/dist/*.deb and target/dist/*.AppImage only
-# says jpackage and appimagetool exited 0. The failures that reach a user are
-# all silent at build time:
+# `./mvnw package` producing target/dist/*.deb, *.rpm and *.AppImage only says
+# jpackage, rpmbuild and appimagetool exited 0. The failures that reach a user
+# are all silent at build time:
 #
-#   * the .deb installs the launcher somewhere the unit's ExecStart does not
+#   * a package installs the launcher somewhere the unit's ExecStart does not
 #     point at (jpackage's --linux-package-name changing /opt/<name>),
 #   * the systemd unit never makes it into the archive, or arrives without the
 #     daemon-reload hook, so `systemctl start` reports "unit not found" after a
 #     clean install,
+#   * the .rpm and .deb drift apart, so the host that installs one is less
+#     hardened than the host that installs the other,
 #   * AppRun cannot find usr/lib/pad-liveness inside the image and exits before
 #     the service starts — the AppImage looks fine in a file manager,
 #   * the bundled jar lost its OpenCV natives, which only shows up as
 #     `engine: unavailable` once the image boots.
 #
-# So this asserts the archive *contents* and then actually boots the AppImage,
+# So this asserts each archive's *contents* and then actually boots the AppImage,
 # probing /health and the console page.
 #
-# The unit inside the .deb gets the same treatment: its sandboxing directives
-# are checked against the *packaged* file, and with SMOKE_UNIT_BOOT=1 the
-# package is installed and the service started, because a unit that passes
+# The unit inside the .deb and .rpm gets the same treatment: its sandboxing
+# directives are checked against the *packaged* file, and with SMOKE_UNIT_BOOT=1
+# the .deb is installed and the service started, because a unit that passes
 # `systemd-analyze verify` can still fail to mount its own sandbox at runtime.
 #
-# Needs dpkg-deb (Debian/Ubuntu have it) and curl. SMOKE_DIST, SMOKE_PORT and
+# Needs dpkg-deb, rpm, rpm2cpio, cpio and curl. SMOKE_DIST, SMOKE_PORT and
 # SMOKE_LOG override the defaults; SMOKE_UNIT_BOOT=1 needs root (or passwordless
 # sudo, which is what CI has) and a free port 8000. Exits non-zero with the tail
 # of the application log on any failure.
@@ -50,24 +52,37 @@ fail() {
 
 command -v dpkg-deb >/dev/null 2>&1 \
     || fail "dpkg-deb is required to inspect the .deb — apt-get install dpkg"
+command -v rpm >/dev/null 2>&1 \
+    || fail "rpm is required to inspect the .rpm — apt-get install rpm"
+command -v rpm2cpio >/dev/null 2>&1 \
+    || fail "rpm2cpio is required to read the .rpm payload — it ships with rpm"
+command -v cpio >/dev/null 2>&1 \
+    || fail "cpio is required to read the .rpm payload — apt-get install cpio"
 
 shopt -s nullglob
 DEBS=( "$DIST"/*.deb )
+RPMS=( "$DIST"/*.rpm )
 APPIMAGES=( "$DIST"/*.AppImage )
 shopt -u nullglob
 
 [ "${#DEBS[@]}" -gt 0 ] \
     || fail "no .deb in $DIST — build it: ./mvnw package -DskipTests"
+[ "${#RPMS[@]}" -gt 0 ] \
+    || fail "no .rpm in $DIST — build it: ./mvnw package -DskipTests"
 [ "${#APPIMAGES[@]}" -gt 0 ] \
     || fail "no AppImage in $DIST — build it: ./mvnw package -DskipTests"
 [ "${#DEBS[@]}" -eq 1 ] \
     || fail "expected one .deb in $DIST, found ${#DEBS[@]}: ${DEBS[*]}"
+[ "${#RPMS[@]}" -eq 1 ] \
+    || fail "expected one .rpm in $DIST, found ${#RPMS[@]}: ${RPMS[*]}"
 [ "${#APPIMAGES[@]}" -eq 1 ] \
     || fail "expected one AppImage in $DIST, found ${#APPIMAGES[@]}: ${APPIMAGES[*]}"
 
 DEB="${DEBS[0]}"
+RPM="${RPMS[0]}"
 APPIMAGE="${APPIMAGES[0]}"
 echo "checking: $DEB"
+echo "checking: $RPM"
 echo "checking: $APPIMAGE"
 
 # Both halves leave something behind if a later assertion fails: a running
@@ -137,6 +152,53 @@ if [ -n "$FIRST_EXIT" ] && [ "$HOOK_LINE" -gt "$FIRST_EXIT" ]; then
     fail "the daemon-reload hook in $DEB's postinst is after the first exit — it never runs"
 fi
 echo "  postinst: daemon-reload at line $HOOK_LINE (first exit: ${FIRST_EXIT:-none})"
+
+# ------------------------------------------------------------------- .rpm
+#
+# The RPM is generated from the same application image as the .deb, but it is
+# still a separate archive: a spec with the wrong file list, a missing unit or a
+# desktop entry that points at a path the package never installs all build
+# cleanly. The boot below covers the app image through the AppImage; this checks
+# what only the RPM carries.
+
+[ "$(rpm -qp --qf '%{NAME}' "$RPM")" = "$NAME" ] \
+    || fail "$RPM does not declare Name: $NAME"
+[ "$(rpm -qp --qf '%{ARCH}' "$RPM")" = "x86_64" ] \
+    || fail "$RPM is not built for x86_64 (jpackage is only wired up there)"
+RPM_VERSION=$(rpm -qp --qf '%{VERSION}' "$RPM")
+DEB_VERSION=$(dpkg-deb -f "$DEB" Version)
+case "$RPM_VERSION" in
+    "$DEB_VERSION"|"${DEB_VERSION%%-*}") ;;
+    *) fail "$RPM declares Version $RPM_VERSION, .deb declares $DEB_VERSION" ;;
+esac
+echo "  package: $(rpm -qp --qf '%{NAME} %{VERSION}-%{RELEASE} (%{ARCH})' "$RPM")"
+
+RPM_LISTING=$(rpm -qpl "$RPM") || fail "cannot list the contents of $RPM"
+RPM_UNIT_PATH="/usr/lib/systemd/system/$NAME.service"
+printf '%s\n' "$RPM_LISTING" | grep -qx "$RPM_UNIT_PATH" \
+    || fail "$RPM does not install $RPM_UNIT_PATH — the unit was not added to the payload"
+printf '%s\n' "$RPM_LISTING" | grep -qx "/opt/$NAME/bin/$NAME" \
+    || fail "$RPM does not install /opt/$NAME/bin/$NAME"
+
+# Both packages ship the same unit; drift here means one of them is unhardened
+# or points at a launcher the other does not install.
+RPM_UNIT=$(rpm2cpio "$RPM" | cpio -i --to-stdout ".$RPM_UNIT_PATH" 2>/dev/null) \
+    || fail "cannot read $RPM_UNIT_PATH out of $RPM"
+[ -n "$RPM_UNIT" ] || fail "$RPM_UNIT_PATH is empty in $RPM"
+[ "$RPM_UNIT" = "$UNIT" ] \
+    || fail "the .rpm and .deb carry different systemd units — packaging/linux/pad-liveness.service drifted"
+
+RPM_DESKTOP=$(rpm2cpio "$RPM" | cpio -i --to-stdout "./usr/share/applications/$NAME.desktop" 2>/dev/null) \
+    || fail "cannot read the desktop entry out of $RPM"
+printf '%s\n' "$RPM_DESKTOP" | grep -qx "Exec=/opt/$NAME/bin/$NAME" \
+    || fail "$RPM's desktop entry does not start /opt/$NAME/bin/$NAME"
+printf '%s\n' "$RPM_DESKTOP" | grep -qx "Icon=/usr/share/icons/hicolor/512x512/apps/$NAME.png" \
+    || fail "$RPM's desktop entry does not point at the installed icon"
+
+RPM_SCRIPTS=$(rpm -qp --scripts "$RPM" 2>/dev/null || true)
+printf '%s\n' "$RPM_SCRIPTS" | grep -q 'daemon-reload' \
+    || fail "$RPM has no scriptlet that runs systemctl daemon-reload"
+echo "  rpm: unit, launcher, desktop entry and daemon-reload scriptlet present"
 
 # --------------------------------------------------------------- unit sandbox
 #
@@ -270,7 +332,7 @@ case "$CONTENT_TYPE" in
 esac
 echo "  console: / served $CONTENT_TYPE"
 
-echo "linux installers booted: $NAME .deb and AppImage"
+echo "linux installers checked: $NAME .deb and .rpm, AppImage booted"
 
 # ------------------------------------------------------------- installed unit
 #

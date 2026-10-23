@@ -2,12 +2,12 @@
 #
 # MOSSIP Face Liveness & PAD — one-command launcher.
 #
-#   ./start.sh                 build if needed, start the service, open the console
-#   ./start.sh --no-build      skip Maven and launch the existing jar (fast restart)
-#   ./start.sh --rebuild       clean build + full test suite
-#   ./start.sh --port 9000     serve on a different port
-#   ./start.sh --no-browser    don't open a browser
-#   ./start.sh --profile prod  run against PostgreSQL instead of H2
+#   ./scripts/start.sh                 build if needed, start the service, open the console
+#   ./scripts/start.sh --no-build      skip Maven and launch the existing jar (fast restart)
+#   ./scripts/start.sh --rebuild       clean build + full test suite
+#   ./scripts/start.sh --port 9000     serve on a different port
+#   ./scripts/start.sh --no-browser    don't open a browser
+#   ./scripts/start.sh --profile prod  run against PostgreSQL instead of H2
 #
 # Works on macOS, Linux and Windows Git Bash / MSYS2 / Cygwin.
 #
@@ -18,7 +18,11 @@ if [ -z "${BASH_VERSION:-}" ]; then
   exec bash "$0" "$@"
 fi
 
-cd "$(dirname "$0")"
+# This launcher lives in scripts/ but every path it uses (mvnw, target/, the
+# jar) is relative to the repository root. Without this hop, `./scripts/start.sh`
+# would look for the Maven wrapper inside scripts/ and fall back to a system
+# Maven, or build into scripts/target.
+cd "$(dirname "$0")/.."
 
 PORT="${MOSSIP_PORT:-8000}"
 PROFILE="dev"
@@ -63,7 +67,7 @@ while [ $# -gt 0 ]; do
 done
 
 say ""
-say "${B}MOSIP Face Liveness & PAD Service${OFF} ${DIM}— launcher${OFF}"
+say "${B}MOSIP Face Liveness & PAD Service${OFF} ${DIM}— developer launcher (jar only)${OFF}"
 say "${DIM}$(uname -s) $(uname -m) · port $PORT · profile $PROFILE${OFF}"
 say ""
 
@@ -116,19 +120,27 @@ MVN=""
 if [ -x "./mvnw" ]; then MVN="./mvnw"; elif command -v mvn >/dev/null 2>&1; then MVN="mvn"; fi
 
 # ------------------------------------------------------------------- 3. build
+#
+# `package` also activates the OS packaging profiles, which build a .deb/.rpm or
+# a Windows .exe from the jar. A developer running this launcher wants the jar,
+# not an installer: the profiles can download appimagetool, need dpkg/rpmbuild
+# or WiX, and add minutes to every start. Both skip flags are passed on every
+# invocation — including --rebuild, whose `clean` would otherwise discard the
+# installers it had just spent that time building.
+SKIP_INSTALLERS="-Dlinux.package.skip=true -Dwindows.package.skip=true"
 if [ "$DO_BUILD" = 1 ]; then
   [ -n "$MVN" ] || die "Neither ./mvnw nor 'mvn' is available, so the jar cannot be built.
-  Either install Maven (https://maven.apache.org) or run './start.sh --no-build'
+  Either install Maven (https://maven.apache.org) or run './scripts/start.sh --no-build'
   once a prebuilt $JAR exists."
   if [ "$DO_CLEAN" = 1 ]; then
     info "Clean build (this also runs the full test suite)…"
-    "$MVN" clean package
+    "$MVN" clean package $SKIP_INSTALLERS
   elif [ "$RUN_TESTS" = 1 ]; then
     info "Building and running tests…"
-    "$MVN" package
+    "$MVN" package $SKIP_INSTALLERS
   else
     info "Building (skipping tests — use --test to include them)…"
-    "$MVN" -q package -DskipTests
+    "$MVN" -q package -DskipTests $SKIP_INSTALLERS
   fi
   [ -f "$JAR" ] || die "Build finished but $JAR is missing."
   ok "Build complete"

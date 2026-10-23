@@ -58,7 +58,7 @@ exit /b 2
 :parsed
 
 echo.
-echo  MOSIP Face Liveness ^& PAD Service - launcher
+echo  MOSIP Face Liveness ^& PAD Service - developer launcher (jar only)
 echo  ------------------------------------------------------------------
 echo  port %PORT%   profile %PROFILE%
 echo.
@@ -125,6 +125,12 @@ if exist "mvnw.cmd" set "MVN=mvnw.cmd"
 if not defined MVN for %%i in (mvn.cmd) do if not "%%~$PATH:i"=="" set "MVN=%%~$PATH:i"
 
 rem ------------------------------------------------------------------- 3. build
+rem `package` also activates the Windows packaging profile, which builds the
+rem WiX-backed .exe from the jar. A developer running this launcher wants the
+rem jar, not an installer: the profile needs WiX Toolset and adds minutes to
+rem every start. Both skip flags are passed so the Linux profile stays inert
+rem too (Git Bash/MSYS can be detected as unix by Maven).
+set "SKIP_INSTALLERS=-Dlinux.package.skip=true -Dwindows.package.skip=true"
 if "%DO_BUILD%"=="1" (
   if not defined MVN (
     echo [X] Neither mvnw.cmd nor mvn.cmd is available, so the jar cannot be built.
@@ -134,13 +140,13 @@ if "%DO_BUILD%"=="1" (
   )
   if "%DO_CLEAN%"=="1" (
     echo [.] Clean build ^(this also runs the full test suite^)...
-    call "%MVN%" clean package
+    call "%MVN%" clean package %SKIP_INSTALLERS%
   ) else if "%RUN_TESTS%"=="1" (
     echo [.] Building and running tests...
-    call "%MVN%" package
+    call "%MVN%" package %SKIP_INSTALLERS%
   ) else (
     echo [.] Building ^(skipping tests - use --test to include them^)...
-    call "%MVN%" -q package -DskipTests
+    call "%MVN%" -q package -DskipTests %SKIP_INSTALLERS%
   )
   if errorlevel 1 (
     echo [X] Build failed. Fix the errors above and try again.

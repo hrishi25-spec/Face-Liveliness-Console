@@ -14,6 +14,12 @@ Builds automatically if needed, starts on port 8000, opens the browser. `run.sh`
 the minimal runner; `start.sh` adds `--rebuild`, `--test` and `--lowmem`, and
 Windows `start.bat` also has `--doctor`.
 
+These are **developer launchers** and build only the jar. They pass
+`-Dlinux.package.skip=true -Dwindows.package.skip=true`, so they never build a
+`.deb`, `.rpm`, AppImage or `.exe` and never download appimagetool. For an
+installable build see [README → Linux installers](README.md#linux-installers) or
+[Windows installer](README.md#windows-installer).
+
 ## Minimal Hardware Requirements
 
 | Resource | Minimum | Recommended |
@@ -86,9 +92,13 @@ stale copy.
 
 ## Docker (Production)
 
+Docker is a separate delivery path from both the developer launchers and the
+installers: it runs the service from a container rather than a host JVM, so it
+needs neither `run.sh` nor an installed package.
+
 ```bash
 # Build slim jar once
-./mvnw clean package -DskipTests -Pslim
+./mvnw clean package -DskipTests -Pslim -Dlinux.package.skip=true
 
 # Run with Docker (needs .env with POSTGRES_PASSWORD, etc.)
 docker compose -f docker-compose.lite.yml up -d

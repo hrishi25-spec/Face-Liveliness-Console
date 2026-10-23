@@ -488,11 +488,13 @@
       Linux installers: a plain `./mvnw package` also produces
 
         target/dist/pad-liveness_<version>_amd64.deb          (systemd unit inside)
+        target/dist/pad-liveness-<version>-1.x86_64.rpm       (same unit and menu entry)
         target/dist/pad-liveness-<version>-x86_64.AppImage    (AppRun opens the console)
 
       The work lives in scripts/package-linux.sh: jpackage is a CLI over an
-      application image and the AppImage step has no Maven equivalent, so the
-      profile only names the phase and passes the version through.
+      application image, the RPM is assembled with a generated spec, and the
+      AppImage step has no Maven equivalent, so the profile only names the
+      phase and passes the version through.
 
       Activated by the OS, not activeByDefault, and on purpose:
       - activeByDefault is switched off by any -P on the command line, so
@@ -501,13 +503,15 @@
       - It is inert on macOS and Windows, where jpackage cannot make a .deb.
 
       Skipping is not fatal outside strict mode, because packaging is not a
-      test: a workstation without dpkg-deb still gets its jar and AppImage plus
-      a warning, and the existing CI package jobs keep building jars on a runner
-      where a tool is missing. The *Linux packages* CI job runs with
-      -Dlinux.package.strict=true and boots the result, which is what actually
-      guarantees both artifacts.
+      test: a workstation without dpkg-deb or rpmbuild still gets its jar and
+      the other installers plus a warning, and the existing CI package jobs
+      keep building jars on a runner where a tool is missing. The *Linux
+      packages* CI job runs with -Dlinux.package.strict=true and inspects and
+      boots the result, which is what actually guarantees every artifact.
 
-      -Dlinux.package.skip=true disables it for a jar-only build.
+      -Dlinux.package.skip=true disables it for a jar-only build; the developer
+      launchers pass it so they never spend time packaging or downloading
+      appimagetool.
     -->
     <profile>
       <id>linux-package</id>

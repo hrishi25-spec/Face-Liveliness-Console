@@ -825,7 +825,7 @@ A **workstation-only** synthetic-data pipeline for MiniFASNet: `generate_synthet
 | Cross-backend contract | `CrossBackendContractTest` — one spent retry budget driven on both services, terminal verdicts compared | `./mvnw --batch-mode test -Dtest='CrossBackendContractTest'` (needs `PAD_LIVENESS_PYTHON`) |
 | Console DOM | Real `index.html` + `console.js` guards in a DOM | `node src/test/js/console-guards.test.mjs` |
 | Python backend | 49 tests (SQLite behaviour, OpenCV fixtures, imports, PostgreSQL migrations, persistence, the cross-backend scenario script) | `python -m pytest -q` in `pad_liveness_backend/` |
-| Android client | Locked dependency resolution, binding regeneration + diff, formatting, analyse, APK build | see [android_client/README.md](../android_client/README.md) |
+| Android client | Locked dependency resolution, binding regeneration + diff, formatting, analyse, debug APK; a tagged release also builds the installable harness APK | see [android_client/README.md](../android_client/README.md) |
 
 88 Java test classes / 751 tests. The unit and integration suites run as two
 parallel, independent jobs so one failure cannot cancel the other.

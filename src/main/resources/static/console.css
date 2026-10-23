@@ -12,6 +12,15 @@
   --color-subtle-2: #e2e8f0;
   --color-video-bg: #020617;
 
+  /* Aliases for Calm Sovereign semantic tokens (Light Mode) */
+  --canvas-bg: #f8fafc;
+  --surface-base: #f1f5f9;
+  --surface-raised: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-camera: #020617;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+
   /* Borders */
   --color-border: #e2e8f0;
   --color-border-hover: #cbd5e1;
@@ -30,6 +39,7 @@
   --color-primary-subtle: #eff6ff;
   --color-primary-border: #bfdbfe;
   --color-focus-ring: rgba(59, 130, 246, 0.35);
+  --color-accent-glow: rgba(30, 86, 208, 0.20);
 
   /* Status Tokens (pills, chips, inline status) */
   --color-success: #15803d;
@@ -48,6 +58,11 @@
   --color-warning-border: #fcd34d;
   --color-warning-text: #b45309;
 
+  --color-info: #0284c7;
+  --color-info-surface: #e0f2fe;
+  --color-info-border: #7dd3fc;
+  --color-info-text: #0369a1;
+
   /* Status banners (feedback cards — one notch lighter than the pills) */
   --banner-success-bg: #f0fdf4;
   --banner-success-title: #14532d;
@@ -62,6 +77,31 @@
   --banner-neutral-bg: #f1f5f9;
   --banner-neutral-title: #0f172a;
   --banner-neutral-body: #475569;
+
+  /* Component adaptive tokens */
+  --color-button-secondary-bg: #ffffff;
+  --color-button-secondary-text: #344054;
+  --color-button-secondary-border: #cbd5e1;
+  --color-button-secondary-hover-bg: #f8fafc;
+  --color-button-secondary-hover-border: #94a3b8;
+
+  --color-button-danger-bg: #b91c1c;
+  --color-button-danger-text: #ffffff;
+  --color-button-danger-border: #b91c1c;
+  --color-button-danger-hover: #991b1b;
+
+  --color-table-th-bg: #f8fafc;
+  --color-table-th-text: #475569;
+  --color-table-td-text: #344054;
+  --color-table-tr-hover: #f8fafc;
+  --color-segmented-active-bg: #ffffff;
+  --color-modal-backdrop: rgba(15, 23, 42, 0.45);
+  --color-modal-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
+  --color-input-bg: #ffffff;
+  --color-input-border: #cbd5e1;
+
+  /* Native widgets (scrollbars, selects, pickers) follow the active theme */
+  color-scheme: light;
 
   /* Spacing */
   --space-1: 4px;
@@ -87,14 +127,11 @@
   --shadow-md: 0 4px 8px -2px rgba(16, 24, 40, 0.1), 0 2px 4px -2px rgba(16, 24, 40, 0.06);
   --shadow-lg: 0 12px 16px -4px rgba(16, 24, 40, 0.08), 0 4px 6px -2px rgba(16, 24, 40, 0.03);
 
-  /* Fonts — DESIGN.md specifies Inter for UI and JetBrains Mono for hashes,
-     nonces and diagnostics. The page is served under `style-src 'self'`, so no
-     font CDN is allowed: Inter and JetBrains Mono are used when the workstation
-     already has them, and the platform UI font otherwise. */
+  /* Fonts */
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
-  /* Layout — 1440px content cap on administrative screens, 8pt grid */
+  /* Layout */
   --layout-max-width: 1440px;
   --layout-gutter: 24px;
   --control-height: 40px;
@@ -102,7 +139,7 @@
 
 /* The hidden attribute is the only show/hide switch in the markup, and the
    component rules below set `display` on the same elements (buttons, pills,
-   tabs, cards). Without this the author rule wins over the user-agent's
+   tabs, cards, modals). Without this the author rule wins over the user-agent's
    `[hidden] { display: none }` and a hidden control stays on screen — which is
    how an operator ended up seeing the supervisor-only Load/Sign-out buttons and
    every admin tab. */
@@ -110,50 +147,311 @@
   display: none !important;
 }
 
+/* Explicit light mode override */
+:root[data-theme="light"],
+html.light {
+  color-scheme: light;
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f8fafc;
+  --color-subtle: #f1f5f9;
+  --color-subtle-2: #e2e8f0;
+  --color-video-bg: #020617;
+  --canvas-bg: #f8fafc;
+  --surface-base: #f1f5f9;
+  --surface-raised: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-camera: #020617;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --color-border: #e2e8f0;
+  --color-border-hover: #cbd5e1;
+  --color-border-strong: #94a3b8;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748b;
+  --color-text-inverse: #ffffff;
+  --color-primary: #1e56d0;
+  --color-primary-hover: #1b4dba;
+  --color-primary-active: #003eaa;
+  --color-primary-subtle: #eff6ff;
+  --color-primary-border: #bfdbfe;
+  --color-focus-ring: rgba(59, 130, 246, 0.35);
+  --color-accent-glow: rgba(30, 86, 208, 0.20);
+  --color-success: #15803d;
+  --color-success-surface: #dcfce7;
+  --color-success-border: #86efac;
+  --color-success-text: #15803d;
+  --color-danger: #b91c1c;
+  --color-danger-hover: #991b1b;
+  --color-danger-surface: #fee2e2;
+  --color-danger-border: #fca5a5;
+  --color-danger-text: #b91c1c;
+  --color-warning: #b45309;
+  --color-warning-surface: #fef3c7;
+  --color-warning-border: #fcd34d;
+  --color-warning-text: #b45309;
+  --color-info: #0284c7;
+  --color-info-surface: #e0f2fe;
+  --color-info-border: #7dd3fc;
+  --color-info-text: #0369a1;
+  --banner-success-bg: #f0fdf4;
+  --banner-success-title: #14532d;
+  --banner-success-body: #166534;
+  --banner-danger-bg: #fef2f2;
+  --banner-danger-title: #7f1d1d;
+  --banner-danger-body: #991b1b;
+  --banner-warning-bg: #fefce8;
+  --banner-warning-border: #fde047;
+  --banner-warning-title: #713f12;
+  --banner-warning-body: #854d0e;
+  --banner-neutral-bg: #f1f5f9;
+  --banner-neutral-title: #0f172a;
+  --banner-neutral-body: #475569;
+  --color-button-secondary-bg: #ffffff;
+  --color-button-secondary-text: #344054;
+  --color-button-secondary-border: #cbd5e1;
+  --color-button-secondary-hover-bg: #f8fafc;
+  --color-button-secondary-hover-border: #94a3b8;
+  --color-button-danger-bg: #b91c1c;
+  --color-button-danger-text: #ffffff;
+  --color-button-danger-border: #b91c1c;
+  --color-button-danger-hover: #991b1b;
+  --color-table-th-bg: #f8fafc;
+  --color-table-th-text: #475569;
+  --color-table-td-text: #344054;
+  --color-table-tr-hover: #f8fafc;
+  --color-segmented-active-bg: #ffffff;
+  --color-modal-backdrop: rgba(15, 23, 42, 0.45);
+  --color-modal-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
+  --color-input-bg: #ffffff;
+  --color-input-border: #cbd5e1;
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.1), 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 8px -2px rgba(16, 24, 40, 0.1), 0 2px 4px -2px rgba(16, 24, 40, 0.06);
+  --shadow-lg: 0 12px 16px -4px rgba(16, 24, 40, 0.08), 0 4px 6px -2px rgba(16, 24, 40, 0.03);
+}
+
+/* ==================== CALM SOVEREIGN DARK MODE ====================
+   Eye-soothing institutional enterprise dark mode from stitch_eye_soothing_dark_mode_ui:
+   Deep slate, obsidian, midnight tones paired with soft off-white typography
+   and luminescent cobalt signals to dampen retinal fatigue over prolonged shifts.
+   Applies automatically when browser is in dark mode (prefers-color-scheme: dark),
+   or explicitly via [data-theme="dark"] / .dark. */
+
 @media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #0b1220;
-    --color-surface: #131c2e;
-    --color-surface-subtle: #17203a;
-    --color-subtle: #1c2740;
-    --color-subtle-2: #26334f;
-    --color-border: #26334f;
-    --color-border-hover: #3b4a6b;
-    --color-border-strong: #5b6b8c;
-    --color-text-primary: #eaf1ff;
-    --color-text-secondary: #b6c2d9;
-    --color-text-muted: #8494b0;
-    --color-primary: #6f9bff;
-    --color-primary-hover: #8cb0ff;
-    --color-primary-active: #b4c5ff;
-    --color-primary-subtle: #172b53;
-    --color-primary-border: #2b4a8f;
-    --color-success: #4ade80;
-    --color-success-surface: #0a2618;
-    --color-success-border: #134e2c;
-    --color-success-text: #4ade80;
-    --color-danger: #fca5a5;
-    --color-danger-surface: #2d1214;
-    --color-danger-border: #591d21;
-    --color-danger-text: #fca5a5;
-    --color-warning: #fcd34d;
-    --color-warning-surface: #291c06;
-    --color-warning-border: #54390b;
-    --color-warning-text: #fcd34d;
-    --banner-success-bg: #0a2618;
-    --banner-success-title: #86efac;
-    --banner-success-body: #bbf7d0;
-    --banner-danger-bg: #2d1214;
-    --banner-danger-title: #fca5a5;
-    --banner-danger-body: #fecaca;
-    --banner-warning-bg: #291c06;
-    --banner-warning-border: #54390b;
-    --banner-warning-title: #fcd34d;
-    --banner-warning-body: #fde68a;
-    --banner-neutral-bg: #1c2740;
-    --banner-neutral-title: #eaf1ff;
-    --banner-neutral-body: #b6c2d9;
+  :root:not([data-theme="light"]):not(.light) {
+    color-scheme: dark;
+
+    /* Canvas & Surface Architecture */
+    --color-bg: #090D16;                /* canvas-bg: base canvas foundation */
+    --color-surface: #111827;           /* surface-raised: standard cards/panels/topbar */
+    --color-surface-subtle: #161F30;    /* surface-elevated: top-level interactive surfaces and hover */
+    --color-subtle: #0B0F19;            /* surface-base: recessed sections, table headers, code blocks */
+    --color-subtle-2: #1F293D;          /* border-subtle */
+    --color-video-bg: #030712;          /* surface-camera: absolute contrast well for sensor stream */
+
+    /* Semantic Aliases from DESIGN.md */
+    --canvas-bg: #090D16;
+    --surface-base: #0B0F19;
+    --surface-raised: #111827;
+    --surface-elevated: #161F30;
+    --surface-camera: #030712;
+    --border-subtle: #1F293D;
+    --border-strong: #2D3748;
+
+    /* Borders & Dividers */
+    --color-border: #1F293D;            /* border-subtle: hairlines for quiet component boundaries */
+    --color-border-hover: #2D3748;      /* border-strong */
+    --color-border-strong: #2D3748;     /* border-strong: focused or active partitions */
+
+    /* Typography */
+    --color-text-primary: #F1F5F9;      /* text-primary (slate-100): headlines and high-priority states */
+    --color-text-secondary: #94A3B8;    /* text-secondary (slate-400): secondary context */
+    --color-text-muted: #64748B;        /* text-muted (slate-500): timestamps, hints, subdued text */
+    --color-text-inverse: #090D16;
+
+    /* Brand & Signal Accents */
+    --color-primary: #3B82F6;           /* cobalt blue: active focus, selection states, affirmative actions */
+    --color-primary-hover: #60A5FA;     /* lighter cobalt for hover states */
+    --color-primary-active: #2563EB;
+    --color-primary-subtle: rgba(59, 130, 246, 0.15);
+    --color-primary-border: rgba(59, 130, 246, 0.35);
+    --color-focus-ring: rgba(59, 130, 246, 0.25);
+    --color-accent-glow: rgba(59, 130, 246, 0.22);
+
+    /* Institutional Status System (low-luminance alpha tints with calibrated pastel text) */
+    --color-success: #34D399;           /* status-success-text */
+    --color-success-surface: rgba(16, 185, 129, 0.12); /* status-success-bg */
+    --color-success-border: rgba(16, 185, 129, 0.28);  /* status-success-border */
+    --color-success-text: #34D399;
+
+    --color-danger: #F87171;            /* status-danger-text */
+    --color-danger-hover: #ef4444;
+    --color-danger-surface: rgba(244, 63, 94, 0.12);   /* status-danger-bg */
+    --color-danger-border: rgba(244, 63, 94, 0.28);    /* status-danger-border */
+    --color-danger-text: #F87171;
+
+    --color-warning: #FBBF24;           /* status-warning-text */
+    --color-warning-surface: rgba(245, 158, 11, 0.12); /* status-warning-bg */
+    --color-warning-border: rgba(245, 158, 11, 0.28);  /* status-warning-border */
+    --color-warning-text: #FBBF24;
+
+    --color-info: #38BDF8;              /* status-info-text */
+    --color-info-surface: rgba(56, 189, 248, 0.12);    /* status-info-bg */
+    --color-info-border: rgba(56, 189, 248, 0.28);     /* status-info-border */
+    --color-info-text: #38BDF8;
+
+    /* Status banners */
+    --banner-success-bg: rgba(16, 185, 129, 0.10);
+    --banner-success-title: #F1F5F9;
+    --banner-success-body: #34D399;
+    --banner-danger-bg: rgba(244, 63, 94, 0.10);
+    --banner-danger-title: #F1F5F9;
+    --banner-danger-body: #F87171;
+    --banner-warning-bg: rgba(245, 158, 11, 0.10);
+    --banner-warning-border: rgba(245, 158, 11, 0.28);
+    --banner-warning-title: #F1F5F9;
+    --banner-warning-body: #FBBF24;
+    --banner-neutral-bg: #161F30;
+    --banner-neutral-title: #F1F5F9;
+    --banner-neutral-body: #94A3B8;
+
+    /* Component adaptive tokens for Calm Sovereign Dark */
+    --color-button-secondary-bg: #161F30;
+    --color-button-secondary-text: #F1F5F9;
+    --color-button-secondary-border: #2D3748;
+    --color-button-secondary-hover-bg: #1E293B;
+    --color-button-secondary-hover-border: #3B82F6;
+
+    --color-button-danger-bg: rgba(244, 63, 94, 0.12);
+    --color-button-danger-text: #F87171;
+    --color-button-danger-border: rgba(244, 63, 94, 0.30);
+    --color-button-danger-hover: rgba(244, 63, 94, 0.22);
+
+    --color-table-th-bg: #0B0F19;
+    --color-table-th-text: #64748B;
+    --color-table-td-text: #F1F5F9;
+    --color-table-tr-hover: #161F30;
+    --color-segmented-active-bg: #161F30;
+    --color-modal-backdrop: rgba(3, 7, 18, 0.75);
+    --color-modal-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5), 0 0 0 1px #2D3748;
+    --color-input-bg: #161F30;          /* Tier 2 elevated inputs */
+    --color-input-border: #2D3748;
+
+    /* Crisp Micro-edge Shadows */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4), 0 0 0 1px #1F293D;
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 0 0 1px #2D3748;
+    --shadow-lg: 0 12px 24px -4px rgba(0, 0, 0, 0.6), 0 0 0 1px #2D3748;
   }
+}
+
+:root[data-theme="dark"],
+html.dark {
+  color-scheme: dark;
+
+  /* Canvas & Surface Architecture */
+  --color-bg: #090D16;                /* canvas-bg: base canvas foundation */
+  --color-surface: #111827;           /* surface-raised: standard cards/panels/topbar */
+  --color-surface-subtle: #161F30;    /* surface-elevated: top-level interactive surfaces and hover */
+  --color-subtle: #0B0F19;            /* surface-base: recessed sections, table headers, code blocks */
+  --color-subtle-2: #1F293D;          /* border-subtle */
+  --color-video-bg: #030712;          /* surface-camera: absolute contrast well for sensor stream */
+
+  /* Semantic Aliases from DESIGN.md */
+  --canvas-bg: #090D16;
+  --surface-base: #0B0F19;
+  --surface-raised: #111827;
+  --surface-elevated: #161F30;
+  --surface-camera: #030712;
+  --border-subtle: #1F293D;
+  --border-strong: #2D3748;
+
+  /* Borders & Dividers */
+  --color-border: #1F293D;            /* border-subtle: hairlines for quiet component boundaries */
+  --color-border-hover: #2D3748;      /* border-strong */
+  --color-border-strong: #2D3748;     /* border-strong: focused or active partitions */
+
+  /* Typography */
+  --color-text-primary: #F1F5F9;      /* text-primary (slate-100): headlines and high-priority states */
+  --color-text-secondary: #94A3B8;    /* text-secondary (slate-400): secondary context */
+  --color-text-muted: #64748B;        /* text-muted (slate-500): timestamps, hints, and borders */
+  --color-text-inverse: #090D16;
+
+  /* Brand & Signal Accents */
+  --color-primary: #3B82F6;           /* cobalt blue: active focus, selection states, affirmative actions */
+  --color-primary-hover: #60A5FA;     /* lighter cobalt for hover states */
+  --color-primary-active: #2563EB;
+  --color-primary-subtle: rgba(59, 130, 246, 0.15);
+  --color-primary-border: rgba(59, 130, 246, 0.35);
+  --color-focus-ring: rgba(59, 130, 246, 0.25);
+  --color-accent-glow: rgba(59, 130, 246, 0.22);
+
+  /* Institutional Status System (low-luminance alpha tints with calibrated pastel text) */
+  --color-success: #34D399;           /* status-success-text */
+  --color-success-surface: rgba(16, 185, 129, 0.12); /* status-success-bg */
+  --color-success-border: rgba(16, 185, 129, 0.28);  /* status-success-border */
+  --color-success-text: #34D399;
+
+  --color-danger: #F87171;            /* status-danger-text */
+  --color-danger-hover: #ef4444;
+  --color-danger-surface: rgba(244, 63, 94, 0.12);   /* status-danger-bg */
+  --color-danger-border: rgba(244, 63, 94, 0.28);    /* status-danger-border */
+  --color-danger-text: #F87171;
+
+  --color-warning: #FBBF24;           /* status-warning-text */
+  --color-warning-surface: rgba(245, 158, 11, 0.12); /* status-warning-bg */
+  --color-warning-border: rgba(245, 158, 11, 0.28);  /* status-warning-border */
+  --color-warning-text: #FBBF24;
+
+  --color-info: #38BDF8;              /* status-info-text */
+  --color-info-surface: rgba(56, 189, 248, 0.12);    /* status-info-bg */
+  --color-info-border: rgba(56, 189, 248, 0.28);     /* status-info-border */
+  --color-info-text: #38BDF8;
+
+  /* Status banners */
+  --banner-success-bg: rgba(16, 185, 129, 0.10);
+  --banner-success-title: #F1F5F9;
+  --banner-success-body: #34D399;
+  --banner-danger-bg: rgba(244, 63, 94, 0.10);
+  --banner-danger-title: #F1F5F9;
+  --banner-danger-body: #F87171;
+  --banner-warning-bg: rgba(245, 158, 11, 0.10);
+  --banner-warning-border: rgba(245, 158, 11, 0.28);
+  --banner-warning-title: #F1F5F9;
+  --banner-warning-body: #FBBF24;
+  --banner-neutral-bg: #161F30;
+  --banner-neutral-title: #F1F5F9;
+  --banner-neutral-body: #94A3B8;
+
+  /* Component adaptive tokens for Calm Sovereign Dark */
+  --color-button-secondary-bg: #161F30;
+  --color-button-secondary-text: #F1F5F9;
+  --color-button-secondary-border: #2D3748;
+  --color-button-secondary-hover-bg: #1E293B;
+  --color-button-secondary-hover-border: #3B82F6;
+
+  --color-button-danger-bg: rgba(244, 63, 94, 0.12);
+  --color-button-danger-text: #F87171;
+  --color-button-danger-border: rgba(244, 63, 94, 0.30);
+  --color-button-danger-hover: rgba(244, 63, 94, 0.22);
+
+  --color-table-th-bg: #0B0F19;
+  --color-table-th-text: #64748B;
+  --color-table-td-text: #F1F5F9;
+  --color-table-tr-hover: #161F30;
+  --color-segmented-active-bg: #161F30;
+  --color-modal-backdrop: rgba(3, 7, 18, 0.75);
+  --color-modal-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5), 0 0 0 1px #2D3748;
+  --color-input-bg: #161F30;          /* Tier 2 elevated inputs */
+  --color-input-border: #2D3748;
+
+  /* Crisp Micro-edge Shadows */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4), 0 0 0 1px #1F293D;
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 0 0 1px #2D3748;
+  --shadow-lg: 0 12px 24px -4px rgba(0, 0, 0, 0.6), 0 0 0 1px #2D3748;
 }
 
 /* ============================ BASE STYLES ============================ */
@@ -261,6 +559,67 @@ h1, h2, h3, h4, p {
   gap: 12px;
 }
 
+/* Theme Toggle Button — seamlessly adapts between Auto, Light, and Dark */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: var(--radius-pill);
+  background: var(--color-button-secondary-bg);
+  border: 1px solid var(--color-button-secondary-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 140ms ease;
+  user-select: none;
+  box-shadow: var(--shadow-xs);
+}
+
+.theme-toggle:hover {
+  background: var(--color-button-secondary-hover-bg);
+  border-color: var(--color-button-secondary-hover-border);
+  color: var(--color-text-primary);
+}
+
+.theme-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.theme-toggle svg {
+  display: none;
+  width: 15px;
+  height: 15px;
+}
+
+.theme-toggle[data-mode="auto"] .theme-icon-auto,
+.theme-toggle:not([data-mode]) .theme-icon-auto {
+  display: block;
+}
+
+.theme-toggle[data-mode="light"] .theme-icon-light {
+  display: block;
+}
+
+.theme-toggle[data-mode="dark"] .theme-icon-dark {
+  display: block;
+}
+
+.theme-toggle-text {
+  line-height: 1;
+}
+
 .topbar-user-text {
   font-size: 13px;
   color: var(--color-text-secondary);
@@ -346,16 +705,17 @@ button {
 /* Secondary / Default Button */
 button,
 button.secondary {
-  background: var(--color-surface);
-  color: #344054;
-  border: 1px solid var(--color-border-hover);
+  background: var(--color-button-secondary-bg);
+  color: var(--color-button-secondary-text);
+  border: 1px solid var(--color-button-secondary-border);
   box-shadow: var(--shadow-xs);
 }
 
 button:hover:not(:disabled),
 button.secondary:hover:not(:disabled) {
-  background: var(--color-surface-subtle);
-  border-color: var(--color-border-strong);
+  background: var(--color-button-secondary-hover-bg);
+  border-color: var(--color-button-secondary-hover-border);
+  color: var(--color-text-primary);
 }
 
 /* Primary Button */
@@ -369,6 +729,7 @@ button.primary {
 button.primary:hover:not(:disabled) {
   background: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
+  box-shadow: 0 0 12px var(--color-accent-glow);
 }
 
 button.primary:active:not(:disabled) {
@@ -378,15 +739,15 @@ button.primary:active:not(:disabled) {
 
 /* Danger Button */
 button.danger {
-  background: var(--color-danger);
-  color: #ffffff;
-  border: 1px solid var(--color-danger);
+  background: var(--color-button-danger-bg);
+  color: var(--color-button-danger-text);
+  border: 1px solid var(--color-button-danger-border);
   box-shadow: var(--shadow-xs);
 }
 
 button.danger:hover:not(:disabled) {
-  background: var(--color-danger-hover);
-  border-color: var(--color-danger-hover);
+  background: var(--color-button-danger-hover);
+  border-color: var(--color-button-danger-border);
 }
 
 /* Disabled */
@@ -437,15 +798,17 @@ button.danger:disabled {
 
 .pill-badge.pill-neutral {
   background: var(--color-subtle);
-  color: #344054;
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
 }
 .pill-badge.pill-neutral .pill-dot {
-  background: #667085;
+  background: var(--color-text-muted);
 }
 
 .pill-badge.pill-success {
   background: var(--color-success-surface);
   color: var(--color-success-text);
+  border-color: var(--color-success-border);
 }
 .pill-badge.pill-success .pill-dot {
   background: var(--color-success);
@@ -454,6 +817,7 @@ button.danger:disabled {
 .pill-badge.pill-danger {
   background: var(--color-danger-surface);
   color: var(--color-danger-text);
+  border-color: var(--color-danger-border);
 }
 .pill-badge.pill-danger .pill-dot {
   background: var(--color-danger);
@@ -462,9 +826,10 @@ button.danger:disabled {
 .pill-badge.pill-warning {
   background: var(--color-warning-surface);
   color: var(--color-warning-text);
+  border-color: var(--color-warning-border);
 }
 .pill-badge.pill-warning .pill-dot {
-  background: #f79009;
+  background: var(--color-warning);
 }
 
 /* Legacy .pill class compatibility — the header's live service chips. The dot
@@ -547,8 +912,8 @@ select {
   height: var(--control-height);
   padding: 8px 12px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-hover);
-  background: var(--color-surface);
+  border: 1px solid var(--color-input-border);
+  background: var(--color-input-bg);
   color: var(--color-text-primary);
   width: 100%;
   transition: border-color 140ms ease, box-shadow 140ms ease;
@@ -787,81 +1152,239 @@ select:disabled {
 
 /* ============================ SCREEN 1: ROLE PICKER ============================ */
 .role-picker-view {
-  max-width: 1040px;
-  padding: 48px 24px;
+  max-width: 1060px;
+  padding: 48px 24px 56px;
 }
 
 .picker-header {
-  margin-bottom: 32px;
+  margin-bottom: 28px;
+}
+
+.role-picker-view .page-title {
+  font-size: 28px;
+}
+
+.role-picker-view .page-subtitle {
+  font-size: 14px;
+}
+
+/* The Stitch screens use headline-xl (28px) above a 14px subtitle; the Resident
+   capture and Sessions surfaces follow the same rhythm as the picker. */
+#role-resident .page-title,
+#panel-sessions .page-title {
+  font-size: 28px;
+}
+
+#role-resident .page-subtitle,
+#panel-sessions .page-subtitle {
+  font-size: 14px;
+}
+
+.resident-view .card-title,
+.session-detail-card .card-title {
+  font-size: 16px;
+}
+
+@media (max-width: 720px) {
+  .role-picker-view .page-title,
+  #role-resident .page-title,
+  #panel-sessions .page-title {
+    font-size: 22px;
+  }
+}
+
+/* Eyebrow row from the Calm Sovereign screens: a cobalt access chip beside the
+   standard the gate enforces. Mono and uppercase, so it reads as instrumentation
+   rather than a second headline. */
+.screen-eyebrow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.screen-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary-subtle);
+  border: 1px solid var(--color-primary-border);
+  color: var(--color-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+.screen-eyebrow-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.screen-eyebrow-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
 }
 
 .role-cards-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
+  gap: 20px;
 }
 
 @media (max-width: 900px) {
   .role-cards-grid {
     grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .role-picker-view {
+    padding: 32px 16px 40px;
+  }
+
+  .picker-header {
+    margin-bottom: 24px;
   }
 }
 
+/* Role card: the raised surface and hairline edge from the Stitch screens. The
+   cobalt top edge is a hover/focus affordance only, so the page stays quiet
+   while nobody is choosing. */
 .role-card {
+  position: relative;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  padding: 32px 24px;
+  border-radius: var(--radius-lg);
+  padding: 24px;
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-sm);
-  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+  overflow: hidden;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 
-.role-card:hover {
-  border-color: var(--color-border-hover);
-  box-shadow: var(--shadow-md);
+.role-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
+  opacity: 0;
+  transition: opacity 150ms ease;
+  pointer-events: none;
+}
+
+.role-card:hover,
+.role-card:focus-within {
+  border-color: var(--color-primary-border);
+  box-shadow: var(--shadow-md), 0 0 24px -10px var(--color-accent-glow);
+}
+
+.role-card:hover::before,
+.role-card:focus-within::before {
+  opacity: 0.9;
+}
+
+.role-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
 }
 
 .role-icon-box {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-md);
   background: var(--color-primary-subtle);
+  border: 1px solid var(--color-primary-border);
   color: var(--color-primary);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 20px;
+  flex-shrink: 0;
+  box-shadow: 0 0 14px -6px var(--color-accent-glow);
+}
+
+/* Telemetry index, the way each Stitch card names its role context. */
+.role-card-index {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  padding-top: 4px;
+  white-space: nowrap;
 }
 
 .role-title {
   font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .role-desc {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--color-text-secondary);
-  line-height: 1.5;
-  margin-bottom: 16px;
-  min-height: 64px;
+  line-height: 1.55;
+  margin-bottom: 18px;
+  min-height: 60px;
 }
 
 .role-badge-row {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+}
+
+.role-card .pill-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .role-inputs-collapsible {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .role-input-group {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+
+/* Credential fields take the Stitch label-caps treatment; the value itself
+   keeps the regular sans stack so typing stays comfortable. */
+.role-card .field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.role-card .field-label input {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-text-primary);
 }
 
 .role-btn {
@@ -870,9 +1393,12 @@ select:disabled {
 }
 
 .role-footer-note {
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.55;
   color: var(--color-text-muted);
   margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
 }
 
 /* ============================ SCREEN 2: RESIDENT ============================ */
@@ -903,11 +1429,13 @@ select:disabled {
   width: 100%;
   aspect-ratio: 4/3;
   background: var(--color-video-bg);
-  background-image: radial-gradient(rgba(56, 189, 248, 0.10) 1px, transparent 1px);
+  background-image: radial-gradient(rgba(173, 198, 255, 0.15) 1px, transparent 1px);
   background-size: 24px 24px;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow: hidden;
   margin-bottom: 20px;
+  box-shadow: inset 0 0 32px rgba(0, 0, 0, 0.7);
 }
 
 video {
@@ -935,34 +1463,40 @@ video {
   border: 2px dashed rgba(255, 255, 255, 0.85);
   border-radius: 50%;
   margin-bottom: 16px;
-  transition: border-color 240ms ease, border-style 240ms ease;
+  transition: border-color 240ms ease, border-style 240ms ease, box-shadow 240ms ease;
   /* Four calibration ticks at the guide's extremes, drawn as background
      gradients so the guide stays a single element with no wrapper markup. */
-  background-image: linear-gradient(#ffffff, #ffffff), linear-gradient(#ffffff, #ffffff),
-                    linear-gradient(#ffffff, #ffffff), linear-gradient(#ffffff, #ffffff);
+  background-image: linear-gradient(rgba(241, 245, 249, 0.75), rgba(241, 245, 249, 0.75)),
+                    linear-gradient(rgba(241, 245, 249, 0.75), rgba(241, 245, 249, 0.75)),
+                    linear-gradient(rgba(241, 245, 249, 0.75), rgba(241, 245, 249, 0.75)),
+                    linear-gradient(rgba(241, 245, 249, 0.75), rgba(241, 245, 249, 0.75));
   background-size: 2px 12px, 2px 12px, 12px 2px, 12px 2px;
   background-position: center top, center bottom, left center, right center;
   background-repeat: no-repeat;
 }
 
-.camera-viewport-wrapper.checking .camera-oval,
-.camera-viewport-wrapper.challenge .camera-oval {
+.camera-viewport-wrapper.checking .camera-oval {
   border-style: solid;
   border-color: var(--color-primary);
+  box-shadow: 0 0 16px -2px rgba(59, 130, 246, 0.4);
 }
 
 .camera-viewport-wrapper.challenge .camera-oval {
+  border-style: solid;
   border-color: var(--color-warning);
+  box-shadow: 0 0 16px -2px rgba(251, 191, 36, 0.4);
 }
 
 .camera-viewport-wrapper.verified .camera-oval {
   border-style: solid;
   border-color: var(--color-success);
+  box-shadow: 0 0 16px -2px rgba(52, 211, 153, 0.4);
 }
 
 .camera-viewport-wrapper.rejected .camera-oval {
   border-style: solid;
   border-color: var(--color-danger);
+  box-shadow: 0 0 16px -2px rgba(248, 113, 113, 0.4);
 }
 
 /* Sweep line: the only animation in the capture surface, and it runs only while
@@ -1152,6 +1686,7 @@ video {
   width: 8%;
   background: var(--color-primary);
   border-radius: var(--radius-pill);
+  box-shadow: 0 0 8px var(--color-accent-glow);
   transition: width 300ms ease;
 }
 
@@ -1190,7 +1725,8 @@ video {
   margin-top: 16px;
   padding: 10px 12px;
   border-radius: var(--radius-md);
-  background: var(--color-primary-subtle);
+  background: var(--color-info-surface);
+  border: 1px solid var(--color-info-border);
   color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1.45;
@@ -1199,7 +1735,7 @@ video {
 .tip-icon {
   width: 18px;
   height: 18px;
-  color: var(--color-primary);
+  color: var(--color-info-text);
   flex-shrink: 0;
 }
 
@@ -1216,6 +1752,8 @@ video {
   text-transform: uppercase;
   color: var(--color-text-muted);
   margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .fact-head-ok {
@@ -1226,7 +1764,7 @@ video {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .fact-row {
@@ -1250,27 +1788,40 @@ video {
 
 .instructions-list {
   list-style: none;
-  margin: 16px 0 0 0;
+  margin: 14px 0 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
 }
 
+/* Each step reads as a quiet Stitch row rather than a bare list line: a
+   rounded, tinted surface appears on hover while the resting state stays calm. */
 .instructions-list li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.instructions-list li:hover {
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border);
 }
 
 .instruction-num {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--color-primary-subtle);
+  border: 1px solid var(--color-primary-border);
   color: var(--color-primary);
-  font-size: 12px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1279,7 +1830,7 @@ video {
 
 .instruction-text {
   font-size: 13px;
-  color: #344054;
+  color: var(--color-text-primary);
   line-height: 1.4;
 }
 
@@ -1341,6 +1892,7 @@ video {
   height: 2px;
   background: var(--color-primary);
   border-radius: 2px 2px 0 0;
+  box-shadow: 0 0 8px var(--color-accent-glow);
 }
 
 /* ============================ SCREEN 3: SESSIONS ============================ */
@@ -1350,8 +1902,9 @@ video {
   gap: 12px;
   padding: 14px 16px;
   border-radius: var(--radius-lg);
-  background: var(--color-primary-subtle);
-  color: var(--color-primary);
+  background: var(--color-info-surface);
+  color: var(--color-info-text);
+  border: 1px solid var(--color-info-border);
   font-size: 14px;
   font-weight: 500;
   margin-bottom: 20px;
@@ -1403,23 +1956,23 @@ video {
 }
 
 .data-table th {
-  background: var(--color-surface-subtle);
+  background: var(--color-table-th-bg);
   padding: 12px 16px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--color-text-secondary);
+  color: var(--color-table-th-text);
   border-bottom: 1px solid var(--color-border);
 }
 
 .data-table td {
   padding: 16px;
-  border-bottom: 1px solid var(--color-subtle);
-  color: #344054;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-table-td-text);
   vertical-align: middle;
 }
 
 .data-table tr:hover {
-  background: var(--color-surface-subtle);
+  background: var(--color-table-tr-hover);
 }
 
 .data-table tr:last-child td {
@@ -1430,6 +1983,86 @@ video {
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--color-text-primary);
+}
+
+/* Sessions screen (Calm Sovereign): label-caps filters, a quieter uppercase
+   table header and a definition-list detail card, matching the Stitch review
+   screen without inventing any telemetry. */
+#panel-sessions .table-filter-bar .field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+#panel-sessions .table-filter-bar .field-label select {
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--color-text-primary);
+}
+
+#panel-sessions .filter-actions-group .row-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+#panel-sessions .data-table th {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#panel-sessions .data-table tbody tr {
+  transition: background-color 150ms ease;
+}
+
+.session-detail-card .card-header-row {
+  margin-bottom: 16px;
+}
+
+/* A two-column definition list with hairline rules: the stack of key/value
+   pairs a reviewer scans after opening a session. */
+.session-detail-card .kv {
+  grid-template-columns: minmax(150px, 220px) 1fr;
+  gap: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.session-detail-card .kv dt,
+.session-detail-card .kv dd {
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.session-detail-card .kv dt {
+  padding-right: 16px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.session-detail-card .kv dd {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+@media (max-width: 640px) {
+  .session-detail-card .kv {
+    grid-template-columns: 1fr;
+  }
+
+  .session-detail-card .kv dt {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
 }
 
 /* ============================ SCREEN 4: POLICY ============================ */
@@ -1449,6 +2082,7 @@ video {
 .segmented-control {
   display: inline-flex;
   background: var(--color-subtle);
+  border: 1px solid var(--color-border);
   padding: 4px;
   border-radius: var(--radius-md);
   gap: 4px;
@@ -1474,7 +2108,7 @@ video {
 }
 
 .segmented-btn.active {
-  background: #ffffff;
+  background: var(--color-segmented-active-bg);
   color: var(--color-text-primary);
   box-shadow: var(--shadow-sm);
 }
@@ -1882,10 +2516,10 @@ video {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.45);
+  background: var(--color-modal-backdrop);
   /* DESIGN.md level 3: the sheet separates from the page behind it, so the
      policy form is visibly out of reach while the credential is being proved. */
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
 }
 
 .auth-modal-card {
@@ -1896,7 +2530,7 @@ video {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--color-modal-shadow);
 }
 
 .auth-modal-head {
@@ -1904,7 +2538,7 @@ video {
   align-items: flex-start;
   gap: 12px;
   padding: 20px 20px 16px;
-  border-bottom: 1px solid var(--color-subtle);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .auth-modal-icon {
@@ -1959,7 +2593,7 @@ video {
 }
 
 .auth-modal-close:hover {
-  background: var(--color-subtle);
+  background: var(--color-surface-subtle);
   border: none;
   color: var(--color-text-primary);
 }
@@ -1993,8 +2627,9 @@ video {
 /* The username is fixed once the account is known, so it reads as a value
    rather than a field — same treatment as the reference dialog. */
 .auth-modal-field input[readonly] {
-  background: var(--color-surface-subtle);
+  background: var(--color-subtle);
   color: var(--color-text-secondary);
+  border-color: var(--color-border);
   cursor: not-allowed;
 }
 
@@ -2013,6 +2648,18 @@ video {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Telemetry pulse animation from Calm Sovereign Dark */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-telemetry-pulse,
+.hud-dot,
+.step-dot.live {
+  animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 /* Utilities */

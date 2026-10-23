@@ -9,8 +9,9 @@ concurrency:
 on:
   push:
     # Every branch push runs the suites and builds the jar. Tag pushes (v*)
-    # additionally publish a GitHub Release with both jars, the Linux .deb and
-    # AppImage, and a .sha256 beside every one of them.
+    # additionally publish a GitHub Release with both jars, the Linux .deb,
+    # .rpm and AppImage, the Android harness APK, and a .sha256 beside every
+    # one of them.
     branches: ['**']
     tags: ['v*']
   # Branches get the identical gate before merging — unit + integration
@@ -460,15 +461,16 @@ jobs:
           retention-days: 7
 
   # The Linux installers are a delivery path of their own: nothing else here
-  # builds a .deb or an AppImage, so a unit installed to the wrong path, a
+  # builds a .deb, .rpm or AppImage, so a unit installed to the wrong path, a
   # payload that lost the unit, or an AppRun that cannot find the image would
-  # ship unseen. `./mvnw package` already produces both on Linux (pom.xml,
+  # ship unseen. `./mvnw package` already produces all three on Linux (pom.xml,
   # linux-package profile) but skips a half whose tool is missing, because a
-  # developer without dpkg still needs a jar. This job passes
-  # -Dlinux.package.strict=true so nothing can be skipped, then boots what it
-  # built — "the build produced installers" is an assertion, not a log line.
+  # developer without dpkg or rpmbuild still needs a jar. This job passes
+  # -Dlinux.package.strict=true so nothing can be skipped, then inspects each
+  # archive and boots the AppImage — "the build produced installers" is an
+  # assertion, not a log line.
   linux-packages:
-    name: Linux packages (.deb + AppImage)
+    name: Linux packages (.deb + .rpm + AppImage)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [test]
@@ -483,15 +485,18 @@ jobs:
           java-version: '17'
           cache: maven
 
-      # jpackage shells out to dpkg-deb and fakeroot for a .deb. The runner
-      # image carries both, but the job installs whatever is missing instead of
-      # depending on a runner image detail.
-      - name: Ensure the .deb toolchain
+      # jpackage shells out to dpkg-deb and fakeroot for a .deb, and the .rpm is
+      # assembled by rpmbuild. The runner image carries none of those promises,
+      # so the job installs whatever is missing instead of depending on an image
+      # detail.
+      - name: Ensure the Linux packaging toolchain
         run: |
           set -euo pipefail
           missing=()
           command -v dpkg-deb >/dev/null 2>&1 || missing+=(dpkg)
           command -v fakeroot  >/dev/null 2>&1 || missing+=(fakeroot)
+          command -v rpmbuild  >/dev/null 2>&1 || missing+=(rpm)
+          command -v cpio      >/dev/null 2>&1 || missing+=(cpio)
           # The boot gate installs the .deb with dpkg -i, which does not resolve
           # dependencies. xdg-utils is one jpackage declares for the menu entry;
           # apt would pull it, so the job provides what an apt install would.
@@ -511,7 +516,7 @@ jobs:
           path: ~/.cache/pad-liveness/tools
           key: appimagetool-1.9.1-x86_64
 
-      - name: Build the .deb and the AppImage
+      - name: Build the .deb, .rpm and AppImage
         run: ./mvnw --batch-mode clean package -DskipTests -Pslim -Dlinux.package.strict=true
 
       # SMOKE_UNIT_BOOT installs the .deb the way its README tells a user to and
@@ -845,20 +850,20 @@ jobs:
   # verified before it is trusted.
   #
   # The Linux installers ride along, from the same slim build that produces the
-  # slim jar: the .deb is what a Debian/Ubuntu host installs, and the AppImage
-  # needs no root at all, so a release that carried only jars left the two
-  # artifacts people actually install to be rebuilt by hand or downloaded from
-  # ephemeral CI artifact storage that expires in a week. They go through the
-  # same gate as the jars — built with -Dlinux.package.strict=true so neither
-  # half can be skipped, booted by scripts/smoke-linux-packages.sh, and shipped
-  # with their own .sha256 — because a release is the one place an unverified
-  # artifact reaches a user.
+  # slim jar: the .deb is what a Debian/Ubuntu host installs, the .rpm does the
+  # same for Fedora/RHEL, and the AppImage needs no root at all, so a release
+  # that carried only jars left the artifacts people actually install to be
+  # rebuilt by hand or downloaded from ephemeral CI artifact storage that
+  # expires in a week. They go through the same gate as the jars — built with
+  # -Dlinux.package.strict=true so no half can be skipped, inspected and booted
+  # by scripts/smoke-linux-packages.sh, and shipped with their own .sha256 —
+  # because a release is the one place an unverified artifact reaches a user.
   #
   # A `-canary` tag (e.g. v1.1.0-canary.1) runs the identical pipeline —
-  # both jars, both installers, every boot and checksum — but publishes as a
-  # prerelease, so a canary is visible and installable without ever being the
-  # version GitHub surfaces as "the latest". The pattern is matched on the tag
-  # name below.
+  # both jars, all three Linux installers, every check and checksum — but
+  # publishes as a prerelease, so a canary is visible and installable without
+  # ever being the version GitHub surfaces as "the latest". The pattern is
+  # matched on the tag name below.
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
@@ -881,17 +886,20 @@ jobs:
           java-version: '17'
           cache: maven
 
-      # jpackage shells out to dpkg-deb and fakeroot for the .deb. The runner
-      # image carries both, but the release installs whatever is missing rather
-      # than depending on a runner image detail — with
-      # -Dlinux.package.strict=true a missing tool is a failed release, and the
-      # point is to fail on a broken package, not on an image that changed.
-      - name: Ensure the .deb toolchain
+      # jpackage shells out to dpkg-deb and fakeroot for the .deb, and rpmbuild
+      # assembles the .rpm. The runner image carries neither promise, but the
+      # release installs whatever is missing rather than depending on an image
+      # detail — with -Dlinux.package.strict=true a missing tool is a failed
+      # release, and the point is to fail on a broken package, not on an image
+      # that changed.
+      - name: Ensure the Linux packaging toolchain
         run: |
           set -euo pipefail
           missing=()
           command -v dpkg-deb >/dev/null 2>&1 || missing+=(dpkg)
           command -v fakeroot  >/dev/null 2>&1 || missing+=(fakeroot)
+          command -v rpmbuild  >/dev/null 2>&1 || missing+=(rpm)
+          command -v cpio      >/dev/null 2>&1 || missing+=(cpio)
           # The boot gate installs the .deb with dpkg -i, which does not resolve
           # dependencies. xdg-utils is one jpackage declares for the menu entry;
           # apt would pull it, so the job provides what an apt install would.
@@ -973,9 +981,9 @@ jobs:
       #
       # The Linux installers are built by this same invocation: the pom's
       # linux-package profile runs scripts/package-linux.sh from the `package`
-      # phase, and package-linux.sh prefers the slim jar, so the .deb and
+      # phase, and package-linux.sh prefers the slim jar, so the .deb, .rpm and
       # AppImage carry exactly the artifact this step just stamped. Strict mode
-      # is what makes that an assertion: without it a missing dpkg or
+      # is what makes that an assertion: without it a missing dpkg, rpmbuild or
       # appimagetool would skip a half and still exit 0, publishing a release
       # with an installer that is not there.
       - name: Package the slim jar and the Linux installers (version stamped from the tag)
@@ -1005,16 +1013,21 @@ jobs:
           # version under this release's name.
           shopt -s nullglob
           DEBS=( target/dist/*.deb )
+          RPMS=( target/dist/*.rpm )
           APPIMAGES=( target/dist/*.AppImage )
           shopt -u nullglob
-          if [ "${#DEBS[@]}" -ne 1 ] || [ "${#APPIMAGES[@]}" -ne 1 ]; then
-            echo "::error::expected one .deb and one AppImage in target/dist, found ${#DEBS[@]} and ${#APPIMAGES[@]}"
+          if [ "${#DEBS[@]}" -ne 1 ] || [ "${#RPMS[@]}" -ne 1 ] || [ "${#APPIMAGES[@]}" -ne 1 ]; then
+            echo "::error::expected one .deb, one .rpm and one AppImage in target/dist, found ${#DEBS[@]}, ${#RPMS[@]} and ${#APPIMAGES[@]}"
             ls -la target/dist 2>/dev/null || true
             exit 1
           fi
           case "$(basename "${DEBS[0]}")" in
             *"$VERSION"*) ;;
             *) echo "::error::${DEBS[0]} does not carry $VERSION"; exit 1 ;;
+          esac
+          case "$(basename "${RPMS[0]}")" in
+            *"$VERSION"*) ;;
+            *) echo "::error::${RPMS[0]} does not carry $VERSION"; exit 1 ;;
           esac
           case "$(basename "${APPIMAGES[0]}")" in
             *"$VERSION"*) ;;
@@ -1025,7 +1038,12 @@ jobs:
             "$VERSION"|"$VERSION"-*) ;;
             *) echo "::error::${DEBS[0]} declares Version $DEB_VERSION, expected $VERSION"; exit 1 ;;
           esac
-          echo "installers: $(basename "${DEBS[0]}") (Version $DEB_VERSION), $(basename "${APPIMAGES[0]}")"
+          RPM_VERSION=$(rpm -qp --qf '%{VERSION}' "${RPMS[0]}")
+          if [ "$RPM_VERSION" != "$VERSION" ]; then
+            echo "::error::${RPMS[0]} declares Version $RPM_VERSION, expected $VERSION"
+            exit 1
+          fi
+          echo "installers: $(basename "${DEBS[0]}") (Version $DEB_VERSION), $(basename "${RPMS[0]}") (Version $RPM_VERSION), $(basename "${APPIMAGES[0]}")"
 
       - name: Smoke test the slim jar
         env:
@@ -1040,8 +1058,8 @@ jobs:
 
       # The installers are release assets too, and the same rule applies: an
       # artifact that only exists because the build said so is not evidence it
-      # boots. This is the Linux packages job's gate, run on the exact files
-      # this release would publish — the .deb's payload and unit, then the
+      # works. This is the Linux packages job's gate, run on the exact files
+      # this release would publish — the .deb and .rpm payloads, then the
       # AppImage against /health and the console. A broken installer now fails
       # the tag build instead of being replaced quietly by a re-run.
       - name: Smoke test the Linux installers
@@ -1057,7 +1075,7 @@ jobs:
         run: |
           set -uo pipefail
           ./scripts/release-assets.sh add --version "${TAG#v}" \
-            target/dist/*.deb target/dist/*.AppImage
+            target/dist/*.deb target/dist/*.rpm target/dist/*.AppImage
 
       # One checksum per asset, named exactly like its file with a .sha256
       # suffix — the convention `sha256sum -c <file>.sha256` verifies from
@@ -1084,6 +1102,91 @@ jobs:
         # canary flag live in scripts/release-assets.sh, so the rehearsal in the
         # Linux packages job runs the same code this tag build runs.
         run: ./scripts/release-assets.sh attach --tag "$TAG"
+
+  # Publishes the Android integration harness as an installable APK beside the
+  # desktop installers.
+  #
+  # This is *not* a service installer and not the MOSIP Registration Client:
+  # android_client/ is a build harness whose session starts fail-closed until a
+  # host supplies the native liveness API and camera pipeline. It installs and
+  # opens on an Android device, which is useful to a host integrator, so it is
+  # labelled as a harness in the asset name and in android_client/README.md.
+  #
+  # A separate job, not part of release-assets.sh: the APK comes from the
+  # Flutter toolchain rather than the Maven build, and coupling the desktop
+  # release job to an Android SDK would make a JVM packaging failure and an
+  # Android build failure indistinguishable. `needs: release` keeps it off the
+  # critical path: a broken APK cannot stop the jars and installers shipping.
+  android-harness-release:
+    name: Publish Android harness APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [release]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: 'true'
+
+      # Same pinned packages as the Android client job, because the Gradle
+      # module pins compileSdk/build-tools/NDK and refuses to infer them.
+      - name: Install pinned Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;25.1.8937393"
+
+      - name: Set up Flutter 3.10.4 (Dart 3.0.3)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.10.4'
+          cache: true
+
+      - name: Resolve locked Dart dependencies
+        working-directory: android_client
+        run: flutter pub get --enforce-lockfile
+
+      # --build-name carries the release version into the APK, so an installed
+      # harness reports the same version as the tag it came from. The release
+      # build is signed with the debug key (android/app/build.gradle), which is
+      # installable but not a store-ready signature; the README says so.
+      - name: Build the release APK
+        working-directory: android_client
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          flutter build apk --release \
+            --build-name="$VERSION" \
+            --build-number="${{ github.run_number }}"
+
+      - name: Name and checksum the harness APK
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          APK="pad-liveness-android-harness-$VERSION.apk"
+          cp "android_client/build/app/outputs/flutter-apk/app-release.apk" "$APK"
+          sha256sum "$APK" > "$APK.sha256"
+          echo "APK=$APK" >> "$GITHUB_ENV"
+
+      - name: Attach the harness APK to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" "$APK" "$APK.sha256" --clobber
 
   # Publishes the Docker image for a release tag. The jar ships as a
   # release asset (job above); this makes the container delivery path

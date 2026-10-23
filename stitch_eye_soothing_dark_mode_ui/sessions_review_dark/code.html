@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_standard" name="shell-type"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}@keyframes pulse-subtle{0%,100%{opacity:1;}50%{opacity:0.4;}}.animate-telemetry-pulse{animation:pulse-subtle 2s cubic-bezier(0.4,0,0.6,1) infinite;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={"darkMode":"class","theme":{"extend":{"colors":{"on-tertiary-container":"#002d40","canvas-bg":"#090D16","surface-dim":"#051424","inverse-surface":"#d4e4fa","on-primary-fixed":"#001a42","on-tertiary":"#00354a","primary-fixed-dim":"#adc6ff","on-primary":"#002e6a","tertiary-fixed":"#c4e7ff","surface-container-lowest":"#010f1f","on-tertiary-fixed-variant":"#004c69","text-muted":"#64748B","surface-container-highest":"#273647","status-warning-text":"#FBBF24","status-danger-border":"rgba(244, 63, 94, 0.28)","on-surface-variant":"#c2c6d6","status-danger-bg":"rgba(244, 63, 94, 0.12)","secondary":"#a4c9ff","surface-container-low":"#0d1c2d","status-warning-border":"rgba(245, 158, 11, 0.28)","error-container":"#93000a","border-subtle":"#1F293D","text-secondary":"#94A3B8","status-info-bg":"rgba(56, 189, 248, 0.12)","accent-glow":"rgba(59, 130, 246, 0.22)","secondary-fixed-dim":"#a4c9ff","on-secondary-fixed-variant":"#004883","inverse-on-surface":"#233143","primary-container":"#4d8eff","inverse-primary":"#005ac2","surface-base":"#0B0F19","status-danger-text":"#F87171","outline-variant":"#424754","outline":"#8c909f","secondary-fixed":"#d4e3ff","error":"#ffb4ab","status-info-border":"rgba(56, 189, 248, 0.28)","primary-fixed":"#d8e2ff","on-error-container":"#ffdad6","status-info-text":"#38BDF8","surface-container-high":"#1c2b3c","on-background":"#d4e4fa","on-primary-container":"#00285d","border-strong":"#2D3748","on-secondary-fixed":"#001c39","text-primary":"#F1F5F9","surface-variant":"#273647","on-secondary":"#00315d","surface-tint":"#adc6ff","on-tertiary-fixed":"#001e2c","status-success-border":"rgba(16, 185, 129, 0.28)","primary":"#adc6ff","tertiary-container":"#009bd1","on-secondary-container":"#d6e5ff","tertiary":"#7bd0ff","surface":"#051424","surface-bright":"#2c3a4c","status-success-bg":"rgba(16, 185, 129, 0.12)","secondary-container":"#0267b8","surface-elevated":"#161F30","surface-camera":"#030712","background":"#051424","surface-raised":"#111827","status-success-text":"#34D399","status-warning-bg":"rgba(245, 158, 11, 0.12)","on-primary-fixed-variant":"#004395","surface-container":"#122131","on-error":"#690005","on-surface":"#d4e4fa","tertiary-fixed-dim":"#7bd0ff"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"space-sm":"0.5rem","space-md":"1rem","space-xl":"2rem","margin":"2rem","gutter":"1.5rem","space-xs":"0.25rem","space-lg":"1.5rem","gutter-mobile":"1rem","margin-mobile":"1rem","space-2xl":"3rem"},"fontFamily":{"headline-md":["Inter"],"body-md":["Inter"],"label-md":["Inter"],"headline-xl":["Inter"],"telemetry-lg":["JetBrains Mono"],"telemetry-sm":["JetBrains Mono"],"headline-lg":["Inter"],"label-caps":["Inter"],"body-lg":["Inter"],"headline-xl-mobile":["Inter"],"telemetry-md":["JetBrains Mono"],"body-sm":["Inter"]},"fontSize":{"headline-md":["16px",{"lineHeight":"24px","fontWeight":"600"}],"body-md":["14px",{"lineHeight":"20px","fontWeight":"400"}],"label-md":["12px",{"lineHeight":"16px","fontWeight":"500"}],"headline-xl":["28px",{"lineHeight":"36px","letterSpacing":"-0.02em","fontWeight":"600"}],"telemetry-lg":["14px",{"lineHeight":"20px","fontWeight":"500"}],"telemetry-sm":["11px",{"lineHeight":"14px","letterSpacing":"0.02em","fontWeight":"400"}],"headline-lg":["20px",{"lineHeight":"28px","letterSpacing":"-0.01em","fontWeight":"600"}],"label-caps":["11px",{"lineHeight":"16px","letterSpacing":"0.06em","fontWeight":"600"}],"body-lg":["15px",{"lineHeight":"24px","fontWeight":"400"}],"headline-xl-mobile":["22px",{"lineHeight":"28px","letterSpacing":"-0.01em","fontWeight":"600"}],"telemetry-md":["12px",{"lineHeight":"16px","fontWeight":"400"}],"body-sm":["13px",{"lineHeight":"18px","fontWeight":"400"}]}}}</script></head><body class="bg-canvas-bg text-on-surface antialiased selection:bg-primary-container selection:text-on-primary-container"><header class="fixed top-0 left-0 right-0 z-50 bg-surface-base border-b border-border-subtle"><div class="h-16 max-w-[1440px] mx-auto px-gutter flex items-center justify-between gap-space-md"><div class="flex items-center gap-space-lg shrink-0"><div class="flex items-center gap-space-sm"><div class="w-9 h-9 rounded bg-secondary-container flex items-center justify-center font-headline-md text-headline-md text-text-primary shadow-[0_0_12px_rgba(59,130,246,0.3)]">M</div><div class="flex flex-col justify-center leading-none"><span class="font-headline-md text-headline-md text-text-primary tracking-wide">MOSIP</span><span class="font-label-caps text-label-caps text-text-secondary uppercase tracking-widest mt-0.5">Liveness Console</span></div></div><div class="hidden xl:flex items-center gap-space-sm pl-space-md border-l border-border-subtle"><div class="h-6 px-2.5 rounded-full bg-status-success-bg border border-status-success-border flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-status-success-text animate-telemetry-pulse"></span><span class="font-telemetry-sm text-telemetry-sm text-status-success-text uppercase font-medium">Gate Active</span></div><div class="h-6 px-2.5 rounded-full bg-surface-elevated border border-border-strong flex items-center gap-1.5"><span class="font-telemetry-sm text-telemetry-sm text-text-muted">STN:</span><span class="font-telemetry-sm text-telemetry-sm text-text-primary">#04</span></div><div class="h-6 px-2.5 rounded-full bg-surface-elevated border border-border-strong flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-status-info-text"></span><span class="font-telemetry-sm text-telemetry-sm text-text-secondary">v1.4.2 Connected</span></div></div></div><nav class="hidden lg:flex items-center gap-1 overflow-x-auto py-1" data-active-classes="bg-primary-container text-on-primary-container font-semibold rounded"><a class="px-3 py-1.5 rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface hover:bg-surface-elevated transition-colors" data-path="live-gate" href="#">Live Gate</a><a aria-current="page" class="px-3 py-1.5 transition-colors bg-primary-container text-on-primary-container font-semibold rounded" data-path="sessions" href="#">Sessions</a><a class="px-3 py-1.5 rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface hover:bg-surface-elevated transition-colors" data-path="audit-chain" href="#">Audit</a><a class="px-3 py-1.5 rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface hover:bg-surface-elevated transition-colors" data-path="rejection-log" href="#">Rejections</a><a class="px-3 py-1.5 rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface hover:bg-surface-elevated transition-colors" data-path="policy-engine" href="#">Policy</a><a class="px-3 py-1.5 rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface hover:bg-surface-elevated transition-colors" data-path="workstation-users" href="#">Users</a><a class="px-3 py-1.5 rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface hover:bg-surface-elevated transition-colors" data-path="telemetry-metrics" href="#">Metrics</a><a class="px-3 py-1.5 rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface hover:bg-surface-elevated transition-colors" data-path="hardware-diagnostics" href="#">Diagnostics</a></nav><div class="flex items-center gap-space-md shrink-0"><div class="flex items-center gap-space-sm pl-space-md border-l border-border-subtle"><div class="hidden sm:flex flex-col text-right leading-tight"><span class="font-telemetry-sm text-telemetry-sm text-text-secondary">staff.user</span><div class="flex items-center justify-end gap-1.5 mt-0.5"><span class="px-1.5 py-0.2 rounded bg-surface-elevated border border-primary/30 font-telemetry-sm text-telemetry-sm text-primary uppercase">Supervisor</span><a class="font-label-caps text-label-caps text-text-muted hover:text-text-primary transition-colors underline decoration-border-strong" data-path="login" href="#">Switch</a></div></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></div></header><main class="w-full pt-16 bg-canvas-bg min-h-screen"><div class="flex flex-col w-full">
+<div class="max-w-[1440px] w-full mx-auto px-gutter py-space-lg flex flex-col gap-space-lg">
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-space-md">
+<div class="flex flex-col gap-1">
+<div class="flex items-center gap-space-sm">
+<span class="font-headline-xl text-headline-xl text-text-primary tracking-tight">Sessions</span>
+<span class="px-2 py-0.5 rounded bg-surface-elevated font-telemetry-sm text-telemetry-sm text-secondary tracking-wide uppercase">PAD Log</span>
+</div>
+<p class="font-body-md text-body-md text-text-secondary">Recent liveness sessions. This view is read-only.</p>
+</div>
+<div class="flex items-center gap-space-sm self-start md:self-auto bg-surface-raised px-3.5 py-1.5 rounded-lg shadow-sm">
+<div class="flex items-center gap-2">
+<span class="font-telemetry-sm text-telemetry-sm text-text-muted">ROLE CONTEXT:</span>
+<span class="font-telemetry-sm text-telemetry-sm text-text-primary">staff.user</span>
+<span class="h-2 w-2 rounded-full bg-status-info-text animate-telemetry-pulse"></span>
+<span class="px-2 py-0.5 rounded bg-status-info-bg font-label-caps text-label-caps text-status-info-text uppercase">Operator Mode</span>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between overflow-x-auto pb-1">
+<div class="flex items-center gap-space-lg">
+<a class="group flex items-center gap-2 pb-2.5 font-label-md text-label-md text-text-muted hover:text-text-primary transition-colors" data-path="live-gate" href="#">
+<span class="material-symbols-outlined text-[17px] text-text-muted group-hover:text-text-primary">videocam</span>
+          Verify
+        </a>
+<a class="flex items-center gap-2 pb-2.5 font-label-md text-label-md text-primary-container relative" data-path="sessions" href="#">
+<span class="material-symbols-outlined text-[17px] text-primary-container">dns</span>
+          Sessions
+          <span class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-container rounded-full shadow-[0_0_8px_rgba(77,142,255,0.6)]"></span>
+</a>
+<a class="group flex items-center gap-2 pb-2.5 font-label-md text-label-md text-text-muted hover:text-text-primary transition-colors" data-path="audit-chain" href="#">
+<span class="material-symbols-outlined text-[17px] text-text-muted group-hover:text-text-primary">verified_user</span>
+          Audit
+        </a>
+<a class="group flex items-center gap-2 pb-2.5 font-label-md text-label-md text-text-muted hover:text-text-primary transition-colors" data-path="rejection-log" href="#">
+<span class="material-symbols-outlined text-[17px] text-text-muted group-hover:text-text-primary">gpp_bad</span>
+          Rejections
+        </a>
+</div>
+<div class="hidden sm:flex items-center gap-3 pb-2 text-text-muted">
+<span class="font-telemetry-sm text-telemetry-sm">ISO/IEC 30107-3 PAD Stream</span>
+</div>
+</div>
+<div class="flex items-center gap-space-md p-space-md rounded-lg bg-status-info-bg text-status-info-text shadow-sm">
+<div class="w-7 h-7 rounded-full bg-surface-elevated flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-status-info-text text-[18px]">info</span>
+</div>
+<div class="flex flex-col sm:flex-row sm:items-center justify-between w-full gap-2">
+<p class="font-body-md text-body-md text-text-primary">Policy changes and user management require an authenticated supervisor credential.</p>
+<span class="font-telemetry-sm text-telemetry-sm text-status-info-text uppercase tracking-wider shrink-0">STN-POLICY-ENFORCED</span>
+</div>
+</div>
+<div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-space-md">
+<div class="flex flex-wrap items-center gap-space-md">
+<div class="flex items-center gap-space-sm">
+<span class="font-label-caps text-label-caps text-text-muted uppercase">Workflow</span>
+<div class="relative">
+<select class="appearance-none bg-surface-raised text-text-primary font-body-sm text-body-sm pl-3 pr-8 py-2 rounded-lg cursor-pointer hover:bg-surface-elevated focus:outline-none focus:bg-surface-elevated transition-colors shadow-sm" id="workflowFilter">
+<option value="ALL">All workflows</option>
+<option value="RESIDENT">Resident</option>
+<option value="OPERATOR">Operator</option>
+<option value="SUPERVISOR">Supervisor</option>
+</select>
+<span class="material-symbols-outlined absolute right-2.5 top-2.5 pointer-events-none text-text-muted text-[18px]">expand_more</span>
+</div>
+</div>
+<div class="flex items-center gap-space-sm">
+<span class="font-label-caps text-label-caps text-text-muted uppercase">Status</span>
+<div class="relative">
+<select class="appearance-none bg-surface-raised text-text-primary font-body-sm text-body-sm pl-3 pr-8 py-2 rounded-lg cursor-pointer hover:bg-surface-elevated focus:outline-none focus:bg-surface-elevated transition-colors shadow-sm" id="statusFilter">
+<option value="ALL">All statuses</option>
+<option value="PASSED">Passed</option>
+<option value="FAILED">Failed</option>
+<option value="ACTIVE">Active</option>
+<option value="EXPIRED">Expired</option>
+</select>
+<span class="material-symbols-outlined absolute right-2.5 top-2.5 pointer-events-none text-text-muted text-[18px]">expand_more</span>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-end gap-space-sm">
+<button class="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-surface-elevated hover:bg-surface-container hover:text-text-primary text-text-secondary font-label-md text-label-md transition-all active:scale-95 shadow-sm" id="refreshBtn">
+<span class="material-symbols-outlined text-[17px] text-primary" id="refreshIcon">sync</span>
+<span>Refresh</span>
+</button>
+</div>
+</div>
+<div class="rounded-xl overflow-hidden shadow-xl bg-surface-raised">
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-base">
+<th class="py-3.5 px-5 font-label-caps text-label-caps text-text-muted uppercase tracking-wider" scope="col">Session</th>
+<th class="py-3.5 px-5 font-label-caps text-label-caps text-text-muted uppercase tracking-wider" scope="col">Workflow</th>
+<th class="py-3.5 px-5 font-label-caps text-label-caps text-text-muted uppercase tracking-wider" scope="col">Status</th>
+<th class="py-3.5 px-5 font-label-caps text-label-caps text-text-muted uppercase tracking-wider text-center" scope="col">Retries</th>
+<th class="py-3.5 px-5 font-label-caps text-label-caps text-text-muted uppercase tracking-wider" scope="col">Reason / Telemetry</th>
+<th class="py-3.5 px-5 font-label-caps text-label-caps text-text-muted uppercase tracking-wider text-right" scope="col">Created</th>
+</tr>
+</thead>
+<tbody class="divide-y-0" id="sessionTableBody">
+<tr class="session-row group bg-surface-raised hover:bg-surface-elevated transition-colors duration-150" data-status="PASSED" data-workflow="RESIDENT">
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="font-telemetry-md text-telemetry-md text-primary font-medium tracking-wide">7c1e...b92</span>
+<button class="copy-trigger opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity" data-clipboard="7c1ed429bf0198aa742b92" title="Copy Session ID" type="button">
+<span class="material-symbols-outlined text-[15px]">content_copy</span>
+</button>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="px-2.5 py-1 rounded bg-surface-elevated font-label-caps text-label-caps text-secondary font-semibold tracking-wider">RESIDENT</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full bg-status-success-bg text-status-success-text">
+<span class="w-1.5 h-1.5 rounded-full bg-status-success-text shadow-[0_0_6px_currentColor]"></span>
+<span class="font-label-caps text-label-caps font-semibold tracking-wider uppercase">Passed</span>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-center">
+<span class="font-telemetry-md text-telemetry-md text-text-secondary">0</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="text-text-muted font-telemetry-md text-telemetry-md">—</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-right">
+<span class="font-telemetry-sm text-telemetry-sm text-text-secondary">2026-10-13 10:42</span>
+</td>
+</tr>
+<tr class="session-row group bg-surface-raised hover:bg-surface-elevated transition-colors duration-150" data-status="PASSED" data-workflow="OPERATOR">
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="font-telemetry-md text-telemetry-md text-primary font-medium tracking-wide">a04d...3fe</span>
+<button class="copy-trigger opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity" data-clipboard="a04df908c66e21033fe" title="Copy Session ID" type="button">
+<span class="material-symbols-outlined text-[15px]">content_copy</span>
+</button>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="px-2.5 py-1 rounded bg-secondary-container font-label-caps text-label-caps text-text-primary font-semibold tracking-wider">OPERATOR</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full bg-status-success-bg text-status-success-text">
+<span class="w-1.5 h-1.5 rounded-full bg-status-success-text shadow-[0_0_6px_currentColor]"></span>
+<span class="font-label-caps text-label-caps font-semibold tracking-wider uppercase">Passed</span>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-center">
+<span class="font-telemetry-md text-telemetry-md text-text-secondary">1</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="text-text-muted font-telemetry-md text-telemetry-md">—</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-right">
+<span class="font-telemetry-sm text-telemetry-sm text-text-secondary">2026-10-13 10:31</span>
+</td>
+</tr>
+<tr class="session-row group bg-surface-raised hover:bg-surface-elevated transition-colors duration-150" data-status="FAILED" data-workflow="RESIDENT">
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="font-telemetry-md text-telemetry-md text-primary font-medium tracking-wide">e9b2...c07</span>
+<button class="copy-trigger opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity" data-clipboard="e9b244791a8e100c07" title="Copy Session ID" type="button">
+<span class="material-symbols-outlined text-[15px]">content_copy</span>
+</button>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="px-2.5 py-1 rounded bg-surface-elevated font-label-caps text-label-caps text-secondary font-semibold tracking-wider">RESIDENT</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full bg-status-danger-bg text-status-danger-text">
+<span class="w-1.5 h-1.5 rounded-full bg-status-danger-text shadow-[0_0_6px_currentColor]"></span>
+<span class="font-label-caps text-label-caps font-semibold tracking-wider uppercase">Failed</span>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-center">
+<span class="font-telemetry-md text-telemetry-md text-status-warning-text font-medium">3</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<code class="px-2 py-0.5 rounded bg-surface-elevated font-telemetry-sm text-telemetry-sm text-text-secondary">max_retries_exceeded</code>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-right">
+<span class="font-telemetry-sm text-telemetry-sm text-text-secondary">2026-10-13 10:18</span>
+</td>
+</tr>
+<tr class="session-row group bg-surface-raised hover:bg-surface-elevated transition-colors duration-150" data-status="ACTIVE" data-workflow="SUPERVISOR">
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="font-telemetry-md text-telemetry-md text-primary font-medium tracking-wide">51af...d68</span>
+<button class="copy-trigger opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity" data-clipboard="51af8812c332abed68" title="Copy Session ID" type="button">
+<span class="material-symbols-outlined text-[15px]">content_copy</span>
+</button>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="px-2.5 py-1 rounded bg-primary-container font-label-caps text-label-caps text-on-primary-container font-semibold tracking-wider">SUPERVISOR</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full bg-status-warning-bg text-status-warning-text">
+<span class="w-1.5 h-1.5 rounded-full bg-status-warning-text animate-telemetry-pulse shadow-[0_0_6px_currentColor]"></span>
+<span class="font-label-caps text-label-caps font-semibold tracking-wider uppercase">Active</span>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-center">
+<span class="font-telemetry-md text-telemetry-md text-text-secondary">0</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="font-body-sm text-body-sm text-status-warning-text flex items-center gap-1.5">
+<span class="w-1 h-1 rounded-full bg-status-warning-text"></span>
+                  Challenge in progress
+                </span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-right">
+<span class="font-telemetry-sm text-telemetry-sm text-text-secondary">2026-10-13 10:12</span>
+</td>
+</tr>
+<tr class="session-row group bg-surface-raised hover:bg-surface-elevated transition-colors duration-150" data-status="FAILED" data-workflow="RESIDENT">
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="font-telemetry-md text-telemetry-md text-primary font-medium tracking-wide">0b73...a1c</span>
+<button class="copy-trigger opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity" data-clipboard="0b73fa66504a92ba1c" title="Copy Session ID" type="button">
+<span class="material-symbols-outlined text-[15px]">content_copy</span>
+</button>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="px-2.5 py-1 rounded bg-surface-elevated font-label-caps text-label-caps text-secondary font-semibold tracking-wider">RESIDENT</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full bg-status-danger-bg text-status-danger-text">
+<span class="w-1.5 h-1.5 rounded-full bg-status-danger-text shadow-[0_0_6px_currentColor]"></span>
+<span class="font-label-caps text-label-caps font-semibold tracking-wider uppercase">Failed</span>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-center">
+<span class="font-telemetry-md text-telemetry-md text-text-secondary">0</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<code class="px-2 py-0.5 rounded bg-status-danger-bg font-telemetry-sm text-telemetry-sm text-status-danger-text">presentation_attack</code>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-right">
+<span class="font-telemetry-sm text-telemetry-sm text-text-secondary">2026-10-13 09:57</span>
+</td>
+</tr>
+<tr class="session-row group bg-surface-raised hover:bg-surface-elevated transition-colors duration-150" data-status="EXPIRED" data-workflow="OPERATOR">
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="font-telemetry-md text-telemetry-md text-primary font-medium tracking-wide">c8d6...e45</span>
+<button class="copy-trigger opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity" data-clipboard="c8d60127f8d67cce45" title="Copy Session ID" type="button">
+<span class="material-symbols-outlined text-[15px]">content_copy</span>
+</button>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="px-2.5 py-1 rounded bg-secondary-container font-label-caps text-label-caps text-text-primary font-semibold tracking-wider">OPERATOR</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<div class="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full bg-surface-elevated text-text-muted">
+<span class="w-1.5 h-1.5 rounded-full bg-text-muted"></span>
+<span class="font-label-caps text-label-caps font-semibold tracking-wider uppercase">Expired</span>
+</div>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-center">
+<span class="font-telemetry-md text-telemetry-md text-text-secondary">0</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap">
+<span class="font-telemetry-md text-telemetry-md text-text-muted">session_closed</span>
+</td>
+<td class="py-4 px-5 whitespace-nowrap text-right">
+<span class="font-telemetry-sm text-telemetry-sm text-text-secondary">2026-10-13 09:40</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="bg-surface-base px-5 py-3 flex flex-col sm:flex-row items-center justify-between gap-space-sm">
+<span class="font-body-sm text-body-sm text-text-muted" id="sessionCountText">
+          Displaying <span class="font-medium text-text-primary">6</span> of <span class="font-medium text-text-primary">6</span> recorded sessions
+        </span>
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-status-success-text shadow-[0_0_8px_rgba(52,211,153,0.5)]"></span>
+<span class="font-telemetry-sm text-telemetry-sm text-status-success-text uppercase tracking-wider font-medium">Live Feed Synced</span>
+</div>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-space-md pt-space-xs">
+<div class="p-space-md rounded-xl bg-surface-raised flex items-center justify-between shadow-sm">
+<div class="flex flex-col gap-0.5">
+<span class="font-label-caps text-label-caps text-text-muted uppercase tracking-wider">Passive PAD Accuracy</span>
+<span class="font-telemetry-lg text-telemetry-lg text-status-success-text font-bold">99.82%</span>
+<span class="font-telemetry-sm text-telemetry-sm text-text-muted">ISO 30107 Compliant</span>
+</div>
+<div class="w-10 h-10 rounded-lg bg-surface-elevated flex items-center justify-center text-status-success-text">
+<span class="material-symbols-outlined text-[20px]">format_image_left</span>
+</div>
+</div>
+<div class="p-space-md rounded-xl bg-surface-raised flex items-center justify-between shadow-sm">
+<div class="flex flex-col gap-0.5">
+<span class="font-label-caps text-label-caps text-text-muted uppercase tracking-wider">Gate Cycle Latency</span>
+<span class="font-telemetry-lg text-telemetry-lg text-text-primary font-bold">428 ms</span>
+<span class="font-telemetry-sm text-telemetry-sm text-text-muted">Edge Hardware Inference</span>
+</div>
+<div class="w-10 h-10 rounded-lg bg-surface-elevated flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined text-[20px]">speed</span>
+</div>
+</div>
+<div class="p-space-md rounded-xl bg-surface-raised flex items-center justify-between shadow-sm">
+<div class="flex flex-col gap-0.5">
+<span class="font-label-caps text-label-caps text-text-muted uppercase tracking-wider">Station PAD Buffer</span>
+<span class="font-telemetry-lg text-telemetry-lg text-primary font-bold">6 Sessions / 100 max</span>
+<span class="font-telemetry-sm text-telemetry-sm text-text-muted">Encrypted Memory Ring</span>
+</div>
+<div class="w-10 h-10 rounded-lg bg-surface-elevated flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[20px]">memory</span>
+</div>
+</div>
+</div>
+</div>
+<div class="fixed bottom-6 right-6 pointer-events-none opacity-0 translate-y-2 transition-all duration-200 z-50 px-4 py-2 rounded-lg bg-surface-elevated text-text-primary font-telemetry-sm text-telemetry-sm flex items-center gap-2 shadow-2xl" id="copyToast">
+<span class="material-symbols-outlined text-status-success-text text-[18px]">check_circle</span>
+<span>Session Hash Copied to Clipboard</span>
+</div>
+<script>
+    (function() {
+      const workflowFilter = document.getElementById('workflowFilter');
+      const statusFilter = document.getElementById('statusFilter');
+      const rows = document.querySelectorAll('.session-row');
+      const countText = document.getElementById('sessionCountText');
+      const refreshBtn = document.getElementById('refreshBtn');
+      const refreshIcon = document.getElementById('refreshIcon');
+      const copyTriggers = document.querySelectorAll('.copy-trigger');
+      const copyToast = document.getElementById('copyToast');
+
+      function filterTable() {
+        const selectedWorkflow = workflowFilter.value;
+        const selectedStatus = statusFilter.value;
+        let visibleCount = 0;
+
+        rows.forEach(row => {
+          const rowWorkflow = row.getAttribute('data-workflow');
+          const rowStatus = row.getAttribute('data-status');
+
+          const matchWorkflow = (selectedWorkflow === 'ALL' || rowWorkflow === selectedWorkflow);
+          const matchStatus = (selectedStatus === 'ALL' || rowStatus === selectedStatus);
+
+          if (matchWorkflow && matchStatus) {
+            row.style.display = '';
+            visibleCount++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+
+        if (countText) {
+          countText.innerHTML = `Displaying <span class="font-medium text-text-primary">${visibleCount}</span> of <span class="font-medium text-text-primary">${rows.length}</span> recorded sessions`;
+        }
+      }
+
+      if (workflowFilter) workflowFilter.addEventListener('change', filterTable);
+      if (statusFilter) statusFilter.addEventListener('change', filterTable);
+
+      if (refreshBtn && refreshIcon) {
+        refreshBtn.addEventListener('click', () => {
+          refreshIcon.classList.add('animate-spin');
+          setTimeout(() => {
+            refreshIcon.classList.remove('animate-spin');
+          }, 600);
+        });
+      }
+
+      copyTriggers.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const text = btn.getAttribute('data-clipboard');
+          if (navigator.clipboard && text) {
+            navigator.clipboard.writeText(text);
+          }
+          if (copyToast) {
+            copyToast.classList.remove('opacity-0', 'translate-y-2');
+            copyToast.classList.add('opacity-100', 'translate-y-0');
+            setTimeout(() => {
+              copyToast.classList.remove('opacity-100', 'translate-y-0');
+              copyToast.classList.add('opacity-0', 'translate-y-2');
+            }, 2000);
+          }
+        });
+      });
+    })();
+  </script>
+</div></main><footer class="w-full bg-surface-base border-t border-border-subtle py-space-md mt-space-xl"><div class="max-w-[1440px] mx-auto px-gutter flex flex-col sm:flex-row items-center justify-between gap-space-sm text-center sm:text-left"><div class="flex items-center gap-space-sm"><span class="font-telemetry-sm text-telemetry-sm text-text-muted">MOSIP Biometric Standard Compliance (ISO/IEC 30107-3 PAD)</span><span class="text-border-strong">•</span><span class="font-telemetry-sm text-telemetry-sm text-status-success-text">SHA-256 Tamper Sealed</span></div><div class="font-telemetry-sm text-telemetry-sm text-text-muted">© 2025 MOSIP Identity Engine. Enterprise Biometric Station Shell.</div></div></footer></body></html>

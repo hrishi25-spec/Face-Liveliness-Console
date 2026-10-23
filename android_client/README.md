@@ -44,6 +44,25 @@ fails if either output differs, then builds `build/app/outputs/flutter-apk/app-d
 The Gradle wrapper verifies its distribution checksum and Gradle dependency
 versions are locked.
 
+## Installable harness APK
+
+A `v*` tag builds the same project as a release APK and attaches
+`pad-liveness-android-harness-<version>.apk` (plus a `.sha256`) to the GitHub
+Release. The release version is passed in with `--build-name`, so an installed
+harness reports the tag it came from. It is signed with the debug key
+(`android/app/build.gradle`), which is installable for host-integration testing
+but not a store-ready signature:
+
+```bash
+adb install pad-liveness-android-harness-<version>.apk
+```
+
+This is **not** a service installer and **not** the MOSIP Registration Client.
+The harness starts fail-closed until the host registers the native liveness API
+and camera source; installing it proves the APK, Dart entry point, Pigeon
+bindings and Android glue load on a device, not that camera, keystore or
+registration capture work. A host/device run is still required for those.
+
 `tool/generate_pigeon.sh` runs `dart format` on the Dart binding after Pigeon
 writes it: Pigeon 10.0.1's raw output is not `dart format`-clean, so without
 that step the regenerate-and-diff gate and the format gate could never both

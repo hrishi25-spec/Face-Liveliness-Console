@@ -1,5 +1,6 @@
 [Unit]
-# Installed to /lib/systemd/system/pad-liveness.service by the .deb, which
+# Installed to /lib/systemd/system/pad-liveness.service by the .deb and to
+# /usr/lib/systemd/system/pad-liveness.service by the .rpm, both of which
 # ./mvnw package builds (see README.md, "Linux installers"). The unit is not
 # enabled on install: enabling a service that binds port 8000 is a decision for
 # whoever installs it.

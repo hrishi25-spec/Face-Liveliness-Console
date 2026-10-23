@@ -463,6 +463,27 @@ assert(!isDirtyShown(), "a freshly loaded form is not dirty");
 assert(diff().hidden === true, "the diff panel starts hidden");
 assert($id("cfg-workflow").value === "RESIDENT", "the workflow select starts on RESIDENT");
 
+section("sign-in role picker");
+// The picker is the only entry point for the three roles, so losing one of the
+// cards or its sign-in controls has to fail here rather than in a browser
+// nobody re-checked after a theme or layout change.
+const pickerHtml = html.slice(html.indexOf('id="login-page"'),
+    html.indexOf("SCREEN 2: RESIDENT VIEW"));
+assert((pickerHtml.match(/class="role-card"/g) || []).length === 3,
+    "the sign-in page renders exactly three role cards");
+for (const role of ["Resident", "Operator", "Supervisor"]) {
+  assert(pickerHtml.includes(`<h3 class="role-title">${role}</h3>`),
+      `the ${role} card is on the sign-in page`);
+}
+for (const id of ["input-resident-id", "btn-login-resident",
+                  "input-operator-user", "input-operator-pass", "btn-login-operator",
+                  "input-supervisor-user", "input-supervisor-pass", "btn-login-supervisor"]) {
+  assert(pickerHtml.includes(`id="${id}"`),
+      `the sign-in page keeps #${id}`);
+}
+assert(/id="btn-theme-toggle"[^>]*data-mode="auto"/.test(html),
+    "the theme control starts in auto mode, so the page follows the browser");
+
 section("sessions table — placeholders are labelled, never passed off as real");
 // Nothing has created a session in this tab yet, and the service exposes no
 // session-list endpoint: the table lays the design out with sample rows, and

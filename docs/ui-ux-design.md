@@ -149,9 +149,14 @@ resident capture, supervisor policy editor, and credential auth dialog.
 **Type.** Inter is specified for UI and JetBrains Mono for hashes,
 nonces and diagnostics. The console ships under `style-src 'self'`, so it loads
 no font CDN: both families are used when the workstation already has them and
-the platform UI/mono stack otherwise. The console includes a dark palette under
-`prefers-color-scheme: dark` built from the same tokens, because the console is
-also read on dim enrolment workstations.
+the platform UI/mono stack otherwise.
+
+**Theme.** The console follows the workstation's light/dark preference by
+default (`prefers-color-scheme`), and the header's Auto / Light / Dark control
+overrides it for rooms whose OS setting does not match the lighting. The dark
+palette reuses the same tokens as the light one, because the console is also
+read on dim enrolment workstations, and `color-scheme` lets native controls
+match whichever palette is active.
 
 ### 7.2 Layout
 
@@ -167,6 +172,10 @@ also read on dim enrolment workstations.
 
 ### 7.3 Components
 
+- **Screen headers** — the picker, Resident capture and Sessions surfaces open with
+  the Stitch eyebrow row: a cobalt context chip (`Access gate`, `Live capture`,
+  `Session review`) beside the PAD standard in mono, so the page states its
+  context before its title.
 - **Header** — two-line identity (Face Liveliness / Console) beside the face-scan mark, live service
   chips as dot + uppercase state text (`service: ok`, `engine: available`,
   `chain: intact`, `session <id>`), signed-in name, role badge, Log out / Switch

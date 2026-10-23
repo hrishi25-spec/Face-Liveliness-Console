@@ -51,9 +51,14 @@ find_java() {
 
 JAVA_BIN=$(find_java) || { echo "Need JDK 17+. Install: brew install openjdk@21 / apt install openjdk-21-jdk / winget install EclipseAdoptium.Temurin.21.JDK"; exit 1; }
 
-# Build if needed (uses Maven wrapper)
+# Build if needed (uses Maven wrapper).
+#
+# Skip both installer profiles: this is a developer launcher and only needs the
+# jar. Without these flags `package` would build a .deb/.rpm or .exe too, and
+# the Linux path may download appimagetool and require dpkg/rpmbuild first.
 JAR="target/pad-liveness-backend-1.0.0-SNAPSHOT.jar"
-[ -f "$JAR" ] || { echo "Building..."; if [ -x "./mvnw" ]; then ./mvnw -q package -DskipTests; else mvn -q package -DskipTests; fi; }
+SKIP_INSTALLERS="-Dlinux.package.skip=true -Dwindows.package.skip=true"
+[ -f "$JAR" ] || { echo "Building..."; if [ -x "./mvnw" ]; then ./mvnw -q package -DskipTests $SKIP_INSTALLERS; else mvn -q package -DskipTests $SKIP_INSTALLERS; fi; }
 
 # Check port
 (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && { echo "Port $PORT in use"; exit 1; }

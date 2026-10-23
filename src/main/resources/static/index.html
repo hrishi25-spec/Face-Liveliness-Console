@@ -40,6 +40,23 @@
     </div>
 
     <div class="topbar-right">
+      <button id="btn-theme-toggle" class="theme-toggle" type="button" aria-label="Theme: Auto (matches browser)" title="Switch theme (Auto / Light / Dark)" data-mode="auto">
+        <span class="theme-toggle-icon" aria-hidden="true">
+          <svg class="theme-icon-auto" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="14" x="2" y="3" rx="2"/>
+            <line x1="8" x2="16" y1="21" y2="21"/>
+            <line x1="12" x2="12" y1="17" y2="21"/>
+          </svg>
+          <svg class="theme-icon-light" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+          </svg>
+          <svg class="theme-icon-dark" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+          </svg>
+        </span>
+        <span class="theme-toggle-text" id="theme-toggle-text">Auto</span>
+      </button>
       <span id="topbar-user-label" class="topbar-user-text" hidden>Signed in as <span id="topbar-username">staff.user</span></span>
       <span class="pill-badge pill-brand" id="pill-user" hidden>no user</span>
       <button id="btn-sign-in" class="secondary" hidden>Sign in</button>
@@ -51,6 +68,13 @@
 <!-- ========================= SCREEN 1: ROLE PICKER ========================= -->
 <div id="login-page" class="view role-picker-view">
   <div class="picker-header">
+    <div class="screen-eyebrow-row">
+      <span class="screen-eyebrow">
+        <span class="screen-eyebrow-dot" aria-hidden="true"></span>
+        Access gate
+      </span>
+      <span class="screen-eyebrow-meta">PAD · ISO/IEC 30107-3</span>
+    </div>
     <h1 class="page-title">Choose how you want to continue</h1>
     <p class="page-subtitle">Select your role. Staff roles require sign-in.</p>
   </div>
@@ -58,11 +82,14 @@
   <div class="role-cards-grid">
     <!-- Card 1: Resident -->
     <div class="role-card">
-      <div class="role-icon-box">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-          <circle cx="12" cy="7" r="4"/>
-        </svg>
+      <div class="role-card-top">
+        <div class="role-icon-box">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <span class="role-card-index" aria-hidden="true">Role 01</span>
       </div>
       <h3 class="role-title">Resident</h3>
       <p class="role-desc">Check that you are a live person during registration. No sign-in needed.</p>
@@ -75,13 +102,16 @@
 
     <!-- Card 2: Operator -->
     <div class="role-card">
-      <div class="role-icon-box">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
-          <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
-          <path d="M9 12h6"/>
-          <path d="M9 16h6"/>
-        </svg>
+      <div class="role-card-top">
+        <div class="role-icon-box">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+            <path d="M9 12h6"/>
+            <path d="M9 16h6"/>
+          </svg>
+        </div>
+        <span class="role-card-index" aria-hidden="true">Role 02</span>
       </div>
       <h3 class="role-title">Operator</h3>
       <p class="role-desc">Verify your identity, review sessions, audit entries and rejection reasons. Read-only.</p>
@@ -104,11 +134,14 @@
 
     <!-- Card 3: Supervisor -->
     <div class="role-card">
-      <div class="role-icon-box">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          <path d="m9 12 2 2 4-4"/>
-        </svg>
+      <div class="role-card-top">
+        <div class="role-icon-box">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </div>
+        <span class="role-card-index" aria-hidden="true">Role 03</span>
       </div>
       <h3 class="role-title">Supervisor</h3>
       <p class="role-desc">Full access: policy, users, audit chain, metrics and diagnostics.</p>
@@ -146,6 +179,13 @@
 <!-- ========================= SCREEN 2: RESIDENT VIEW ========================= -->
 <div id="role-resident" class="view resident-view" hidden>
   <div class="view-header">
+    <div class="screen-eyebrow-row">
+      <span class="screen-eyebrow">
+        <span class="screen-eyebrow-dot" aria-hidden="true"></span>
+        Live capture
+      </span>
+      <span class="screen-eyebrow-meta">PAD · ISO/IEC 30107-3</span>
+    </div>
     <h1 class="page-title">Face liveness check</h1>
     <p class="page-subtitle">We confirm you are physically present. It takes a few seconds.</p>
   </div>
@@ -372,6 +412,13 @@
     <!-- ==================== TAB: SESSIONS (SCREEN 3) ==================== -->
     <div class="tabpanel" id="panel-sessions" hidden>
       <div class="view-header">
+        <div class="screen-eyebrow-row">
+          <span class="screen-eyebrow">
+            <span class="screen-eyebrow-dot" aria-hidden="true"></span>
+            Session review
+          </span>
+          <span class="screen-eyebrow-meta">READ-ONLY · PAD LOG</span>
+        </div>
         <h1 class="page-title">Sessions</h1>
         <p class="page-subtitle">Recent liveness sessions. This view is read-only.</p>
       </div>
@@ -436,9 +483,20 @@
       </div>
 
       <!-- Session Detail -->
-      <div class="card mt16">
-        <h3 class="card-title">Session Detail</h3>
-        <dl class="kv mt12" id="session-detail"><dt>—</dt><dd>Select a session above to inspect full detail.</dd></dl>
+      <div class="card mt16 session-detail-card">
+        <div class="card-header-row">
+          <div class="card-title-row">
+            <svg class="card-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <path d="M14 2v6h6"/>
+              <path d="M9 13h6"/>
+              <path d="M9 17h4"/>
+            </svg>
+            <h3 class="card-title">Session Detail</h3>
+          </div>
+          <span class="pill-badge pill-neutral"><span class="pill-dot"></span>Read-only</span>
+        </div>
+        <dl class="kv" id="session-detail"><dt>—</dt><dd>Select a session above to inspect full detail.</dd></dl>
       </div>
     </div>
 

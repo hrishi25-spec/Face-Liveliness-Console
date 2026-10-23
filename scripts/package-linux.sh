@@ -2,17 +2,19 @@
 #
 # Build the Linux installers for the service:
 #
-#   target/dist/pad-liveness_<version>-1_amd64.deb    deb, systemd unit included
-#   target/dist/pad-liveness-<version>-x86_64.AppImage  AppRun starts it and opens the console
+#   target/dist/pad-liveness_<version>-1_amd64.deb      deb, systemd unit included
+#   target/dist/pad-liveness-<version>-1.x86_64.rpm     rpm, same unit and menu entry
+#   target/dist/pad-liveness-<version>-x86_64.AppImage   AppRun starts it and opens the console
 #
 # This is what the Maven `linux-package` profile runs, so a plain
 #
 #   ./mvnw package
 #
-# produces both on Linux. Run it by hand to debug one half:
+# produces all three on Linux. Run it by hand to debug one half:
 #
-#   ./scripts/package-linux.sh --skip-deb          # AppImage only
-#   ./scripts/package-linux.sh --skip-appimage     # .deb only
+#   ./scripts/package-linux.sh --skip-deb          # .rpm + AppImage
+#   ./scripts/package-linux.sh --skip-rpm          # .deb + AppImage
+#   ./scripts/package-linux.sh --skip-appimage     # .deb + .rpm
 #
 # It is a script rather than Maven plugin configuration because jpackage is a
 # CLI that wants an application image, and the AppImage step (appimagetool) has
@@ -22,15 +24,17 @@
 #   * jpackage, from the JDK 17 the build already uses ($JAVA_HOME/bin/jpackage)
 #   * dpkg-deb and fakeroot for the .deb — Debian/Ubuntu have both; on Arch,
 #     `pacman -S dpkg` (fakeroot is in base-devel)
+#   * rpmbuild for the .rpm — Debian/Ubuntu: `apt-get install rpm`; Fedora and
+#     RHEL: `dnf install rpm-build`
 #   * appimagetool for the AppImage — fetched once from its pinned 1.9.1 release
 #     and cached under ~/.cache/pad-liveness/tools. It also needs the `file`
 #     command, which every Debian/Ubuntu image has but a minimal container does
 #     not (without it appimagetool fails after it has already packed the image).
 #
 # Missing tools are a warning and that half is skipped, so a workstation without
-# dpkg still gets the jar and the AppImage and CI without the fetcher still
-# builds. `--strict` (the CI packaging job, and -Dlinux.package.strict=true)
-# turns every skip into a failure instead.
+# dpkg or rpmbuild still gets the jar and the other installers and CI without
+# the fetcher still builds. `--strict` (the CI packaging job, and
+# -Dlinux.package.strict=true) turns every skip into a failure instead.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -42,6 +46,7 @@ JAR=""
 TARGET_DIR="$ROOT/target"
 DEST=""
 BUILD_DEB=1
+BUILD_RPM=1
 BUILD_APPIMAGE=1
 STRICT="${PAD_PACKAGE_STRICT:-0}"
 FETCH_TOOLS="${PAD_PACKAGE_FETCH:-1}"
@@ -49,6 +54,9 @@ ICON="$ROOT/packaging/linux/pad-liveness.png"
 SERVICE="$ROOT/packaging/linux/pad-liveness.service"
 APPRUN="$ROOT/packaging/linux/AppRun"
 DESKTOP="$ROOT/packaging/linux/pad-liveness.desktop"
+# The License tag is free text; this repository ships no LICENSE file, so make
+# the value explicit and overridable rather than inventing an SPDX identifier.
+RPM_LICENSE="${PAD_RPM_LICENSE:-MOSIP}"
 CACHE="${PAD_PACKAGE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/pad-liveness}"
 
 # appimagetool 1.9.1, x86_64 AppImage. Pinned by version *and* digest: the
@@ -85,9 +93,7 @@ case "$STRICT" in
 esac
 
 usage() {
-    sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
-
 Usage: scripts/package-linux.sh [options]
 
   --version <x.y.z>     package version (jpackage rejects -SNAPSHOT suffixes)
@@ -95,11 +101,15 @@ Usage: scripts/package-linux.sh [options]
                         otherwise the full one in --target
   --target <dir>        build directory (default: target)
   --dest <dir>          where the artifacts land (default: <target>/dist)
-  --skip-deb            build only the AppImage
-  --skip-appimage       build only the .deb
+  --skip-deb            do not build the .deb
+  --skip-rpm            do not build the .rpm
+  --skip-appimage       do not build the AppImage
   --strict              a missing tool is an error, not a skipped artifact
   --no-fetch            never download appimagetool; use what is on PATH/cache
   -h, --help            this text
+
+Environment:
+  PAD_RPM_LICENSE       License tag for the .rpm (default: MOSIP)
 EOF
 }
 
@@ -110,6 +120,7 @@ while [ $# -gt 0 ]; do
         --target)         [ $# -ge 2 ] || die "--target needs a value"; TARGET_DIR="$2"; shift 2 ;;
         --dest)           [ $# -ge 2 ] || die "--dest needs a value"; DEST="$2"; shift 2 ;;
         --skip-deb)       BUILD_DEB=0; shift ;;
+        --skip-rpm)       BUILD_RPM=0; shift ;;
         --skip-appimage)  BUILD_APPIMAGE=0; shift ;;
         --strict)         STRICT=1; shift ;;
         --no-fetch)       FETCH_TOOLS=0; shift ;;
@@ -234,6 +245,7 @@ APP_IMAGE="$TARGET_DIR/jpackage/$NAME"
 # false test would make that list the script's exit status.
 rm -rf "$TARGET_DIR/jpackage"
 if [ "$BUILD_DEB" = 1 ]; then rm -f "$DEST"/*.deb; fi
+if [ "$BUILD_RPM" = 1 ]; then rm -f "$DEST"/*.rpm; fi
 if [ "$BUILD_APPIMAGE" = 1 ]; then rm -f "$DEST"/*.AppImage; fi
 mkdir -p "$STAGE"
 cp "$JAR" "$STAGE/app.jar"
@@ -345,6 +357,104 @@ systemctl daemon-reload >/dev/null 2>&1 || true"
     fi
 fi
 
+# ----------------------------------------------------------------------- .rpm
+#
+# jpackage can emit an RPM, but its package carries the application image only:
+# no unit, and the menu entry starts the server with no terminal. The RPM is
+# built from the same application image with a small generated spec instead, so
+# the payload matches the .deb: the service under /opt, the same sandboxed unit,
+# and a desktop entry that opens the console.
+#
+# `__os_install_post` is disabled and `__strip` is a no-op: the payload is a
+# bundled JRE, and a build host's strip/debuginfo passes have no business
+# rewriting binaries this build did not link.
+
+if [ "$BUILD_RPM" = 1 ]; then
+    if ! command -v rpmbuild >/dev/null 2>&1; then
+        skip "rpmbuild is needed for the .rpm — apt-get install rpm (Fedora: dnf install rpm-build)"
+    else
+        step "Building the .rpm"
+        RPM_WORK="$TARGET_DIR/jpackage/rpm"
+        rm -rf "$RPM_WORK"
+        mkdir -p "$RPM_WORK/BUILD" "$RPM_WORK/RPMS" "$RPM_WORK/SOURCES" \
+                 "$RPM_WORK/SPECS" "$RPM_WORK/SRPMS"
+        cp -a "$APP_IMAGE" "$RPM_WORK/SOURCES/$NAME"
+        install -m 0644 "$SERVICE" "$RPM_WORK/SOURCES/$NAME.service"
+        install -m 0644 "$ICON" "$RPM_WORK/SOURCES/$NAME.png"
+        # Same rewrite as the .deb: the installed launcher is not on PATH, so
+        # `Exec=pad-liveness` would leave a menu entry that does nothing.
+        sed -e "s|^Exec=.*|Exec=/opt/$NAME/bin/$NAME|" \
+            -e "s|^Icon=.*|Icon=/usr/share/icons/hicolor/512x512/apps/$NAME.png|" \
+            "$DESKTOP" > "$RPM_WORK/SOURCES/$NAME.desktop"
+
+        SPEC="$RPM_WORK/SPECS/$NAME.spec"
+        cat > "$SPEC" <<EOF
+Name:           $NAME
+Version:        $VERSION
+Release:        1
+Summary:        MOSIP face liveness and PAD service with its browser console
+License:        $RPM_LICENSE
+URL:            https://mosip.io/
+AutoReqProv:    no
+BuildArch:      x86_64
+
+%description
+Face liveness and presentation attack detection for MOSIP Registration Client
+workflows. Runs locally, serves the browser console on port 8000, and installs
+a systemd unit that is not enabled on install.
+
+%prep
+# No sources to prepare: %install copies the prebuilt application image.
+
+%install
+rm -rf %{buildroot}
+mkdir -p %{buildroot}/opt
+cp -a %{_sourcedir}/$NAME %{buildroot}/opt/$NAME
+install -D -m 0644 %{_sourcedir}/$NAME.service %{buildroot}/usr/lib/systemd/system/$NAME.service
+install -D -m 0644 %{_sourcedir}/$NAME.desktop %{buildroot}/usr/share/applications/$NAME.desktop
+install -D -m 0644 %{_sourcedir}/$NAME.png %{buildroot}/usr/share/icons/hicolor/512x512/apps/$NAME.png
+
+%post
+# The unit is now on disk; make systemd see it without a reboot.
+systemctl daemon-reload >/dev/null 2>&1 || true
+
+%preun
+# On removal (not upgrade), stop and disable the service. RPM does not do this
+# on its own, and leaving it running would serve from a payload about to go.
+if [ \$1 -eq 0 ]; then
+    systemctl --no-reload disable --now $NAME.service >/dev/null 2>&1 || true
+fi
+
+%postun
+systemctl daemon-reload >/dev/null 2>&1 || true
+
+%files
+/opt/$NAME
+/usr/lib/systemd/system/$NAME.service
+/usr/share/applications/$NAME.desktop
+/usr/share/icons/hicolor/512x512/apps/$NAME.png
+EOF
+
+        RPM_LOG="$RPM_WORK/rpmbuild.log"
+        if ! rpmbuild \
+                --define "_topdir $RPM_WORK" \
+                --define "debug_package %{nil}" \
+                --define "__strip /bin/true" \
+                --define "__os_install_post %{nil}" \
+                -bb "$SPEC" > "$RPM_LOG" 2>&1; then
+            tail -n 40 "$RPM_LOG" >&2
+            die "rpmbuild failed; the full log is $RPM_LOG"
+        fi
+        RAW_RPM=$(find "$RPM_WORK/RPMS" -name '*.rpm' | sort | head -1 || true)
+        [ -n "$RAW_RPM" ] || die "rpmbuild exited 0 but produced no .rpm under $RPM_WORK/RPMS"
+        rm -f "$DEST"/*.rpm
+        RPM="$DEST/$(basename "$RAW_RPM")"
+        cp "$RAW_RPM" "$RPM"
+        info ".rpm: $RPM ($(du -h "$RPM" | cut -f1))"
+        info "unit: /usr/lib/systemd/system/$NAME.service"
+    fi
+fi
+
 # ------------------------------------------------------------------- AppImage
 
 if [ "$BUILD_APPIMAGE" = 1 ]; then
@@ -380,7 +490,7 @@ fi
 # -------------------------------------------------------------------- summary
 
 step "Done"
-for artifact in "$DEST"/*.deb "$DEST"/*.AppImage; do
+for artifact in "$DEST"/*.deb "$DEST"/*.rpm "$DEST"/*.AppImage; do
     [ -f "$artifact" ] || continue
     info "$(basename "$artifact")  $(du -h "$artifact" | cut -f1)"
 done
@@ -395,6 +505,7 @@ EOF
 fi
 
 DEB_PATH=$(ls "$DEST"/*.deb 2>/dev/null | head -1 || true)
+RPM_PATH=$(ls "$DEST"/*.rpm 2>/dev/null | head -1 || true)
 APPIMAGE_PATH=$(ls "$DEST"/*.AppImage 2>/dev/null | head -1 || true)
 if [ -n "$DEB_PATH" ]; then
     cat <<EOF
@@ -402,6 +513,16 @@ if [ -n "$DEB_PATH" ]; then
   Install the .deb, then enable the bundled unit:
 
     sudo dpkg -i $DEB_PATH
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now $NAME
+EOF
+fi
+if [ -n "$RPM_PATH" ]; then
+    cat <<EOF
+
+  Install the .rpm, then enable the bundled unit:
+
+    sudo rpm -Uvh $RPM_PATH
     sudo systemctl daemon-reload
     sudo systemctl enable --now $NAME
 EOF

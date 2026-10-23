@@ -68,7 +68,7 @@ while [ $# -gt 0 ]; do
 done
 
 say ""
-say "${B}MOSIP Face Liveness & PAD Service${OFF} ${DIM}— launcher${OFF}"
+say "${B}MOSIP Face Liveness & PAD Service${OFF} ${DIM}— developer launcher (jar only)${OFF}"
 say "${DIM}$(uname -s) $(uname -m) · port $PORT · profile $PROFILE${OFF}"
 say ""
 
@@ -121,19 +121,27 @@ MVN=""
 if [ -x "./mvnw" ]; then MVN="./mvnw"; elif command -v mvn >/dev/null 2>&1; then MVN="mvn"; fi
 
 # ------------------------------------------------------------------- 3. build
+#
+# `package` also activates the OS packaging profiles, which build a .deb/.rpm or
+# a Windows .exe from the jar. A developer running this launcher wants the jar,
+# not an installer: the profiles can download appimagetool, need dpkg/rpmbuild
+# or WiX, and add minutes to every start. Both skip flags are passed on every
+# invocation — including --rebuild, whose `clean` would otherwise discard the
+# installers it had just spent that time building.
+SKIP_INSTALLERS="-Dlinux.package.skip=true -Dwindows.package.skip=true"
 if [ "$DO_BUILD" = 1 ]; then
   [ -n "$MVN" ] || die "Neither ./mvnw nor 'mvn' is available, so the jar cannot be built.
   Either install Maven (https://maven.apache.org) or run './start.sh --no-build'
   once a prebuilt $JAR exists."
   if [ "$DO_CLEAN" = 1 ]; then
     info "Clean build (this also runs the full test suite)…"
-    "$MVN" clean package
+    "$MVN" clean package $SKIP_INSTALLERS
   elif [ "$RUN_TESTS" = 1 ]; then
     info "Building and running tests…"
-    "$MVN" package
+    "$MVN" package $SKIP_INSTALLERS
   else
     info "Building (skipping tests — use --test to include them)…"
-    "$MVN" -q package -DskipTests
+    "$MVN" -q package -DskipTests $SKIP_INSTALLERS
   fi
   [ -f "$JAR" ] || die "Build finished but $JAR is missing."
   ok "Build complete"

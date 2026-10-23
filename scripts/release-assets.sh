@@ -11,6 +11,7 @@
 #       target/pad-liveness-backend-1.2.3.jar \
 #       target/pad-liveness-backend-1.2.3-slim.jar \
 #       target/dist/pad-liveness_1.2.3-1_amd64.deb \
+#       target/dist/pad-liveness-1.2.3-1.x86_64.rpm \
 #       target/dist/pad-liveness-1.2.3-x86_64.AppImage
 #   ./scripts/release-assets.sh checksums
 #   ./scripts/release-assets.sh attach --tag v1.2.3
@@ -90,7 +91,7 @@ done
 #
 # Names are the contract: the release job asserts the stamped jar names and the
 # .deb carries whatever Debian revision jpackage chose, so `add` accepts only
-# the four release shapes for --version and refuses a second copy of a name.
+# the five release shapes for --version and refuses a second copy of a name.
 # That is what stops a stale artifact from a previous build silently joining
 # this release.
 cmd_add() {
@@ -103,6 +104,7 @@ cmd_add() {
         case "$base" in
             "pad-liveness-backend-$VERSION.jar"|"pad-liveness-backend-$VERSION-slim.jar") ;;
             "pad-liveness_$VERSION-"*.deb) ;;
+            "pad-liveness-$VERSION-"*.rpm) ;;
             "pad-liveness-$VERSION-"*.AppImage) ;;
             *) die "$base is not a release asset name for version $VERSION" ;;
         esac
@@ -116,8 +118,8 @@ cmd_add() {
 #
 # One .sha256 per asset, named exactly like its file with the suffix appended —
 # the convention `sha256sum -c <file>.sha256` verifies from the download
-# directory with no path editing. The exact count is asserted first: four
-# binaries is the release contract, and a fifth means something else got staged.
+# directory with no path editing. The exact count is asserted first: five
+# binaries is the release contract, and a sixth means something else got staged.
 cmd_checksums() {
     [ -d "$DEST" ] || die "no staging directory: $DEST"
     cd "$DEST" || die "cannot enter $DEST"
@@ -125,11 +127,12 @@ cmd_checksums() {
     shopt -s nullglob
     binaries+=( pad-liveness-backend-*.jar )
     binaries+=( pad-liveness*.deb )
+    binaries+=( pad-liveness*.rpm )
     binaries+=( pad-liveness*.AppImage )
     shopt -u nullglob
-    if [ "${#binaries[@]}" -ne 4 ]; then
+    if [ "${#binaries[@]}" -ne 5 ]; then
         ls -la
-        die "expected two jars, one .deb and one AppImage in $DEST, found ${#binaries[@]}"
+        die "expected two jars, one .deb, one .rpm and one AppImage in $DEST, found ${#binaries[@]}"
     fi
     for binary in "${binaries[@]}"; do
         sha256sum "$binary" > "$binary.sha256" || die "cannot checksum $binary"
@@ -155,14 +158,16 @@ cmd_attach() {
     assets+=( pad-liveness-backend-*.jar.sha256 )
     assets+=( pad-liveness*.deb )
     assets+=( pad-liveness*.deb.sha256 )
+    assets+=( pad-liveness*.rpm )
+    assets+=( pad-liveness*.rpm.sha256 )
     assets+=( pad-liveness*.AppImage )
     assets+=( pad-liveness*.AppImage.sha256 )
     shopt -u nullglob
     # gh skips a missing file without failing, so a release with no slim jar or
     # no installer would publish cleanly and be noticed only by a downloader.
-    if [ "${#assets[@]}" -ne 8 ]; then
+    if [ "${#assets[@]}" -ne 10 ]; then
         ls -la
-        die "expected 8 release assets in $DEST, found ${#assets[@]}"
+        die "expected 10 release assets in $DEST, found ${#assets[@]}"
     fi
     for asset in "${assets[@]}"; do
         [ -f "$asset" ] || die "missing release asset: $asset"
@@ -261,21 +266,22 @@ cmd_rehearse() {
     local full="pad-liveness-backend-$version.jar"
     local slim="pad-liveness-backend-$version-slim.jar"
     local deb="pad-liveness_${version}-1_amd64.deb"
+    local rpm="pad-liveness-$version-1.x86_64.rpm"
     local appimage="pad-liveness-$version-x86_64.AppImage"
     mkdir -p "$src/dist" "$dest" || die "cannot create the fixtures"
     : > "$src/$full"; : > "$src/$slim"
-    : > "$src/dist/$deb"; : > "$src/dist/$appimage"
+    : > "$src/dist/$deb"; : > "$src/dist/$rpm"; : > "$src/dist/$appimage"
 
     # A name that is not a release shape for this version must not be staged,
     # and the same name must not be staged twice.
     expect_fail "refuses a jar for another version" "not a release asset name" \
         "$self" add --dest "$work/other" --version 1.2.4 "$src/$full"
-    expect_ok "stages the four binaries" \
+    expect_ok "stages the five binaries" \
         "$self" add --dest "$dest" --version "$version" \
-        "$src/$full" "$src/$slim" "$src/dist/$deb" "$src/dist/$appimage"
+        "$src/$full" "$src/$slim" "$src/dist/$deb" "$src/dist/$rpm" "$src/dist/$appimage"
     expect_fail "refuses a second copy of one name" "already staged" \
         "$self" add --dest "$dest" --version "$version" "$src/$full"
-    expect_ok "writes and verifies four checksums" "$self" checksums --dest "$dest"
+    expect_ok "writes and verifies five checksums" "$self" checksums --dest "$dest"
 
     local create_out
     create_out=$("$self" attach --dest "$dest" --tag "v$version" --repo example/scratch --dry-run 2>&1) \
@@ -300,12 +306,14 @@ cmd_rehearse() {
     local cfull="pad-liveness-backend-$canary_version.jar"
     local cslim="pad-liveness-backend-$canary_version-slim.jar"
     local cdeb="pad-liveness_${canary_version}-1_amd64.deb"
+    local crpm="pad-liveness-$canary_version-1.x86_64.rpm"
     local cappimage="pad-liveness-$canary_version-x86_64.AppImage"
     mkdir -p "$csrc/dist" "$cdest"
     : > "$csrc/$cfull"; : > "$csrc/$cslim"
-    : > "$csrc/dist/$cdeb"; : > "$csrc/dist/$cappimage"
+    : > "$csrc/dist/$cdeb"; : > "$csrc/dist/$crpm"; : > "$csrc/dist/$cappimage"
     "$self" add --dest "$cdest" --version "$canary_version" \
-        "$csrc/$cfull" "$csrc/$cslim" "$csrc/dist/$cdeb" "$csrc/dist/$cappimage" >/dev/null \
+        "$csrc/$cfull" "$csrc/$cslim" "$csrc/dist/$cdeb" "$csrc/dist/$crpm" \
+        "$csrc/dist/$cappimage" >/dev/null \
         && "$self" checksums --dest "$cdest" >/dev/null \
         || fail "stages a canary release"
     local canary_out
@@ -315,7 +323,7 @@ cmd_rehearse() {
     # The guards, in the direction that matters: a release missing an asset or
     # carrying a jar for another version must not be publishable.
     mv "$dest/$slim" "$work/hold-slim"
-    expect_fail "refuses to publish with one asset missing" "expected 8 release assets" \
+    expect_fail "refuses to publish with one asset missing" "expected 10 release assets" \
         "$self" attach --dest "$dest" --tag "v$version" --dry-run
     mv "$dest/$full" "$work/hold-full"
     expect_fail "refuses to checksum a short staging directory" "expected two jars" \
