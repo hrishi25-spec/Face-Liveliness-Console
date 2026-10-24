@@ -820,7 +820,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
+        # --repo is required here: this job never checks out the repository, so
+        # gh has no working tree from which to infer owner/name.
+        run: gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --repo "$GITHUB_REPOSITORY" --clobber
 
   # The image is a separate delivery path from the jar: the Dockerfile's COPY,
   # its Alpine base, the unprivileged user and the JVM flags exist nowhere else
@@ -1235,6 +1237,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # Flutter 3.10.4 drives a Gradle 7 wrapper, which does not run on a newer
+      # default JDK; the Android client job pins 17 for the same reason.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -1275,7 +1286,21 @@ jobs:
           VERSION="${TAG#v}"
           flutter build apk --release \
             --build-name="$VERSION" \
-            --build-number="${{ github.run_number }}"
+            --build-number="${{ github.run_number }}" 2>&1 | tee /tmp/apk-build.log
+
+      # The Gradle failure is otherwise only in the job log. Publish its tail as
+      # annotations so a red APK job names the incompatibility without a
+      # maintainer having to download the raw log.
+      - name: Report the APK build failure
+        if: failure()
+        run: |
+          if [ -f /tmp/apk-build.log ]; then
+            tail -30 /tmp/apk-build.log | while IFS= read -r line; do
+              echo "::error title=APK build::$line"
+            done
+          else
+            echo "::error::the APK build failed before Flutter wrote its log; check the setup steps"
+          fi
 
       - name: Name and checksum the harness APK
         env:
