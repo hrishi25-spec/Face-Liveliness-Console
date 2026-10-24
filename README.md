@@ -328,7 +328,7 @@ Explicit backends never silently fall back. An unavailable one fails closed with
 | `training/` | Workstation-only synthetic-data pipeline for MiniFASNet. No real faces, not in CI |
 | `docs/` | Cross-project documentation (below) |
 | `packaging/` | Inputs to the desktop installers: Linux icon, AppRun, desktop entry and systemd unit; Windows `.ico` |
-| `scripts/` | Repo gates: secret scan, boundary and doc-link checks, Java import and package layout, jar smoke, jar size, cold-boot median, Docker, Windows-launcher and Linux-installer smoke |
+| `scripts/` | Repo gates: secret scan, launcher, boundary and doc-link checks, Java import and package layout, jar smoke, jar size, cold-boot median, Docker, Windows-launcher and Linux-installer smoke |
 
 Inside `io.mosip.liveness`: `api/` (controllers and filters), `auth/`, `services/`, `engine/` (embedded state machine), `backend/` (the SPI), `challenge/`, `config/`, `audit/`, `device/` (SBI stream, burst capture and mock L0/L1 device), `eval/`, `client/` and `android/`.
 
@@ -337,6 +337,7 @@ Inside `io.mosip.liveness`: `api/` (controllers and filters), `auth/`, `services
 ```bash
 ./mvnw --batch-mode test                         # Java unit + integration (88 test classes, 751 tests)
 node src/test/js/console-guards.test.mjs        # console DOM guards, no Maven needed
+node scripts/check-launchers.mjs                # developer launchers never build installers
 node scripts/check-project-boundaries.mjs       # docs-vs-CI consistency gate
 node scripts/check-doc-links.mjs                # every relative doc link and #anchor resolves
 node scripts/check-java-imports.mjs             # every Java import resolves to source
@@ -344,7 +345,7 @@ node scripts/check-java-packages.mjs            # every package declaration matc
 cd pad_liveness_backend && python -m pytest -q   # 49 Python tests — boundary-allow: sibling project's suite, documented from the repository root
 ```
 
-Twenty CI jobs cover unit and integration, console DOM guards, project boundaries, documentation links (every relative link and `#anchor` resolved), Java source layout (imports and packages), secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging (the jar's `BOOT-INF/lib` compared with the resolved runtime classpath, then booted), a Windows launcher smoke test (JDK under a path with a space), the Windows `.exe` installer (built strictly, booted, then attached to a tagged release), the Docker image, the Linux `.deb`, `.rpm` and AppImage (built strictly, then inspected and booted), a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, tagged releases (both jars, all three Linux installers, the Windows `.exe`, and a `.sha256` beside every one of them), and the Android harness APK. Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
+Twenty-one CI jobs cover unit and integration, console DOM guards, developer launcher guards, project boundaries, documentation links (every relative link and `#anchor` resolved), Java source layout (imports and packages), secret scanning, the Python backend, a cross-backend contract test, the Android client, slim and full packaging (the jar's `BOOT-INF/lib` compared with the resolved runtime classpath, then booted), a Windows launcher smoke test (JDK under a path with a space), the Windows `.exe` installer (built strictly, booted, then attached to a tagged release), the Docker image, the Linux `.deb`, `.rpm` and AppImage (built strictly, then inspected and booted), a 5-boot cold-boot budget, PostgreSQL schema validation via Testcontainers, tagged releases (both jars, all three Linux installers, the Windows `.exe`, and a `.sha256` beside every one of them), and the Android harness APK. Gates live outside Maven on purpose: a green Java suite says nothing about the console, packaging, boot time or the Windows launcher.
 
 ## Configuration essentials
 

@@ -399,7 +399,7 @@ if defined NATIVESTATE (
 echo [X] Engine   the jar carries no Windows OpenCV natives
 echo        built with -Pslim? that profile keeps linux/x86_64 only, so this jar
 echo        would boot here but report the engine unavailable to every frame
-echo        rebuild with:  mvnw.cmd clean package -DskipTests
+echo        rebuild with:  mvnw.cmd clean package -DskipTests -Dlinux.package.skip=true -Dwindows.package.skip=true
 set /a DFAIL+=1
 goto doctor_done
 

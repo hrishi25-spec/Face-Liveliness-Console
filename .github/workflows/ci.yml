@@ -115,6 +115,23 @@ jobs:
       - name: Run the console guard tests
         run: node src/test/js/console-guards.test.mjs
 
+  # The developer launchers are the first thing a new contributor runs, and
+  # `mvnw package` also activates the OS packaging profiles. A launcher that
+  # loses its skip flags quietly builds a .deb/.rpm (fetching appimagetool) or a
+  # WiX-backed .exe on every start. This static gate checks every launcher and
+  # the doctor's suggested rebuild command, so the flags cannot regress
+  # silently. Like the console harness it needs no setup or dependencies.
+  launchers:
+    name: Developer launchers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check the launchers build only the jar
+        run: node scripts/check-launchers.mjs
+
   # Guidance and instruction scope. Nothing else in this workflow reads
   # AGENTS.md or the READMEs: a project can land with no guidance and no map
   # entry, and a paragraph copied from another project's README can tell
