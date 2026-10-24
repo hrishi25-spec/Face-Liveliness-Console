@@ -1,10 +1,10 @@
-fastapi==0.143.1
+fastapi==0.156.4
 uvicorn[standard]==0.54.0
-SQLAlchemy==2.1.4
+SQLAlchemy==2.1.5
 psycopg2-binary==2.9.13
 alembic==1.20.0
 pydantic==2.14.1
-pydantic-settings==2.16.0
+pydantic-settings==2.16.1
 python-multipart==0.0.32
 opencv-python-headless==4.14.0.94
 numpy==2.5.4
