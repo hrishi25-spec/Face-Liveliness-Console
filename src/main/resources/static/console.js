@@ -563,6 +563,89 @@
     failed: ["reject", "FAILED"]
   };
 
+  // ---------- security warnings (PAD attacks and rejections) ----------
+  //
+  // A PAD flag is a security event, not a routine frame, and a rejection is the
+  // verdict: an operator who reads only "try again" learns nothing about the
+  // spoof the engine saw. Both are therefore listed on the screen that ran the
+  // check — and mirrored to the browser console, so the devtools log and the
+  // panel never disagree. The text is the engine's own attack name, stage and
+  // action; nothing is inferred here.
+  const WARNING_LIMIT = 12;
+  const WARNING_FEEDS = {
+    res: { panel: "res-warning-panel", list: "res-warnings" },
+    sup: { panel: "sup-warning-panel", list: "sup-warnings" }
+  };
+  // One signature per event per run: a PAD hit that repeats on every frame is
+  // reported once, not twelve times.
+  const reportedWarnings = new Set();
+
+  function clearWarnings(scope) {
+    reportedWarnings.clear();
+    const feed = WARNING_FEEDS[scope] || WARNING_FEEDS.sup;
+    const list = $(feed.list);
+    if (list) list.textContent = "";
+    const panel = $(feed.panel);
+    if (panel) panel.hidden = true;
+  }
+
+  function warnOnce(scope, signature, kind, tag, text) {
+    const key = scope + "|" + signature;
+    if (reportedWarnings.has(key)) return;
+    reportedWarnings.add(key);
+
+    const feed = WARNING_FEEDS[scope] || WARNING_FEEDS.sup;
+    const list = $(feed.list);
+    if (list) {
+      const item = document.createElement("li");
+      item.className = "warning-item warning-" + kind;
+      const at = document.createElement("span");
+      at.className = "warning-time";
+      at.textContent = new Date().toLocaleTimeString();
+      const badge = document.createElement("span");
+      badge.className = "warning-tag";
+      badge.textContent = tag;
+      const body = document.createElement("span");
+      body.className = "warning-text";
+      body.textContent = text;
+      item.append(at, badge, body);
+      list.append(item);
+      // Oldest first out: the list is a record of this run, not an archive.
+      while (list.children.length > WARNING_LIMIT && list.removeChild && list.children[0]) {
+        list.removeChild(list.children[0]);
+      }
+      const panel = $(feed.panel);
+      if (panel) panel.hidden = false;
+    }
+    log(tag + " \u2014 " + text);
+    if (typeof console !== "undefined" && console.warn) {
+      console.warn("[liveness] " + tag + " \u2014 " + text);
+    }
+  }
+
+  // Every server answer the capture loops receive passes through here, so which
+  // screen ran the check — and not which code path happened to notice — decides
+  // where the warning appears.
+  function reportWarnings(r, scope) {
+    if (!r || typeof r !== "object") return;
+    // Frame results name their stage; a challenge verdict carries `passed`
+    // instead and can only have come from the active stage.
+    const stage = r.stage ? String(r.stage).toLowerCase()
+      : (r.passed !== undefined ? "active" : "capture");
+    if (r.padFlag || r.padAttackType) {
+      const attack = r.padAttackType || "unknown";
+      warnOnce(scope, "pad|" + attack + "|" + r.action, "pad", "PAD attack",
+        attack + " on the " + stage + " stage \u2014 action " + r.action
+        + (r.message ? " \u00b7 " + r.message : ""));
+    }
+    if (r.action === "reject" || TERMINAL_VERDICTS[r.action]) {
+      warnOnce(scope, "reject|" + r.action + "|" + stage, "reject", "Rejected",
+        "Session ended on the " + stage + " stage \u2014 action " + r.action
+        + (r.padAttackType ? " (PAD " + r.padAttackType + ")" : "")
+        + (r.message ? " \u00b7 " + r.message : ""));
+    }
+  }
+
   async function api(path, options) {
     const opts = options || {};
     const res = await fetch(API + path, {
@@ -813,14 +896,18 @@
    * when the send was dropped — in flight, or hidden — so callers retry instead
    * of mistaking a dropped frame for a verdict.
    */
-  async function sendFrame(path, body) {
+  // `scope` ("sup" | "res") names the screen that ran the check, so a PAD flag
+  // or a rejection is listed where the operator will look for it.
+  async function sendFrame(path, body, scope) {
     if (capturePaused()) return null;
     await awaitCaptureSlot();
     if (capturePaused()) return null;
     frameInFlight = true;
     nextFrameAt = Date.now() + CAPTURE_MIN_INTERVAL_MS;
     try {
-      return await api(path, { method: "POST", body: JSON.stringify(body) });
+      const r = await api(path, { method: "POST", body: JSON.stringify(body) });
+      reportWarnings(r, scope || "sup");
+      return r;
     } finally {
       frameInFlight = false;
     }
@@ -887,6 +974,7 @@
     $("btn-stop").disabled = false;
     resetSteps();
     sessionPassed = false;
+    clearWarnings("sup");   // this run's warnings, not the last run's
     setActiveCheckEnabled(false);
     setGuide(viewfinders.sup, "checking");
     $("audit").textContent = "No entries yet.";
@@ -919,7 +1007,7 @@
       for (let i = 1; i <= 12 && running; i++) {
         if (capturePaused()) { await sleep(200); i--; continue; }
         const r = await sendFrame(`/sessions/${sessionId}/frames`,
-          { frameBase64: grabFrame(video) });
+          { frameBase64: grabFrame(video) }, "sup");
         if (r === null) { await sleep(100); i--; continue; }
         kv($("last"), {
           sessionId: r.sessionId, stage: r.stage, faceDetected: r.faceDetected,
@@ -1034,7 +1122,7 @@
 
         if (recent.length >= 3) {
           const r = await sendFrame(`/sessions/${sessionId}/challenges/validate`,
-            { challengeId, framesBase64: [baseline, ...recent] });
+            { challengeId, framesBase64: [baseline, ...recent] }, "sup");
           if (r !== null) {          // null = dropped, not an answer: keep the window
             log(`challenge ${rounds}: passed=${r.passed} action=${r.action} ${r.message || ""}`);
             // "continue" = still open and nothing detected yet. Anything else
@@ -1328,7 +1416,7 @@
           `${MESSAGES["feedback.continue"]} — ${left}s left.`);
         if (recent.length >= 3) {
           const r = await sendFrame(`/sessions/${resident.sessionId}/challenges/validate`,
-            { challengeId, framesBase64: [baseline, ...recent] });
+            { challengeId, framesBase64: [baseline, ...recent] }, "res");
           if (r === null) { await sleep(CAPTURE_MS); continue; }   // dropped, not an answer
           if (!resident.running) return null;
           // "continue" = still open, nothing detected yet. Anything else is final
@@ -1376,6 +1464,7 @@
     resident.running = true;
     resident.passed = false;
     resident.sessionId = null;
+    clearWarnings("res");   // this run's warnings, not the last run's
     resSetControls();
     setGuide(viewfinders.res, "checking");
     resBanner("", "CHECKING…", MESSAGES["liveness.checking"]);
@@ -1398,7 +1487,7 @@
       for (let i = 1; i <= 12 && resident.running && !outcome; i++) {
         if (capturePaused()) { await sleep(200); i--; continue; }
         const r = await sendFrame(`/sessions/${session.id}/frames`,
-          { frameBase64: grabFrame(resVideo) });
+          { frameBase64: grabFrame(resVideo) }, "res");
         if (r === null) { await sleep(100); i--; continue; }
         if (!resident.running) return;
         if (r.action === "escalate_to_active") {

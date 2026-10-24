@@ -25,7 +25,7 @@
 ┌─────────────────────────────────────────────────────────┐
 │              Pluggable Backend Layer                      │
 │  ┌──────────────┐  ┌─────────────────┐  ┌────────────┐ │
-│  │ MockBackend   │  │ TfLiteMiniFasNet│  │ (vendor)   │ │
+│  │ MockBackend   │  │ OnnxMiniFasNet  │  │ (vendor)   │ │
 │  │ (testing)     │  │ (real PAD)      │  │ (swap)     │ │
 │  └──────────────┘  └─────────────────┘  └────────────┘ │
 └─────────────────────────────────────────────────────────┘
@@ -159,12 +159,21 @@ below are identical for the running service and for desktop/Android embedding.
 - **Decision**: median ≥ threshold → proceed (session `PASSED`); median <
   threshold → **automatic initiation of active liveness** (Stage 2), or a hard
   fail when `activeLivenessEnabled=false`.
-- **PAD runs on every frame** alongside passive scoring — the FFT/texture/
-  brightness heuristics **OR** the MiniFASNet print/replay verdict. An attack is
-  terminal (no retry), but it must be **confirmed across `PAD_CONFIRM_FRAMES` (2)
-  consecutive frames**: a genuine screen replay is consistent, while a one-off
-  model flip (motion blur, exposure, a large/edge face crop) is not — this is
-  what caused device-specific false rejects on some cameras.
+- **PAD runs on every frame** alongside passive scoring — the FFT/texture
+  heuristics **OR** the MiniFASNet print/replay verdict. The model's attack class
+  needs a margin over live (`PAD_ATTACK_MARGIN`, 0.15) and a minimum confidence
+  (`PAD_ATTACK_MIN_CONFIDENCE`, 0.60): a near-three-way-tie softmax (e.g.
+  0.36/0.34/0.30) is ranked noise, not evidence. A hit must then be **confirmed
+  across `PAD_CONFIRM_FRAMES` (3) consecutive frames** — a genuine screen replay
+  is consistent, while a one-off model flip (motion blur, exposure, a large/edge
+  face crop) is not; two frames still sit inside one capture condition.
+- **A confirmed PAD hit during the passive stage is handed to the active
+  challenge**: the session escalates and the hit is audited as `PAD_FLAGGED`,
+  because the challenge is the stronger check and PAD keeps running on every one
+  of its frames (where it *is* terminal). Only when the workflow has no challenge
+  stage to hand the verdict to — `activeLivenessEnabled=false`, or liveness
+  disabled entirely — does the hit reject terminally
+  (`presentation_attack:<TYPE>`, audit `PAD_REJECTED`).
 - **Challenge lock**: the `PASSIVE → ACTIVE` transition is atomic with issuing
   the challenge (pessimistic row lock on `liveness_sessions`,
   `LivenessSessionRepository.findByIdForUpdate`). While a challenge is open,
@@ -219,7 +228,7 @@ The `Frame` class is format-agnostic (RGB_GRAY, RGB_888, NV21, YUV420). Device a
 | BPCER (Bona Fide Presentation Classification Error Rate) | `PadMetrics.bpcer()` — proportion of bona fide presentations rejected as attacks |
 | ACER | `PadMetrics.acer()` — arithmetic mean of APCER and BPCER |
 | PAD granularity | Per-frame PAD verdict; attack type classified as an **attack presentation** by PAI class (PRINTED_PHOTO, SCREEN_REPLAY, VIDEO_REPLAY, OTHER — mapped in §6.4) |
-| PAD is terminal | PAD failure blocks session immediately — no retry, distinct audit event |
+| PAD severity | Terminal during the active challenge. During the passive stage a confirmed hit escalates to the challenge when the workflow has one, and rejects only when it does not (`PAD_FLAGGED` / `PAD_REJECTED`, distinct audit events) |
 | Evaluation harness | `AttackScenarioHarness` — runs labeled presentations through the full pipeline |
 
 ### Evaluation Methodology

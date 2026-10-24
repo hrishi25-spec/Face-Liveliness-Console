@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-10-18
+
+### Fixed — dependency merges had left both projects unbuildable
+
+- **The last three Dependabot major bumps were merged without their migration.**
+  `8c92e73` (Spring Boot `3.3.3` → `4.1.1`), `893f595` (JUnit Jupiter `5.10.2` →
+  `6.1.3`) and the springdoc bump to `3.1.1` each changed one line, but Boot 4 moved
+  the test annotations the suite is built on: 24 test files still import
+  `org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest`,
+  `...test.web.client.TestRestTemplate` and `...test.mock.mockito.SpyBean`, so
+  `mvn test` failed at **test-compile** — `package
+  org.springframework.boot.test.autoconfigure.web.servlet does not exist` on
+  `ActiveLivenessControllerTest`, `AuthControllerTest` and 22 more — and no test
+  ever ran. The parent is back on `3.3.3`, springdoc on `2.6.0` (3.x targets Boot 4)
+  and JUnit Jupiter on `5.10.2`, which is the last coherent set and the one every
+  document in this repository describes. The full suite compiles and is green again.
+  A Boot 4 migration is a separate, deliberate change: it needs the 24 test files,
+  the `spring-boot-starter-test` split and most of `docs/` updated together.
+- **`pad_liveness_backend/requirements.txt` and `requirements-dev.txt` carried two
+  complete, conflicting pin sets.** The merge that brought `main` into the
+  pip-minor-patch branch (`996966d`) kept both sides of the conflict, so the files
+  listed `fastapi==0.143.1` **and** `0.143.0`, `opencv-python-headless==5.0.0.93`
+  **and** `4.10.0.84`, `httpx==0.28.1` **and** `0.27.2`, `pytest==9.1.1` **and**
+  `8.3.3`. `pip install -r requirements-dev.txt` refuses to resolve at all
+  (`ResolutionImpossible`), which is what the *Python backend tests* CI job runs
+  first thing — so that job could not reach pytest either. Each file is now one
+  block, with the newest version the merged branches had bumped for every package
+  **except two**: `opencv-python-headless` goes back to `4.10.0.84` and `numpy` to
+  `1.26.4`. OpenCV 5 removed the legacy `cv2.CascadeClassifier` the backend's
+  `image_utils` builds its face detector on, so `5.0.0.93` fails at import time
+  (`AttributeError: module 'cv2' has no attribute 'CascadeClassifier'`) and every
+  test module that imports it errors during collection; `numpy 1.26.4` is the pair
+  the 4.10 wheel was built against. Those two bumps need a cascade-API migration
+  before they can be re-applied. Verified after the fix: `pip install -r
+  requirements-dev.txt` resolves and installs, and `python -m pytest -q` reports
+  **34 passed, 15 skipped** — the skips are the two PostgreSQL modules, which need
+  a Docker daemon (`PAD_LIVENESS_REQUIRE_POSTGRES=1` makes them fail instead of
+  skip in CI), so the 49 documented tests are all accounted for.
+
+### Docs — the reference documents were re-checked against the tree
+
+- `docs/PRD.md` §13 said the Java tree holds **158** classes (it holds 190), and
+  §15.1 put the Python suite at **46** tests with a breakdown that summed to 46
+  (§16.1 of the same file, the README and `docs/status-report.md` all say 49).
+  The breakdown is now 12 + 12 + 6 + 7 + 8 + 4 = 49 — the API module gained the
+  parametrised spent-budget cases, which is where the three extra tests came from.
+- `docs/configuration.md` still ended the config-audit section with a `ponytail:`
+  note claiming the feed has **no** per-workflow server-side filter and that the
+  workflow type is only inside the `details` JSON. Twenty lines above it the same
+  document documents the opposite, and `V8__audit_logs_workflow_type.sql` plus
+  `AuditLogRepository`'s `workflowType` predicate implement it. The stale note is
+  gone.
+- `docs/design.md` §1 drew `TfLiteMiniFasNet` as the "real PAD" backend. TFLite has
+  no desktop-JVM interpreter and `OnnxMiniFasNetBackend` has been the `auto`
+  default since the ONNX pivot (§3.1 of the same file says so), so the diagram now
+  names the ONNX backend.
+- `docs/brain.md` §17 claimed "156 files" and enumerated 9 controllers, 12 DTOs, 5
+  repositories and no `auth/`, `android/`, `diagnostics/`, `security/`, `shared/`
+  or `tools/` package, although it advertised itself as the complete inventory.
+  The counts and the package list now match the tree (190 files; 14 controllers and
+  16 filters/guards in `api/`; 22 DTOs; 7 repositories; the Android, auth and
+  diagnostics packages listed). Its Python figures (50 files / ~3,390 LOC) were
+  also stale — 53 files / ~3,840 LOC.
+- `docs/api-documentation-review.md` linked its evidence at repo-root paths
+  (`src/main/...`, `scripts/start.sh`) from inside `docs/`, so all 14 links were
+  dead. They resolve now.
+- The suite figure every document quotes was one test behind the tree.
+  `V12MigrationH2Test` landed after the 2026-10-17 count pass, so Surefire now
+  reports **752** tests (88 classes, 0 failures, 7 skipped locally without Docker
+  / the Python runtime — the *PostgreSQL schema* and *cross-backend* jobs run
+  them). README, `docs/PRD.md`, `docs/status-report.md`, `docs/brain.md`,
+  `docs/acceptance-audit.md` and `android_client/README.md` state 752.
+- `docs/brain.md` §11 counted eight tables; the schema holds seven
+  (`audit_log` was created in `V1` and dropped in `V10`).
+
 ## [Unreleased] - 2026-10-17
 
 ### Fixed — a restarted service can no longer be hidden behind a cached console

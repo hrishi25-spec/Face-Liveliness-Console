@@ -72,14 +72,19 @@ public class DecisionEngineService {
 
     /**
      * Number of consecutive frames that must agree on a PAD attack before the
-     * session is terminally rejected. The ONNX PAD model is single-frame and
-     * flips to an attack class on ordinary capture conditions (motion blur,
-     * exposure shifts, a large or edge face crop); a genuine presentation attack
-     * is consistent across frames. Requiring agreement keeps screen-replay
-     * detection strict while removing device-specific single-frame false
-     * positives that terminally failed honest sessions.
+     * session acts on the verdict. The ONNX PAD model is single-frame and flips
+     * to an attack class on ordinary capture conditions (motion blur, exposure
+     * shifts, a large or edge face crop); a genuine presentation attack is
+     * consistent across frames. Requiring agreement keeps screen-replay detection
+     * strict while removing device-specific single-frame false positives that
+     * terminally failed honest sessions.
+     *
+     * <p>Three, not two: two consecutive frames are still within one capture
+     * condition (the same exposure, the same head position), so a pair that
+     * disagrees with reality confirms itself. Three frames span long enough for
+     * the condition to change while a real attack stays consistent.</p>
      */
-    public static final int PAD_CONFIRM_FRAMES = 2;
+    public static final int PAD_CONFIRM_FRAMES = 3;
 
     /**
      * The floor a stored {@code challengeTimeoutMs} is raised to, i.e. how long a
@@ -177,11 +182,11 @@ public class DecisionEngineService {
                     .build();
         }
 
-        // PAD gate: reject on a *confirmed* attack. The current frame is recorded
-        // first, then the verdict is checked against the preceding frame: a
-        // genuine attack is consistent and confirms on the very next frame, while
-        // a one-off model flip (the usual cause of device-specific false rejects)
-        // does not.
+        // PAD gate: act on a *confirmed* attack. The current frame is recorded
+        // first, then the verdict is checked against the preceding frames: a
+        // genuine attack is consistent and confirms itself within
+        // PAD_CONFIRM_FRAMES frames, while a one-off model flip (the usual cause
+        // of device-specific false rejects) does not.
         if (padResult.attackDetected()) {
             saveFrameEvent(session, true, false, observation.faceQuality(), null,
                     true, padResult.attackType().name(), padResult.confidence());
@@ -197,6 +202,34 @@ public class DecisionEngineService {
                         .message("Checking face liveness...")
                         .build();
             }
+            logAudit(session, "PAD_FLAGGED", Map.of(
+                    "attackType", padResult.attackType().name(),
+                    "confidence", padResult.confidence(),
+                    "stage", session.getCurrentStage().name(),
+                    "handledBy", policy.livenessEnabled() && policy.activeLivenessEnabled()
+                            ? "active_challenge" : "reject"));
+
+            // A confirmed attack does not end the session while an active stage
+            // is available: it hands the decision to the challenge. The passive
+            // stage is the weakest evidence in the pipeline (one-frame PAD plus a
+            // median over a handful of scores), and it is exactly where a
+            // genuine capture on a noisy camera and a good spoof look alike. The
+            // challenge is randomised and must be performed live, and PAD keeps
+            // running on every challenge frame (where it *is* terminal), so the
+            // spoof meets a stronger check than the one that flagged it instead
+            // of the honest user meeting a wall.
+            if (policy.livenessEnabled()
+                    && policy.activeLivenessEnabled()
+                    && policy.allowedChallenges() != null
+                    && !policy.allowedChallenges().isEmpty()) {
+                session.setCurrentStage(LivenessStage.ACTIVE);
+                ChallengeEntity challenge = issueChallenge(session, policy);
+                return challengeResult(session, challenge, "escalate_to_active", null,
+                        observation.faceQuality());
+            }
+
+            // No active stage to hand the decision to: the passive stage is the
+            // only check this workflow has, so the attack verdict is final.
             logAudit(session, "PAD_REJECTED", Map.of(
                     "attackType", padResult.attackType().name(),
                     "confidence", padResult.confidence(),
@@ -443,7 +476,10 @@ public class DecisionEngineService {
         // decision stands, including when this check sees an attack.
         boolean manual = Boolean.TRUE.equals(challenge.getManual());
 
-        // Re-run PAD across challenge frames
+        // Re-run PAD across challenge frames. One hit is enough here: this is the
+        // terminal stage, it runs the deterministic OpenCV heuristic rather than
+        // the single-frame ONNX model that needed confirming above, and a person
+        // who performed the requested action has already proved themselves live.
         for (Mat frame : frames) {
             PadVerdict padResult = padEngine.detect(frame, imageUtils);
             if (padResult.attackDetected()) {

@@ -51,7 +51,7 @@ Legend: ✅ done · 🟡 partial · ❌ not done.
 | Task | Status | Evidence / gap |
 |---|---|---|
 | Mock L0/L1 device | ✅ | `device/MockL0L1Device`, `SyntheticScene`, android `MockFaceFrameSource` |
-| Automated liveness scenarios | ✅ | 751 green Java tests; engine flow/escalation/error suites |
+| Automated liveness scenarios | ✅ | 752 green Java tests; engine flow/escalation/error suites |
 | Automated PAD attack scenarios | ✅ | `AttackScenarioHarness` (240 presentations, seeded), `PrintAttackFixtureTest` |
 | Interop testing framework | 🟡 | Shared suite runs across mock/ONNX/MediaPipe backends + 2 device adapters; no formal cross-vendor report |
 | Model version management | ✅ | sha256 + version + rollback (`android/ModelStore`; bundled model hash verified at load) |

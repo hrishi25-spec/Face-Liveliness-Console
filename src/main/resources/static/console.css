@@ -1478,16 +1478,19 @@ video {
 }
 
 .camera-oval {
-  /* Sized from the viewfinder's own height rather than fixed pixels, so a
-     larger guide still cannot push itself out of a short or narrow preview:
-     74% of the preview, capped at 378px, on the same 212:286 ellipse. */
-  height: min(378px, 74%);
+  /* Sized from the viewfinder's own height rather than fixed pixels, so the
+     guide fills the preview the way the capture crop does:
+     80% of the preview, capped at 430px, on the same 212:286 ellipse.
+     The 28px bottom margin is clearance, not spacing: the guidance pill is
+     pinned 16px above the preview's floor, and the oval must stop short of it
+     even when the preview is only a few hundred pixels tall. */
+  height: min(430px, 80%);
   aspect-ratio: 212 / 286;
   width: auto;
   flex: 0 0 auto;
   border: 2px dashed rgba(255, 255, 255, 0.85);
   border-radius: 50%;
-  margin-bottom: 16px;
+  margin-bottom: 28px;
   transition: border-color 240ms ease, border-style 240ms ease, box-shadow 240ms ease;
   /* Four calibration ticks at the guide's extremes, drawn as background
      gradients so the guide stays a single element with no wrapper markup. */
@@ -2696,6 +2699,84 @@ video {
 .hud-dot,
 .step-dot.live {
   animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ==================== SECURITY WARNINGS (PAD / REJECTIONS) ====================
+   The engine's PAD flag is a security event and its rejection is a verdict, so
+   both get their own list under the result banner: amber for an attack the
+   engine named, red for a session it ended. Each row is time, tag and detail —
+   the same text the browser console receives, so the screen and the devtools
+   log never tell different stories. The list scrolls inside a capped height:
+   no run can push the capture controls off the screen. */
+.warning-panel {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--banner-neutral-bg);
+}
+
+.warning-panel-head {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.warning-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 148px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.warning-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--color-warning);
+  border-radius: 4px;
+  background: rgba(180, 83, 9, 0.08);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.warning-item.warning-reject {
+  border-left-color: var(--color-danger);
+  background: rgba(185, 28, 28, 0.08);
+}
+
+.warning-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  flex: 0 0 auto;
+}
+
+.warning-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-warning);
+  flex: 0 0 auto;
+}
+
+.warning-item.warning-reject .warning-tag {
+  color: var(--color-danger);
+}
+
+.warning-text {
+  color: var(--color-text-secondary);
+  word-break: break-word;
 }
 
 /* Utilities */
