@@ -72,6 +72,31 @@ jobs:
       - name: Run ${{ matrix.suite }} tests
         run: ./mvnw --batch-mode test -Dtest='${{ matrix.maven_tests }}'
 
+      # A failed test is otherwise buried in a log only a maintainer signed in
+      # to GitHub can read. Publish the failing class and its first assertion as
+      # a check annotation, so the failure is visible from the checks API and
+      # the PR page without downloading the raw log.
+      - name: Report the failing test
+        if: failure()
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          reports=( target/surefire-reports/*.txt )
+          found=0
+          for report in "${reports[@]}"; do
+            if ! grep -qE 'Failures: [1-9]|Errors: [1-9]' "$report"; then
+              continue
+            fi
+            found=1
+            name=$(basename "$report" .txt)
+            summary=$(grep -m1 -E '^Tests run:' "$report" || true)
+            detail=$(sed -n '/<<< FAILURE/,+10p' "$report" | tr '\n' ' ' | cut -c1-800)
+            echo "::error title=Failing test: $name::$summary $detail"
+          done
+          if [ "$found" = 0 ]; then
+            echo "::error::Maven failed before writing a failing surefire report; the failure was not a test assertion (check the job log for a fork or build error)."
+          fi
+
   # The console is plain browser JS with no build step, so its guards live
   # outside Maven entirely: a green Java suite says nothing about whether
   # src/main/resources/static is still wired. This runs the DOM harness that
