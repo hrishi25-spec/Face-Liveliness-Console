@@ -310,6 +310,36 @@ public class AuthService {
         return true;
     }
 
+    /**
+     * Development-only: makes a known account usable without the first-password
+     * hand-off.
+     *
+     * <p>The production bootstrap deliberately sets {@code mustChangePassword = true},
+     * and that is the right default for a value that arrived through an environment
+     * variable. The {@code dev} profile is different: its database is recreated on
+     * every boot, its credentials are printed on the role cards, and a demo that
+     * stops at a password-change dialog has not demonstrated anything. The
+     * {@code DevAuthUserBootstrap} runner is the only caller.</p>
+     *
+     * <p>It rewrites the demo account's hash on every dev boot. That is deliberate:
+     * there is no durable data to preserve, and a password changed in a previous run
+     * must not silently make the printed default stop working.</p>
+     */
+    AuthUser seedDevelopmentAccount(String username, AuthRole role, String password) {
+        String normalized = validateUsername(username);
+        requireAcceptablePassword(password);
+        AuthUser user = users.findByUsername(normalized).orElseGet(() ->
+                AuthUser.builder().username(normalized).build());
+        user.setRole(role);
+        user.setPasswordHash(hasher.hash(password));
+        user.setMustChangePassword(false);
+        user.setDisabled(false);
+        user.setFailedAttempts(0);
+        user.setLockedUntil(null);
+        user.setPasswordChangedAt(now());
+        return users.save(user);
+    }
+
     // ------------------------------------------------------------------ user management
 
     /** Every account, by name, as a supervisor sees the list. */

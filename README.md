@@ -291,7 +291,7 @@ The capture-budget change reduces margin as well as cost. On one fixture the pas
 
 One state machine drives every surface, and all of them render the same states and the same i18n message keys.
 
-- **Browser console** (`src/main/resources/static/`): plain JS with no build step, a "modern institutional" design system with a dark palette, a role-aware entry tab (supervisor → Policy, operator → Sessions), an in-page credential dialog (no `window.prompt`) and a diff-aware policy editor. The screen never asserts what it has not read: unknown values say `UNKNOWN`, and placeholders are tagged `SAMPLE`.
+- **Browser console** (`src/main/resources/static/`): plain JS with no build step, a "modern institutional" design system with a dark palette, a role-aware entry tab with prefilled developer defaults (supervisor → Policy, operator → Sessions), an in-page credential dialog that offers all three roles (no `window.prompt`) and a diff-aware policy editor. The screen never asserts what it has not read: unknown values say `UNKNOWN`, and placeholders are tagged `SAMPLE`.
 - **Desktop (JavaFX):** `LivenessChallengeOverlay` (FXML + CSS), headless-smoke-tested on Monocle.
 - **Android (Flutter):** `LivenessView` with a Pigeon bridge, a CameraX frame source, a keystore-backed evidence signer and signed model manifests.
 - **No technical exposure.** The UI shows generic, localised messages only. Scores, PAD detail and model internals live in the audit trail.

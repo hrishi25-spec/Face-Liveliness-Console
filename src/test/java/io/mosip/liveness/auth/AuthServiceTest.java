@@ -368,6 +368,21 @@ class AuthServiceTest {
         assertEquals(401, refused.getStatusCode().value());
     }
 
+    @Test
+    @DisplayName("a development demo account is usable without the first-password change")
+    void developmentSeeding_createsAUsableAccount() {
+        AuthUser operator = authService.seedDevelopmentAccount(
+                "demo-operator", AuthRole.OPERATOR, "operator1234");
+
+        assertEquals(AuthRole.OPERATOR, operator.getRole());
+        assertFalse(operator.isMustChangePassword(),
+                "the dev role card is a one-click demo, not a first-password hand-off");
+        assertNotEquals("operator1234", operator.getPasswordHash(),
+                "the seeded value is still stored only as a hash");
+        assertTrue(authService.login("demo-operator", "operator1234").isPresent(),
+                "the printed credential must actually open a session");
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private AuthService.IssuedSession login(String password) {

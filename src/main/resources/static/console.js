@@ -348,10 +348,16 @@
         log(`Signed in as operator (${signedInAs}).`);
         showRoleView("OPERATOR", signedInAs);
       } catch (e) {
-        signedInAs = user;
-        if (statusLoginOperator) statusLoginOperator.textContent = "";
-        log(`Operator mode activated (${user}).`);
-        showRoleView("OPERATOR", user);
+        // A refused login must stay on the picker. The previous fallback opened
+        // the operator view anyway and only wrote a log line, so a demo with no
+        // operator account looked signed in while every write would be refused.
+        signedInAs = "";
+        if (statusLoginOperator) {
+          statusLoginOperator.textContent = `Sign in refused: ${e.message}`;
+          statusLoginOperator.className = "cfg-status bad";
+        }
+        log(`Operator sign-in refused: ${e.message}`);
+        updateRoleDisplay();
       }
     });
   }
@@ -1566,23 +1572,35 @@
     cfg.status.className = "cfg-status " + (msg ? (ok ? "ok" : "bad") : "");
   }
 
-  // ---------- the supervisor credential dialog ----------
-  // One dialog for the two places the console must ask for a credential: saving
-  // policy, and setting a first password for an account the service confines to
-  // that one route. Both used to be window.prompt() calls. A prompt cannot say
-  // why it is asking, cannot show which account it is asking about, and returns
-  // the same empty string for "cancelled" and "typed nothing" — and some embedded
-  // webviews suppress it entirely, which left a first-time supervisor being asked
-  // nothing, then told to sign in again. The dialog is the page's own markup, so
-  // it is styled by the same sheet and the same session keeps working.
+  // ---------- the sign-in and credential dialog ----------
+  // One dialog for the two places the console must ask for a credential: signing
+  // in to save policy, and setting a first password for an account the service
+  // confines to that one route. Both used to be window.prompt() calls. A prompt
+  // cannot say why it is asking, cannot show which account it is asking about,
+  // and returns the same empty string for "cancelled" and "typed nothing" — and
+  // some embedded webviews suppress it entirely, which left a first-time
+  // supervisor being asked nothing, then told to sign in again. The dialog is the
+  // page's own markup, so it is styled by the same sheet and the same session
+  // keeps working.
   //
-  // A credential typed here is never stored: not in localStorage, not in
-  // sessionStorage, and not left on the input after the dialog closes.
+  // The dialog starts on Supervisor because a policy save is the flow that opens
+  // it, but all three roles are offered: choosing Operator or Resident returns to
+  // that role instead of granting a policy write. The developer default
+  // credentials are filled from the same fields the role cards use, so a demo can
+  // sign in in one click; anything typed is cleared on close and never stored in
+  // localStorage or sessionStorage.
   const authModal = $("auth-modal");
   const authModalForm = $("auth-modal-form");
   const authModalTitle = $("auth-modal-title");
   const authModalSubtitle = $("auth-modal-subtitle");
+  const authModalRoleField = $("auth-modal-role-field");
+  const authModalRoleButtons = {
+    RESIDENT: $("auth-modal-role-resident"),
+    OPERATOR: $("auth-modal-role-operator"),
+    SUPERVISOR: $("auth-modal-role-supervisor")
+  };
   const authModalUserField = $("auth-modal-user-field");
+  const authModalUserLabel = $("auth-modal-user-label");
   const authModalUser = $("auth-modal-user");
   const authModalPassField = $("auth-modal-pass-field");
   const authModalPassLabel = $("auth-modal-pass-label");
@@ -1595,14 +1613,14 @@
 
   const AUTH_MODAL_COPY = {
     authorize: {
-      title: "Confirm Supervisor Authorization",
-      subtitle: "Saving policy changes requires re-authenticating with supervisor "
-        + "credentials. Changes apply to new sessions only.",
+      title: "Sign in to continue",
+      subtitle: "Choose a role. Policy changes require a supervisor.",
       passwordLabel: "Supervisor Password / Passcode",
-      passwordHint: "Session re-auth required",
-      submit: "Confirm & Apply Policy",
+      passwordHint: "Developer default prefilled",
+      submit: "Sign in as Supervisor",
       withPassword: true,
-      withNewPassword: false
+      withNewPassword: false,
+      withRoles: true
     },
     setPassword: {
       title: "Set a new password",
@@ -1612,11 +1630,32 @@
       passwordHint: "",
       submit: "Set password and continue",
       withPassword: false,
-      withNewPassword: true
+      withNewPassword: true,
+      withRoles: false
+    }
+  };
+
+  // Per-role copy and whether the role presents credential fields at all.
+  const AUTH_ROLE_COPY = {
+    RESIDENT: {
+      subtitle: "Resident mode opens the face-liveness check; no sign-in is needed.",
+      submit: "Continue as Resident",
+      needsCredentials: false
+    },
+    OPERATOR: {
+      subtitle: "Read-only sessions, audit and policy history. Policy changes require a supervisor.",
+      submit: "Sign in as Operator",
+      needsCredentials: true
+    },
+    SUPERVISOR: {
+      subtitle: "Full access, including policy changes.",
+      submit: "Sign in as Supervisor",
+      needsCredentials: true
     }
   };
 
   let authModalMode = "authorize";
+  let authModalRole = "SUPERVISOR";
   let authModalSettle = null;    // resolves the open dialog; null when closed
   let authModalMustDifferFrom = "";
 
@@ -1624,6 +1663,55 @@
     if (!authModalError) return;
     authModalError.textContent = message || "";
     authModalError.hidden = !message;
+  }
+
+  // The role cards already carry the developer defaults; reuse them so a demo
+  // credential is defined once, and a local override on the card follows the
+  // operator into the dialog.
+  function authRoleCredentials(role) {
+    if (role === "OPERATOR") {
+      return {
+        username: (inputOperatorUser && inputOperatorUser.value.trim()) || "operator",
+        password: (inputOperatorPass && inputOperatorPass.value) || "operator1234"
+      };
+    }
+    if (role === "SUPERVISOR") {
+      return {
+        username: (inputSupervisorUser && inputSupervisorUser.value.trim()) || "supervisor",
+        password: (inputSupervisorPass && inputSupervisorPass.value) || "supervisor123"
+      };
+    }
+    return { username: "", password: "" };
+  }
+
+  // Switch the open dialog between the three roles: labels, fields, defaults and
+  // the submit verb all follow the selection. Resident has no credential to ask
+  // for, so its fields are removed from the flow rather than shown empty.
+  function setAuthModalRole(role) {
+    const known = AUTH_ROLE_COPY[role] ? role : "SUPERVISOR";
+    authModalRole = known;
+    const meta = AUTH_ROLE_COPY[known];
+    for (const [name, button] of Object.entries(authModalRoleButtons)) {
+      if (!button) continue;
+      const active = name === known;
+      button.className = "segmented-btn" + (active ? " active" : "");
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+    const credentials = authRoleCredentials(known);
+    authModalUser.value = credentials.username;
+    authModalPass.value = credentials.password;
+    authModalUserField.hidden = !meta.needsCredentials;
+    authModalPassField.hidden = !meta.needsCredentials;
+    authModalUser.readOnly = false;
+    authModalUserLabel.textContent = known === "OPERATOR"
+      ? "Operator Username" : "Username / Supervisor ID";
+    authModalPassLabel.textContent = known === "OPERATOR"
+      ? "Operator Password" : "Supervisor Password / Passcode";
+    authModalPassHint.textContent = meta.needsCredentials ? "Developer default prefilled" : "";
+    authModalSubtitle.textContent = meta.subtitle;
+    authModalSubmit.textContent = meta.submit;
+    authModalShowError("");
+    try { (meta.needsCredentials ? authModalPass : authModalSubmit).focus(); } catch {}
   }
 
   // Closing always clears the fields. A password left in the DOM is a password
@@ -1652,22 +1740,36 @@
     authModalMode = AUTH_MODAL_COPY[mode] ? mode : "authorize";
     authModalMustDifferFrom = opts.mustDifferFrom || "";
     authModalTitle.textContent = copy.title;
-    authModalSubtitle.textContent = copy.subtitle;
-    authModalUser.value = opts.username || "";
-    authModalUserField.hidden = !opts.username;
-    // A known account is shown, not offered: only the account itself can change
-    // its own password, and re-authenticating mid-session is re-proving that
-    // account rather than switching to another one.
-    authModalUser.readOnly = Boolean(opts.usernameLocked);
-    authModalPassField.hidden = !copy.withPassword;
-    authModalPassLabel.textContent = copy.passwordLabel;
-    authModalPassHint.textContent = copy.passwordHint;
+    authModalRoleField.hidden = !copy.withRoles;
     authModalNewField.hidden = !copy.withNewPassword;
-    authModalSubmit.textContent = copy.submit;
+    if (copy.withRoles) {
+      setAuthModalRole(opts.role || "SUPERVISOR");
+    } else {
+      authModalSubtitle.textContent = copy.subtitle;
+      authModalUser.value = opts.username || "";
+      authModalUserField.hidden = !opts.username;
+      // A known account is shown, not offered: only the account itself can change
+      // its own password, and re-authenticating mid-session is re-proving that
+      // account rather than switching to another one.
+      authModalUser.readOnly = Boolean(opts.usernameLocked);
+      authModalPass.value = "";
+      authModalPassField.hidden = !copy.withPassword;
+      authModalPassLabel.textContent = copy.passwordLabel;
+      authModalPassHint.textContent = copy.passwordHint;
+      authModalSubmit.textContent = copy.submit;
+    }
     authModalShowError("");
     authModal.hidden = false;
-    try { (copy.withNewPassword ? authModalNew : authModalPass).focus(); } catch {}
+    try {
+      if (copy.withNewPassword) authModalNew.focus();
+      else if (!authModalPassField.hidden) authModalPass.focus();
+      else authModalSubmit.focus();
+    } catch {}
     return new Promise(resolve => { authModalSettle = resolve; });
+  }
+
+  for (const [role, button] of Object.entries(authModalRoleButtons)) {
+    if (button) button.addEventListener("click", () => setAuthModalRole(role));
   }
 
   if (authModalForm) {
@@ -1677,6 +1779,7 @@
       if (event && event.preventDefault) event.preventDefault();
       if (!authModalSettle) return;
       const values = {
+        role: authModalRole,
         username: (authModalUser && authModalUser.value || "").trim(),
         password: (authModalPass && authModalPass.value) || "",
         newPassword: (authModalNew && authModalNew.value) || ""
@@ -1693,7 +1796,7 @@
           authModalShowError("The new password must differ from the current one.");
           return;
         }
-      } else if (!values.username || !values.password) {
+      } else if (values.role !== "RESIDENT" && (!values.username || !values.password)) {
         authModalShowError("A username and a password are both needed to authorise this change.");
         return;
       }
@@ -1713,12 +1816,17 @@
   // and not in a screenshot of the form. Cancelling, an empty answer and a
   // missing dialog all fail closed — nothing is sent, so nothing is granted.
   async function signIn() {
-    const who = await openAuthModal("authorize", {
-      username: (inputSupervisorUser && inputSupervisorUser.value.trim()) || "supervisor"
-    });
+    const who = await openAuthModal("authorize", { role: "SUPERVISOR" });
+    const role = who && who.role ? who.role : "";
+    if (role === "RESIDENT") {
+      const residentId = (inputResidentId && inputResidentId.value.trim()) || "RESIDENT-001";
+      signedInAs = residentId;
+      showRoleView("RESIDENT", residentId);
+      log(`Resident mode selected (${residentId}). Policy changes require a supervisor.`);
+      return false;
+    }
     const username = who && who.username ? who.username : "";
     const password = who && who.password ? who.password : "";
-    if (username && inputSupervisorUser) inputSupervisorUser.value = username;
     if (!username || !password) {
       cfgStatus("Not signed in: a username and a password are both needed.", false);
       return false;
@@ -1729,6 +1837,7 @@
         body: JSON.stringify({ username, password })
       });
       signedInAs = me.username || username;
+      const actualRole = String(me.role || role).toUpperCase();
       if (me.mustChangePassword) {
         const answer = await openAuthModal("setPassword", {
           username: signedInAs,
@@ -1758,7 +1867,22 @@
           updateRoleDisplay();
           return false;
         }
-      } else {
+      }
+      if (actualRole === "OPERATOR") {
+        if (inputOperatorUser) inputOperatorUser.value = signedInAs;
+        showRoleView("OPERATOR", signedInAs);
+        cfgStatus(`Signed in as ${signedInAs} (operator). Policy changes require a supervisor.`, false);
+        log(`Signed in as ${signedInAs} (operator).`);
+        return false;
+      }
+      if (actualRole !== "SUPERVISOR") {
+        signedInAs = "";
+        cfgStatus(`Sign-in refused: the service answered an unknown role (${me.role || "none"}).`, false);
+        updateRoleDisplay();
+        return false;
+      }
+      if (inputSupervisorUser) inputSupervisorUser.value = signedInAs;
+      if (!me.mustChangePassword) {
         cfgStatus(`Signed in as ${signedInAs} (${me.role}).`, true);
         log(`Signed in as ${signedInAs} (${me.role}).`);
       }

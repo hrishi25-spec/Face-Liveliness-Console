@@ -237,6 +237,7 @@ const releaseHang = () => { const go = pendingFrameReleases.shift(); if (go) go(
 // sign in through it, so a test can ask for either an ordinary session or an
 // account the service confines to the change-password route until it sets one.
 let loginAnswer = { username: "sup-01", role: "SUPERVISOR", mustChangePassword: false };
+let loginFailure = false;
 let challengeAction = "proceed";   // action a challenge-validation stub answers with
 let frameAction = "proceed";       // action a frame-POST stub answers with
 // What GET /sessions/{id} reports — the truth the Sessions table has to show.
@@ -308,7 +309,18 @@ async function fetch(url, options = {}) {
     text: async () => JSON.stringify(body),
     json: async () => body
   });
-  if (url === "/api/v1/auth/login") return respond(loginAnswer);
+  if (url === "/api/v1/auth/login") {
+    if (loginFailure) {
+      return {
+        ok: false,
+        status: 401,
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ error: "UNAUTHORIZED", message: "bad credentials" }),
+        json: async () => ({ error: "UNAUTHORIZED", message: "bad credentials" })
+      };
+    }
+    return respond(loginAnswer);
+  }
   if (url === "/api/v1/auth/change-password") return respond({ changed: true });
   if (url === "/api/v1/auth/logout") return respond({ signedOut: true });
   if (url === "/api/v1/auth/me") return respond({});
@@ -483,6 +495,20 @@ for (const id of ["input-resident-id", "btn-login-resident",
 }
 assert(/id="btn-theme-toggle"[^>]*data-mode="auto"/.test(html),
     "the theme control starts in auto mode, so the page follows the browser");
+
+// A refused operator login stays on the picker. The console used to fall into
+// the operator view anyway, which made a missing demo account look signed in.
+loginFailure = true;
+$id("input-operator-pass").value = "operator1234";
+$id("btn-login-operator").dispatch("click");
+await settle();
+assert($id("login-page").hidden === false,
+    "a refused operator login leaves the role picker on screen");
+assert($id("status-login-operator").textContent.includes("Sign in refused"),
+    "the operator card reports the refusal instead of pretending success");
+assert($id("pill-user").hidden === true,
+    "a refused login shows no user in the header");
+loginFailure = false;
 
 section("sessions table — placeholders are labelled, never passed off as real");
 // Nothing has created a session in this tab yet, and the service exposes no
@@ -912,11 +938,44 @@ openModalBySaving();
 await settle();
 assert(modal().hidden === false,
     "saving with no session opens the dialog instead of a platform prompt");
-assert($id("auth-modal-title").textContent.includes("Confirm Supervisor Authorization"),
+assert($id("auth-modal-title").textContent.includes("Sign in to continue"),
     "the dialog says what the credential is authorising");
 assert($id("auth-modal-pass-field").hidden === false
     && $id("auth-modal-new-field").hidden === true,
     "authorising offers the password field and not the new-password one");
+assert($id("auth-modal-role-field").hidden === false,
+    "the dialog offers the role choice, not only a supervisor credential");
+for (const role of ["resident", "operator", "supervisor"]) {
+  assert($id(`auth-modal-role-${role}`).getAttribute("data-role") === role.toUpperCase(),
+      `the dialog keeps the ${role} option`);
+}
+assert($id("auth-modal-role-supervisor").className.includes("active")
+    && $id("auth-modal-role-supervisor").getAttribute("aria-pressed") === "true",
+    "the policy-saving dialog starts on Supervisor");
+assert($id("auth-modal-user").value === "supervisor"
+    && $id("auth-modal-pass").value === "supervisor123",
+    "the default supervisor credential is filled in already");
+
+// The role tabs swap the prefilled credentials and the verb on the submit
+// button; Resident has no credential to ask for, so its fields are hidden.
+$id("auth-modal-role-operator").dispatch("click");
+assert($id("auth-modal-user").value === "operator"
+    && $id("auth-modal-pass").value === "operator1234",
+    "choosing Operator fills the operator default credential");
+assert($id("auth-modal-submit").textContent === "Sign in as Operator",
+    "the submit button names the chosen role");
+$id("auth-modal-role-resident").dispatch("click");
+assert($id("auth-modal-user-field").hidden === true
+    && $id("auth-modal-pass-field").hidden === true,
+    "Resident hides the credential fields");
+assert($id("auth-modal-submit").textContent === "Continue as Resident",
+    "Resident's submit button continues without a credential");
+$id("auth-modal-role-supervisor").dispatch("click");
+assert($id("auth-modal-user-field").hidden === false
+    && $id("auth-modal-pass-field").hidden === false
+    && $id("auth-modal-user").value === "supervisor"
+    && $id("auth-modal-pass").value === "supervisor123",
+    "switching back to Supervisor restores its fields and default credential");
 assert(fetchCalls.length === beforeOpen,
     "an open dialog sends nothing — the save waits for an answer");
 
@@ -926,7 +985,7 @@ $id("auth-modal-cancel").dispatch("click");
 await settle();
 assert(modal().hidden === true, "Cancel closes the dialog");
 assert(fetchCalls.length === beforeOpen, "Cancel sends nothing at all");
-assert(!posts().some(c => c.url.endsWith("/auth/login")),
+assert(!fetchCalls.slice(beforeOpen).some(c => c.url.endsWith("/auth/login")),
     "a cancelled dialog never signs in");
 assert(status().textContent.includes("a username and a password are both needed"),
     "the status line says why the save did not happen");
@@ -939,7 +998,7 @@ $id("auth-modal-user").value = "sup-01";
 $id("auth-modal-pass").value = "correct-horse-battery-staple";
 submitted();
 await settle();
-const logins = posts().filter(c => c.url.endsWith("/auth/login"));
+const logins = fetchCalls.slice(beforeOpen).filter(c => c.url.endsWith("/auth/login"));
 assert(logins.length === 1, `answering the dialog signs in exactly once (got ${logins.length})`);
 assert(JSON.parse(logins[0].body).username === "sup-01"
     && JSON.parse(logins[0].body).password === "correct-horse-battery-staple",
@@ -964,6 +1023,8 @@ assert(modal().hidden === false,
 assert($id("auth-modal-new-field").hidden === false
     && $id("auth-modal-pass-field").hidden === true,
     "it asks for a new password and does not ask for the current one again");
+assert($id("auth-modal-role-field").hidden === true,
+    "setting a first password does not offer a role switch");
 assert($id("auth-modal-user").value === "supervisor"
     && $id("auth-modal-user").readOnly === true,
     "it names the account, which cannot be swapped mid-dialog");
@@ -991,6 +1052,47 @@ assert(JSON.parse(changes[0].body).currentPassword === "first-password"
 assert(modal().hidden === true && $id("auth-modal-new").value === "",
     "the dialog closes and clears the new password");
 loginAnswer = { username: "sup-01", role: "SUPERVISOR", mustChangePassword: false };
+
+section("credential dialog — Operator and Resident roles do not write policy");
+// The role tabs are not decoration: choosing Operator signs in for the read-only
+// views, and Resident opens capture without a request. Neither may follow the
+// sign-in with the policy PUT the supervisor flow authorises.
+loginAnswer = { username: "operator", role: "OPERATOR", mustChangePassword: false };
+$id("btn-cfg-sign-out").dispatch("click");
+await settle();
+assert($id("login-page").hidden === false, "signing out returns to the role picker");
+let beforeOperator = fetchCalls.length;
+openModalBySaving();
+await settle();
+$id("auth-modal-role-operator").dispatch("click");
+submitted();
+await settle();
+const operatorLogin = posts().filter(c => c.url.endsWith("/auth/login")).slice(-1)[0];
+assert(operatorLogin && JSON.parse(operatorLogin.body).username === "operator"
+    && JSON.parse(operatorLogin.body).password === "operator1234",
+    "the Operator role signs in with the operator default credential");
+assert($id("operator-policy-banner").hidden === false
+    && $id("tab-policy").hidden === true,
+    "Operator gets the read-only view with its policy notice");
+assert(!fetchCalls.slice(beforeOperator)
+    .some(c => c.method === "PUT" && c.url.includes("/api/v1/config/")),
+    "choosing Operator does not send the policy write");
+
+// Resident has no credential at all: the dialog closes into capture, and no
+// sign-in or policy request is made.
+$id("btn-cfg-sign-out").dispatch("click");
+await settle();
+let beforeResident = fetchCalls.length;
+openModalBySaving();
+await settle();
+$id("auth-modal-role-resident").dispatch("click");
+submitted();
+await settle();
+assert($id("role-resident").hidden === false,
+    "choosing Resident opens the capture view");
+assert(!fetchCalls.slice(beforeResident)
+    .some(c => c.url.endsWith("/auth/login") || c.method === "PUT"),
+    "Resident sends neither a sign-in nor a policy write");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

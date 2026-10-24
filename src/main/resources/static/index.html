@@ -812,10 +812,11 @@
   </div>
 </main>
 
-<!-- Supervisor credential dialog. One dialog, two jobs: authorising a policy
-     save, and setting a first password for an account the service confines to
-     that one route (see console.js). Markup only — no inline script or style,
-     so the page's strict CSP is unchanged. -->
+<!-- Sign-in and credential dialog. One dialog, three jobs: choosing a role for
+     a policy save, setting a first password for an account the service confines
+     to that one route, and re-authenticating through the role's default
+     credentials (see console.js). Markup only — no inline script or style, so
+     the page's strict CSP is unchanged. -->
 <div id="auth-modal" class="auth-modal" hidden>
   <div class="auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" aria-describedby="auth-modal-subtitle">
     <div class="auth-modal-head">
@@ -826,22 +827,30 @@
         </svg>
       </span>
       <div class="auth-modal-head-text">
-        <h3 class="auth-modal-title" id="auth-modal-title">Confirm Supervisor Authorization</h3>
-        <p class="auth-modal-subtitle" id="auth-modal-subtitle">Saving policy changes requires re-authenticating with supervisor credentials. Changes apply to new sessions only.</p>
+        <h3 class="auth-modal-title" id="auth-modal-title">Sign in to continue</h3>
+        <p class="auth-modal-subtitle" id="auth-modal-subtitle">Choose a role. Policy changes require a supervisor.</p>
       </div>
       <button type="button" class="auth-modal-close" id="auth-modal-close" aria-label="Cancel">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 18 18 6M6 6l12 12"/></svg>
       </button>
     </div>
     <form class="auth-modal-body" id="auth-modal-form">
+      <div class="auth-modal-field" id="auth-modal-role-field">
+        <span class="field-label">Continue as</span>
+        <div class="segmented-control auth-modal-role-control" role="group" aria-label="Choose a role">
+          <button type="button" class="segmented-btn" id="auth-modal-role-resident" data-role="RESIDENT" aria-pressed="false">Resident</button>
+          <button type="button" class="segmented-btn" id="auth-modal-role-operator" data-role="OPERATOR" aria-pressed="false">Operator</button>
+          <button type="button" class="segmented-btn active" id="auth-modal-role-supervisor" data-role="SUPERVISOR" aria-pressed="true">Supervisor</button>
+        </div>
+      </div>
       <div class="auth-modal-field" id="auth-modal-user-field">
-        <label class="field-label" for="auth-modal-user">Username / Supervisor ID</label>
+        <label class="field-label" for="auth-modal-user" id="auth-modal-user-label">Username / Supervisor ID</label>
         <input id="auth-modal-user" type="text" autocomplete="username" spellcheck="false">
       </div>
       <div class="auth-modal-field" id="auth-modal-pass-field">
         <div class="auth-modal-field-head">
           <label class="field-label" for="auth-modal-pass" id="auth-modal-pass-label">Supervisor Password / Passcode</label>
-          <span class="auth-modal-hint" id="auth-modal-pass-hint">Session re-auth required</span>
+          <span class="auth-modal-hint" id="auth-modal-pass-hint">Developer default prefilled</span>
         </div>
         <input id="auth-modal-pass" type="password" autocomplete="current-password">
       </div>
@@ -856,7 +865,7 @@
       <p class="auth-modal-error" id="auth-modal-error" role="alert" hidden></p>
       <div class="auth-modal-foot">
         <button type="button" class="secondary" id="auth-modal-cancel">Cancel</button>
-        <button type="submit" class="primary" id="auth-modal-submit">Confirm &amp; Apply Policy</button>
+        <button type="submit" class="primary" id="auth-modal-submit">Sign in as Supervisor</button>
       </div>
     </form>
   </div>

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 2026-10-17
 
+### Fixed — a restarted service can no longer be hidden behind a cached console
+
+The console's three files were served with a 10-minute freshness window and no validator, so a browser that had loaded the page before an upgrade kept running the old markup and script against the new jar. That is not a cosmetic staleness: after the sign-in dialog gained its role options, an unreloaded tab still showed the supervisor-only form, and the credentials typed into it could only re-authorise a policy — which reads as "sign in is broken" while the server was answering correctly.
+
+- **No freshness window, in any profile.** `spring.web.resources.cache.cachecontrol` is now `max-age=0, no-cache, must-revalidate` (the wire header is `no-cache, must-revalidate, public`; a zero max-age is implied), so every load asks the process that is actually running. The dev profile keeps its stronger `no-store`. The cost is the 51 KB compressed the console weighs (§11 of `docs/performance-baseline.md`), against a page that could otherwise disagree with the service for ten minutes after every restart.
+- **The trade-off is recorded where it was made.** The performance report's cache bullet now says the window was removed and why, instead of describing a policy the service no longer has.
+
 ### Added — the unit is booted on the oldest systemd it claims to support
 
 The sandbox was only ever exercised on the CI runner's own systemd (the newest LTS). That is the wrong host to prove it on: the failure mode for an older one is silence. systemd logs a single `Unknown lvalue 'ProtectProc' in section 'Service'` at load time and then runs the unit **without** that directive — no command fails, `systemd-analyze verify` is satisfied, `/health` answers, and the hardening the unit advertises is simply absent. A kernel that cannot enforce a directive behaves the same way.

@@ -226,7 +226,7 @@ the design:
 
 | Feature / Pattern | Console Implementation | Rationale |
 |---|---|---|
-| `supervisor_policy_credential_auth_modal` — in-page username/password form, FIDO2 row | the same form, in a dialog the console opens itself (`#auth-modal`) | the FIDO2/Smartcard row is omitted: there is no FIDO2 or OTP backend to drive, so it would be an affordance that does nothing. The username is read-only once the account is known (an account changes its own password; it does not switch to another one mid-dialog), and it is editable when the console has no name yet and is signing in |
+| `supervisor_policy_credential_auth_modal` — in-page username/password form, FIDO2 row | the same form, in a dialog the console opens itself (`#auth-modal`) | the FIDO2/Smartcard row is omitted: there is no FIDO2 or OTP backend to drive, so it would be an affordance that does nothing. The sign-in state offers Resident, Operator and Supervisor; Supervisor is preselected for a policy save, and the selected role's developer defaults from the role cards are prefilled. Resident needs no credential, so its fields are hidden. The username is read-only once the account is known (an account changes its own password; it does not switch to another one mid-dialog), and it is editable when the console has no name yet and is signing in |
 | `supervisor_policy_saved_verified_state` — disabled "Policy saved" button and a sync pill | the status chip (`Saved <WF> policy.`) plus the pending-diff panel | the enabled/disabled state of Save is derived from whether the form differs from the loaded policy, which is what the operator needs to see; a permanently disabled button would hide that |
 | Tailwind CDN, Google Fonts, inline `style=` attributes | one hand-written stylesheet of custom properties | the page ships under `style-src 'self'` with no `unsafe-inline` (see `SecurityHeadersFilter`), so CDN CSS would not load |
 | `SESSION: INIT-…`, `GATE_POLICY: …`, node version | omitted | static trace strings on a live console read as system state |
@@ -248,7 +248,11 @@ regression a red check.
 Every credential the console wants is entered in `#auth-modal`, in the page:
 
 - **Authorising a policy save.** `Save policy` signs in first and the PUT is
-  authorised by that session; the dialog is what that sign-in looks like.
+  authorised by that session; the dialog is what that sign-in looks like. It
+  offers Resident, Operator and Supervisor with Supervisor preselected. Choosing
+  Operator signs in read-only, and Resident opens the capture view: neither can
+  write policy, so the save is abandoned and the decision log records that a
+  supervisor is required.
 - **Setting a first password.** The service confines a bootstrapped account to
   `POST /auth/change-password` until it sets one, so the dialog asks for the new
   password on the way in rather than letting the operator land in a session that
@@ -258,8 +262,12 @@ Both used to be `window.prompt()` calls. A platform prompt cannot say what it is
 asking for or which account it is asking about, tells "cancelled" and "typed
 nothing" apart only by an empty string, and some embedded webviews suppress it
 entirely — which left a first-time supervisor being asked nothing and then told
-to sign in again. The guard harness now pins that `console.js` makes no
-`window.prompt` call, that an open dialog sends nothing, that cancelling sends
+to sign in again. The sign-in state opens with the Supervisor role selected and its developer
+defaults (the same values printed on the role cards) prefilled, so a local run is
+one click; selecting Operator or Resident swaps the defaults, labels and submit
+verb, and Resident hides the credential fields entirely. The guard harness now
+pins that `console.js` makes no `window.prompt` call, that the role choice and
+defaults are present, that an open dialog sends nothing, that cancelling sends
 nothing and aborts the save, that the answer is what goes on the wire, and that
 the password is cleared from the field and appears nowhere in the page's text
 afterwards. The password lives only in that input while the dialog is open; the

@@ -807,6 +807,13 @@ comments off the wire without deleting the reasoning from the source.
   loaded the console can be up to 10 minutes behind a restarted service's static
   files. Ten minutes was chosen as the point where a reload stops re-fetching
   160 KB and a console can still not outlive an update by more than one coffee.
+  **That window has since been removed (2026-10-24).** It cost more than it paid:
+  a cached console kept showing the pre-update sign-in dialog after the service
+  had been rebuilt, so the operator re-entered credentials into a form the jar no
+  longer had and reported sign-in as broken. The three files now carry
+  `max-age=0, no-cache, must-revalidate` (sent as `no-cache, must-revalidate,
+  public`), which makes each load fetch the bytes the running process serves —
+  51 KB compressed, per the table above.
 - **The page timings are loopback in Chromium on this host.** They say nothing
   about a 2-core registration station on a LAN beyond the transfer bytes, which
   are exact, and they do not isolate how much of the remaining ~250 ms is script

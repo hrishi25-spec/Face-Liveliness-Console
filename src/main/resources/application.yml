@@ -32,16 +32,24 @@ spring:
   web:
     resources:
       cache:
+        # The reproducible build stamps every jar entry at 1980, so Last-Modified
+        # cannot distinguish a rebuilt console from the previous one; a
+        # `must-revalidate` request would receive 304 forever. Without the
+        # validator, the first request after the window fetches the current
+        # bytes instead of trusting a timestamp shared by every build.
+        use-last-modified: false
         cachecontrol:
-          # Without this the console's three files carry no Cache-Control at all,
-          # so every reload re-fetches ~190 KB of markup, CSS and script that
-          # cannot have changed. `must-revalidate` still sends Last-Modified, so
-          # a reload after the window costs one conditional 304 per file, and a
-          # client can never be more than this window behind a restarted
-          # service that ships new files.
-          max-age: 10m
+          # No freshness window at all. A cached console outlived a rebuilt
+          # service once and kept presenting a sign-in dialog the jar no longer
+          # had: the operator typed credentials into a form that could only
+          # re-authorise a policy, and concluded sign-in was broken. The stale
+          # page is worse than the bytes it saves — a reload moves 51 KB
+          # compressed, not the 190 KB the uncompressed files weigh — so every
+          # load re-fetches from the process that is answering right now.
+          max-age: 0s
           cache-public: true
           must-revalidate: true
+          no-cache: true
 
   # ---- PostgreSQL ----
   datasource:

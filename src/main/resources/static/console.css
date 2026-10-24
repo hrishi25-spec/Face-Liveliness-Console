@@ -2605,6 +2605,17 @@ video {
   padding: 20px;
 }
 
+/* The role switcher fills the dialog's width and drops the control's own
+   bottom margin: the body's gap already separates it from the fields. */
+.auth-modal-role-control {
+  width: 100%;
+  margin-bottom: 0;
+}
+
+.auth-modal-role-control .segmented-btn {
+  flex: 1 1 0;
+}
+
 .auth-modal-field-head {
   display: flex;
   align-items: baseline;

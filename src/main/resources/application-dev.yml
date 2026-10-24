@@ -19,9 +19,26 @@ spring:
       enabled: true
       path: /h2-console
 
+  # A developer restart must pick up the files just built. The reproducible jar
+  # stamps every resource at 1980, so a Last-Modified revalidation would answer
+  # 304 for a rebuilt console; no-store avoids that cache entirely in dev.
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          max-age: 0s
+          cache-public: false
+          must-revalidate: false
+          no-cache: true
+          no-store: true
+
 mosip:
   security:
     auth:
       bcrypt-cost: 4
       bootstrap-username: supervisor
       bootstrap-password: supervisor123
+      # Seeded by DevAuthUserBootstrap with mustChangePassword=false, so the
+      # operator card works on a fresh demo database.
+      dev-operator-username: operator
+      dev-operator-password: operator1234
