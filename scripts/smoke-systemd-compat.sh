@@ -207,7 +207,7 @@ check_host() {
 
     # The unit as shipped, plus a stand-in for jpackage's launcher at the path
     # the unit's ExecStart names. The unit itself is not edited.
-    docker cp "$UNIT_FILE" "$CONTAINER:/lib/systemd/system/$NAME.service" >/dev/null \
+    docker cp "$UNIT_FILE" "$CONTAINER:/usr/lib/systemd/system/$NAME.service" >/dev/null \
         || fail "$image: could not install the unit into the container"
     docker exec "$CONTAINER" /bin/sh -c "
         mkdir -p /opt/pad-liveness/bin

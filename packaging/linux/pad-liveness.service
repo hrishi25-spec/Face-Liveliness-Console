@@ -1,7 +1,7 @@
 [Unit]
-# Installed to /lib/systemd/system/pad-liveness.service by the .deb and to
-# /usr/lib/systemd/system/pad-liveness.service by the .rpm, both of which
-# ./mvnw package builds (see README.md, "Linux installers"). The unit is not
+# Installed to /usr/lib/systemd/system/pad-liveness.service by both the .deb
+# and the .rpm, which ./mvnw package builds (see README.md, "Linux installers").
+# /lib/systemd/system is the same file on usrmerged hosts. The unit is not
 # enabled on install: enabling a service that binds port 8000 is a decision for
 # whoever installs it.
 Description=MOSIP Face Liveness and PAD service (console on port 8000)

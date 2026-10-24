@@ -297,7 +297,7 @@ if [ "$BUILD_DEB" = 1 ]; then
         UNPACKED="$TARGET_DIR/jpackage/deb-work"
         rm -rf "$UNPACKED"
         dpkg-deb -R "$RAW_DEB" "$UNPACKED"
-        install -D -m 0644 "$SERVICE" "$UNPACKED/lib/systemd/system/$NAME.service"
+        install -D -m 0644 "$SERVICE" "$UNPACKED/usr/lib/systemd/system/$NAME.service"
 
         # The menu entry jpackage generated lives under /opt and starts the
         # server with no window at all. Replace it with the same desktop entry
@@ -351,7 +351,7 @@ systemctl daemon-reload >/dev/null 2>&1 || true"
         rm -f "$DEST"/*.deb
         dpkg-deb --build --root-owner-group "$UNPACKED" "$DEB" >/dev/null
         info ".deb: $DEB ($(du -h "$DEB" | cut -f1))"
-        info "unit: /lib/systemd/system/$NAME.service"
+        info "unit: /usr/lib/systemd/system/$NAME.service"
     else
         skip "dpkg-deb and fakeroot are needed for the .deb — apt-get install dpkg fakeroot (Arch: pacman -S dpkg)"
     fi

@@ -165,8 +165,8 @@ On Linux, `./mvnw package` also builds three installers next to the jar, in `tar
 
 | File | What it is |
 |---|---|
-| `pad-liveness_<version>-1_amd64.deb` | Installs the service image under `/opt/pad-liveness` and the unit at `/lib/systemd/system/pad-liveness.service`, with a postinst that runs `systemctl daemon-reload` (`-1` is jpackage's Debian revision) |
-| `pad-liveness-<version>-1.x86_64.rpm` | The same payload and unit for Fedora/RHEL, installed under `/usr/lib/systemd/system`, with a scriptlet that runs `systemctl daemon-reload` |
+| `pad-liveness_<version>-1_amd64.deb` | Installs the service image under `/opt/pad-liveness` and the unit at `/usr/lib/systemd/system/pad-liveness.service`, with a postinst that runs `systemctl daemon-reload` (`-1` is jpackage's Debian revision) |
+| `pad-liveness-<version>-1.x86_64.rpm` | The same payload and unit for Fedora/RHEL, at the same `/usr/lib/systemd/system` path, with a scriptlet that runs `systemctl daemon-reload` |
 | `pad-liveness-<version>-x86_64.AppImage` | Self-contained; its `AppRun` starts the service, waits for `/health`, then opens the console at `http://127.0.0.1:8000/` in the browser |
 
 ```bash

@@ -117,7 +117,7 @@ LISTING=$(dpkg-deb -c "$DEB") || fail "cannot list the contents of $DEB"
 
 # The unit's ExecStart must name a file the archive actually installs, with the
 # execute bit set: the launcher is what systemd runs.
-UNIT_PATH="lib/systemd/system/$NAME.service"
+UNIT_PATH="usr/lib/systemd/system/$NAME.service"
 printf '%s\n' "$LISTING" | grep -q "\./$UNIT_PATH\$" \
     || fail "$DEB does not install /$UNIT_PATH — the unit was not added to the payload"
 
@@ -409,7 +409,10 @@ if [ "$UNIT_BOOT" = 1 ]; then
     # as root, which is the opposite of the intent.
     [ "$($SUDO systemctl show "$NAME" -p DynamicUser --value)" = "yes" ] \
         || fail "$NAME is not running under DynamicUser — check the unit's user settings"
-    [ -d "/var/lib/$NAME" ] \
+    # Through $SUDO: with DynamicUser the public path is a symlink into
+    # /var/lib/private, which is root-only. The CI user cannot stat the target
+    # directly even though root — and therefore systemd — can.
+    $SUDO test -d "/var/lib/$NAME" \
         || fail "/var/lib/$NAME was not created from StateDirectory — the service has nowhere to write"
     echo "  unit user: DynamicUser, state dir /var/lib/$NAME"
 
