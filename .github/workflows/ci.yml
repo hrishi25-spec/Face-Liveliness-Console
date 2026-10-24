@@ -676,20 +676,27 @@ jobs:
       # jpackage builds a .exe by shelling out to WiX 3: candle.exe and light.exe
       # have to be on PATH. Windows runners do not ship it, and jpackage does
       # not support WiX 4/5, so the major is pinned here rather than "latest".
+      #
+      # The official binaries ZIP, not `choco install wixtoolset`: the package
+      # version has already drifted once and its install step fails on the
+      # runner before jpackage runs. The ZIP is pinned by URL and checksum, and
+      # extracted to RUNNER_TEMP rather than Program Files, so the step needs
+      # no elevation and leaves no machine-wide state behind.
       - name: Install WiX Toolset 3
+        shell: pwsh
         run: |
-          choco install wixtoolset --version=3.14.1 --yes --no-progress
-          # Discovered, not hardcoded: the MSI's INSTALLDIR carries the WiX
-          # version, and baking the directory into the workflow would turn a
-          # patch release of the package into a red build with a confusing
-          # "candle.exe not found".
-          $root = Get-ChildItem 'C:\Program Files (x86)' -Directory -Filter 'WiX Toolset v3*' -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending |
-            Select-Object -First 1
-          if (-not $root) {
-            throw "no 'WiX Toolset v3*' under C:\Program Files (x86) - jpackage cannot build a .exe"
+          $url = 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip'
+          $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+
+          $expected = '6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31'
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "WiX ZIP checksum $actual does not match the pinned $expected"
           }
-          $wix = Join-Path $root.FullName 'bin'
+
+          $wix = Join-Path $env:RUNNER_TEMP 'wix314'
+          Expand-Archive -LiteralPath $zip -DestinationPath $wix -Force
           foreach ($tool in @('candle.exe', 'light.exe')) {
             if (-not (Test-Path (Join-Path $wix $tool))) {
               throw "$tool is not under $wix - jpackage cannot build a .exe"
@@ -703,7 +710,16 @@ jobs:
       # No -Pslim: the slim jar keeps linux/x86_64 natives, so an installer
       # built from it would install and then reject every frame.
       - name: Build the jar and the .exe installer
-        run: .\mvnw.cmd --batch-mode clean package -DskipTests -Dwindows.package.strict=true
+        shell: pwsh
+        run: |
+          $mvn = @('--batch-mode', 'clean', 'package', '-DskipTests', '-Dwindows.package.strict=true')
+          # A tag is the version, exactly as in the release job: without this the
+          # .exe is built as 1.0.0-SNAPSHOT and cannot be attached to the tag.
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $mvn += "-Drevision=$($env:GITHUB_REF_NAME.Substring(1))"
+          }
+          & .\mvnw.cmd @mvn
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Asserts the installer is a PE image with a version resource matching its
       # name, then boots the application image it deploys and probes /health for
@@ -722,6 +738,64 @@ jobs:
           path: target/dist/*.exe
           if-no-files-found: error
           retention-days: 7
+
+  # The .exe is built on Windows, but the release is created on Ubuntu by the
+  # release job. This bridge waits for both, downloads the built installer and
+  # appends it to the release with a sibling checksum. It is deliberately not
+  # part of release-assets.sh: that script stages the Maven build's assets, and
+  # a Windows packaging failure must not stop the jars and Linux installers from
+  # shipping (the same reason the Android APK is a separate job).
+  #
+  # jpackage strips a prerelease suffix from --app-version, so the built file is
+  # `pad-liveness-<numeric>.exe` even for a canary tag. That name is asserted
+  # before the asset is renamed to the full tag version, which keeps two canaries
+  # from publishing the same file name.
+  windows-installer-release:
+    name: Publish Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 10
+    needs: [release, windows-installer]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    permissions:
+      contents: write
+    steps:
+      - name: Download the Windows installer artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-installer
+          path: installer
+
+      - name: Name and checksum the installer
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          exes=(installer/*.exe)
+          if [ "${#exes[@]}" -ne 1 ]; then
+            echo "::error::expected one .exe in the windows-installer artifact, found ${#exes[@]}"
+            ls -la installer || true
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          CORE="${VERSION%%-*}"
+          BUILT="$(basename "${exes[0]}")"
+          if [ "$BUILT" != "pad-liveness-$CORE.exe" ]; then
+            echo "::error::jpackage produced $BUILT, expected pad-liveness-$CORE.exe for $TAG"
+            exit 1
+          fi
+          ASSET="pad-liveness-$VERSION.exe"
+          cp "${exes[0]}" "$ASSET"
+          sha256sum "$ASSET" > "$ASSET.sha256"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+
+      - name: Attach the installer to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
 
   # The image is a separate delivery path from the jar: the Dockerfile's COPY,
   # its Alpine base, the unprivileged user and the JVM flags exist nowhere else
@@ -992,6 +1066,10 @@ jobs:
         run: |
           set -uo pipefail
           VERSION="${TAG#v}"
+          # jpackage rejects a prerelease suffix, so package-linux.sh builds the
+          # installers as the numeric core: 1.0.4-canary.2 -> 1.0.4. The jars
+          # keep the full tag version; the installer assertions below use CORE.
+          CORE="${VERSION%%-*}"
           ./mvnw --batch-mode -DskipTests -Drevision="$VERSION" \
             clean package -Pslim -Dlinux.package.strict=true
 
@@ -1022,25 +1100,25 @@ jobs:
             exit 1
           fi
           case "$(basename "${DEBS[0]}")" in
-            *"$VERSION"*) ;;
-            *) echo "::error::${DEBS[0]} does not carry $VERSION"; exit 1 ;;
+            *"$CORE"*) ;;
+            *) echo "::error::${DEBS[0]} does not carry $CORE"; exit 1 ;;
           esac
           case "$(basename "${RPMS[0]}")" in
-            *"$VERSION"*) ;;
-            *) echo "::error::${RPMS[0]} does not carry $VERSION"; exit 1 ;;
+            *"$CORE"*) ;;
+            *) echo "::error::${RPMS[0]} does not carry $CORE"; exit 1 ;;
           esac
           case "$(basename "${APPIMAGES[0]}")" in
-            *"$VERSION"*) ;;
-            *) echo "::error::${APPIMAGES[0]} does not carry $VERSION"; exit 1 ;;
+            *"$CORE"*) ;;
+            *) echo "::error::${APPIMAGES[0]} does not carry $CORE"; exit 1 ;;
           esac
           DEB_VERSION=$(dpkg-deb -f "${DEBS[0]}" Version)
           case "$DEB_VERSION" in
-            "$VERSION"|"$VERSION"-*) ;;
-            *) echo "::error::${DEBS[0]} declares Version $DEB_VERSION, expected $VERSION"; exit 1 ;;
+            "$CORE"|"$CORE"-*) ;;
+            *) echo "::error::${DEBS[0]} declares Version $DEB_VERSION, expected $CORE"; exit 1 ;;
           esac
           RPM_VERSION=$(rpm -qp --qf '%{VERSION}' "${RPMS[0]}")
-          if [ "$RPM_VERSION" != "$VERSION" ]; then
-            echo "::error::${RPMS[0]} declares Version $RPM_VERSION, expected $VERSION"
+          if [ "$RPM_VERSION" != "$CORE" ]; then
+            echo "::error::${RPMS[0]} declares Version $RPM_VERSION, expected $CORE"
             exit 1
           fi
           echo "installers: $(basename "${DEBS[0]}") (Version $DEB_VERSION), $(basename "${RPMS[0]}") (Version $RPM_VERSION), $(basename "${APPIMAGES[0]}")"
@@ -1074,7 +1152,10 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -uo pipefail
-          ./scripts/release-assets.sh add --version "${TAG#v}" \
+          VERSION="${TAG#v}"
+          # The installers carry the numeric core jpackage accepts, not the tag's
+          # prerelease suffix; the jars above carry the full version.
+          ./scripts/release-assets.sh add --version "${VERSION%%-*}" \
             target/dist/*.deb target/dist/*.rpm target/dist/*.AppImage
 
       # One checksum per asset, named exactly like its file with a .sha256
