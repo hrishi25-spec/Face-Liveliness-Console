@@ -392,13 +392,18 @@ Server-side phases over the 110 distinct HTTP payloads (§5.3 method):
 
 ### 9.3 Evidence that no value moved
 
-- `OnnxMiniFasNetBackendTest.memoizedAnalysisReproducesTheExactPreMemoValues`
-  compares `Double.toHexString` — every mantissa bit — against values captured
-  from the pre-change code by a probe that was then deleted. Genuine face
-  `real-face.jpg`: faceCount 1 · quality `0x1.db82b901dc375p-1` · score
-  `0x1.fd6f64eda63ap-1` · PAD bona fide `0x1.fd6f64eda63ap-1`. Print attack
-  `print-attack.jpg`: faceCount 1 · quality `0x1.c1dd992d3df9ep-2` · score
-  `0x1.1fbc56520293cp-11` · PAD `SCREEN_REPLAY` `0x1.ffb70c86ca4cap-1`.
+- `OnnxMiniFasNetBackendTest.memoizedAnalysisReproducesThePreMemoValues`
+  compares values captured from the pre-change code by a probe that was then
+  deleted, with a 1 ppm tolerance: ONNX Runtime selects float32 kernels per CPU
+  generation, so the same fixture lands a few ulps apart on a different runner
+  and an exact comparison would fail without a value having moved. Two calls
+  served from the memo are then compared with `Double.toHexString` — every
+  mantissa bit — so a memo that recomputes instead of reusing still fails.
+  Genuine face `real-face.jpg`: faceCount 1 · quality
+  `0x1.db82b901dc375p-1` · score `0x1.fd6f64eda63ap-1` · PAD bona fide
+  `0x1.fd6f64eda63ap-1`. Print attack `print-attack.jpg`: faceCount 1 · quality
+  `0x1.c1dd992d3df9ep-2` · score `0x1.1fbc56520293cp-11` · PAD `SCREEN_REPLAY`
+  `0x1.ffb70c86ca4cap-1`.
 - `intraOpThreadCountDoesNotMoveAnyValue`: 1 thread, the derived default and 4
   threads answer identically on both fixtures.
 - `oneFrameThroughTheSpiConversationCostsOneDetectionAndOneInference` and
