@@ -483,7 +483,7 @@
         "workflowType": {
           "type": "WorkflowType",
           "required": true,
-          "notes": "@NotNull. An unknown value is rejected as unreadable JSON: 400 VALIDATION_ERROR 'Request body is malformed or unreadable.'"
+          "notes": "@NotNull. An unknown value is rejected as unreadable JSON: 400 VALIDATION_ERROR 'Request body is malformed or unreadable.' With a session cookie the value must match the account's role (SUPERVISOR or OPERATOR); a different type is 403 FORBIDDEN and no session is created, because the type is taken from the sign-in. An anonymous caller (resident capture) is the one case where this value decides the workflow."
         },
         "deviceId": {
           "type": "string",

@@ -1,5 +1,7 @@
 package io.mosip.liveness.api;
 
+import io.mosip.liveness.auth.AuthPrincipal;
+import io.mosip.liveness.auth.AuthRefusals;
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.config.EffectivePolicyValidator;
 import io.mosip.liveness.dto.SessionCreateRequest;
@@ -7,12 +9,14 @@ import io.mosip.liveness.dto.SessionListItem;
 import io.mosip.liveness.dto.SessionResponse;
 import io.mosip.liveness.dto.SessionSummary;
 import io.mosip.liveness.models.entity.LivenessSession;
+import io.mosip.liveness.models.enums.AuthRole;
 import io.mosip.liveness.models.enums.SessionStatus;
 import io.mosip.liveness.models.enums.WorkflowType;
 import io.mosip.liveness.crud.ChallengeRepository;
 import io.mosip.liveness.crud.FrameEventRepository;
 import io.mosip.liveness.crud.LivenessSessionRepository;
 import io.mosip.liveness.services.ConfigService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Session lifecycle endpoints, plus the operator's session feed.
@@ -78,18 +83,37 @@ public class SessionsController {
                 .toList();
     }
 
+    /**
+     * Opens a session for the user type the caller is entitled to.
+     *
+     * <p>The user type is not a client choice once somebody has signed in: a
+     * session created with a session cookie runs as that account's role
+     * ({@link AuthRole#SUPERVISOR} → {@code SUPERVISOR}, otherwise
+     * {@code OPERATOR}), and a body that names a different type is refused with
+     * 403 rather than quietly downgraded. Before this rule, a client could claim
+     * {@code RESIDENT} while authenticating a supervisor and receive the most
+     * forgiving policy — 0.80, one challenge, three retries — for a flow the
+     * account is supposed to be measured against at 0.85 with two challenges.</p>
+     *
+     * <p>An anonymous caller is unchanged: the registration client's resident
+     * capture has no account to derive a type from, and this service has no
+     * resident identity provider, so the host application keeps deciding there.</p>
+     */
     @PostMapping
-    public ResponseEntity<SessionResponse> createSession(@Valid @RequestBody SessionCreateRequest req) {
+    public ResponseEntity<SessionResponse> createSession(@Valid @RequestBody SessionCreateRequest req,
+                                                         HttpServletRequest request) {
+        WorkflowType workflowType = resolveWorkflowType(request, req.getWorkflowType());
+
         // Resolve the user type's policy once, validate it, and freeze it on the
         // session. Doing this here (rather than per frame) means the operating
         // point is chosen at the start and cannot drift mid-session, and an
         // invalid configuration fails creation rather than being frozen silently.
         EffectivePolicy policy = configService.getEffectivePolicy(
-                configService.toCoreWorkflow(req.getWorkflowType()));
+                configService.toCoreWorkflow(workflowType));
         effectivePolicyValidator.validate(policy);
 
         LivenessSession session = LivenessSession.builder()
-                .workflowType(req.getWorkflowType())
+                .workflowType(workflowType)
                 .deviceId(req.getDeviceId())
                 .subjectRef(req.getSubjectRef())
                 .online(req.getOnline() != null ? req.getOnline() : true)
@@ -102,6 +126,32 @@ public class SessionsController {
         sessionRepo.save(session);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(session));
+    }
+
+    /**
+     * The user type this request may open, from the caller's role when it has
+     * one and from the body when it does not.
+     *
+     * <p>A role is read once, here, rather than trusted from the request body
+     * later: the policy is frozen at creation, so this is the only point where
+     * swapping the type would change what a session is measured against.</p>
+     */
+    private static WorkflowType resolveWorkflowType(HttpServletRequest request, WorkflowType claimed) {
+        Optional<AuthPrincipal> caller = AuthGate.principal(request);
+        if (caller.isEmpty()) {
+            if (claimed == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "workflow_type is required");
+            }
+            return claimed;
+        }
+
+        WorkflowType fromRole = caller.get().holds(AuthRole.SUPERVISOR)
+                ? WorkflowType.SUPERVISOR
+                : WorkflowType.OPERATOR;
+        if (claimed != null && claimed != fromRole) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, AuthRefusals.USER_TYPE_FROM_ACCOUNT);
+        }
+        return fromRole;
     }
 
     /**

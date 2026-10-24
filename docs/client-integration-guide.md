@@ -620,12 +620,22 @@ curl -X PUT localhost:8000/api/v1/config/OPERATOR \
   }'
 ```
 
-### 5.3 The user type is chosen at session start, and the policy is frozen
+### 5.3 The user type comes from the sign-in, and the policy is frozen
 
-Send the user type once, in the create-session call. The response carries the
-**resolved policy that will govern the whole session** (threshold, challenge pool,
-window, retry budget, repeated-failure action). Do not assume the defaults are the
-same across user types — they are not, and they can be edited at runtime.
+With a staff session cookie, the user type is the account's role: a
+`SUPERVISOR` account always opens a `SUPERVISOR` session and an `OPERATOR`
+account an `OPERATOR` one. The body still has to name it (`workflowType` is
+required), but it is checked rather than trusted — naming a different type is
+refused with **403** and the session is not created, so a client cannot ask for
+the resident policy while authenticating a supervisor. An **anonymous** caller
+has no account to derive a type from; that is the registration client's resident
+capture, and there the body decides.
+
+The response carries the **resolved policy that will govern the whole session**
+(threshold, challenge pool, window, retry budget, repeated-failure action). Do not
+assume the defaults are the same across user types — they are not, and they can be
+edited at runtime. Show the user type the screen will run rather than offering a
+picker: the service will not honour a different one.
 
 ```jsonc
 POST /api/v1/sessions  { "workflowType": "SUPERVISOR", "deviceId": "L1-CAM-01" }
@@ -644,6 +654,9 @@ POST /api/v1/sessions  { "workflowType": "SUPERVISOR", "deviceId": "L1-CAM-01" }
 The policy is frozen on the session at creation: a later `PUT /api/v1/config/{wf}`
 affects only **new** sessions, never one already running. Surface the user type and
 (optionally) the resolved policy in the UI so the operator knows which flow is active.
+In the browser console the Verify screen displays that type read-only, and the
+Resident screen ends any staff session before it starts, so the kiosk runs as the
+anonymous resident flow instead of inheriting the previous user's authority.
 
 ### 5.4 Terminal outcomes and `mayRetrySession`
 

@@ -206,6 +206,40 @@
 
   let currentRole = null; // "RESIDENT" | "OPERATOR" | "SUPERVISOR" | null
 
+  // The user type is the signed-in account's, not a picker. The Verify screen
+  // shows the type its session will run as, and the service refuses a request
+  // that names a different one (SessionsController.resolveWorkflowType). Resident
+  // capture is the anonymous entry, so there the screen's own role is the type.
+  const USER_TYPE_BY_ROLE = {
+    RESIDENT: "RESIDENT",
+    OPERATOR: "OPERATOR",
+    SUPERVISOR: "SUPERVISOR"
+  };
+
+  function currentUserType() {
+    return USER_TYPE_BY_ROLE[currentRole] || "RESIDENT";
+  }
+
+  // The account's role, as the service reports it, decides the screen and the
+  // session's user type. The card that was clicked only decides which form was
+  // shown: a supervisor account signed in through the operator card is an
+  // operator, and vice versa. An unrecognised answer falls back to the card's
+  // role rather than inventing a surface.
+  function accountRole(reported, fallback) {
+    const role = String(reported || "").toUpperCase();
+    return USER_TYPE_BY_ROLE[role] ? role : fallback;
+  }
+
+  function renderUserType() {
+    const el = $("workflow-derived");
+    if (!el) return;
+    const type = currentUserType();
+    el.textContent = type;
+    el.dataset.workflow = type;
+    el.title = "Taken from the signed-in account. The service refuses a session "
+      + "that asks for a different user type.";
+  }
+
   function selectLoginRole(role) {
     if (roleSelectResident) roleSelectResident.className = "role-selector-btn" + (role === "RESIDENT" ? " active" : "");
     if (roleSelectOperator) roleSelectOperator.className = "role-selector-btn" + (role === "OPERATOR" ? " active" : "");
@@ -231,6 +265,7 @@
   function showRoleView(role, user) {
     currentRole = role;
     if (user) signedInAs = user;
+    renderUserType();
     if (loginPage) loginPage.hidden = true;
 
     if (role === "RESIDENT") {
@@ -320,9 +355,15 @@
   }
 
   // Resident sign-in
+  // The resident screen is the anonymous entry point, so it must not run under
+  // a staff session left behind on the workstation: the service would derive the
+  // staff role for the session and refuse the resident type. Ending any session
+  // first keeps the kiosk genuinely anonymous, and hands the workstation on the
+  // same way the role switch does.
   if (btnLoginResident) {
-    btnLoginResident.addEventListener("click", () => {
+    btnLoginResident.addEventListener("click", async () => {
       const resId = (inputResidentId && inputResidentId.value.trim()) || "RESIDENT-001";
+      await signOut("resident entry");
       signedInAs = resId;
       log(`Signed in as resident (${resId}).`);
       showRoleView("RESIDENT", resId);
@@ -346,7 +387,7 @@
         signedInAs = me.username || user;
         if (statusLoginOperator) statusLoginOperator.textContent = "";
         log(`Signed in as operator (${signedInAs}).`);
-        showRoleView("OPERATOR", signedInAs);
+        showRoleView(accountRole(me.role, "OPERATOR"), signedInAs);
       } catch (e) {
         // A refused login must stay on the picker. The previous fallback opened
         // the operator view anyway and only wrote a log line, so a demo with no
@@ -419,7 +460,7 @@
           statusLoginSupervisor.className = "cfg-status";
         }
         log(`Signed in as supervisor (${signedInAs}).`);
-        showRoleView("SUPERVISOR", signedInAs);
+        showRoleView(accountRole(me.role, "SUPERVISOR"), signedInAs);
       } catch (e) {
         if (statusLoginSupervisor) {
           statusLoginSupervisor.textContent = `Sign in refused: ${e.message}`;
@@ -623,32 +664,106 @@
   const captureCtx = captureCanvas.getContext("2d");
 
   /**
-   * Target size for a source frame: same aspect ratio, long edge at most
+   * Target size for a captured region: same aspect ratio, long edge at most
    * {@link CAPTURE_MAX_EDGE}, never upscaled (a 320x240 camera keeps 320x240).
    */
-  function captureTarget(source) {
-    const srcW = source.videoWidth || 640;
-    const srcH = source.videoHeight || 480;
-    const longEdge = Math.max(srcW, srcH);
+  function captureTarget(width, height) {
+    const longEdge = Math.max(width, height);
     const scale = longEdge > CAPTURE_MAX_EDGE ? CAPTURE_MAX_EDGE / longEdge : 1;
     return {
-      width: Math.max(1, Math.round(srcW * scale)),
-      height: Math.max(1, Math.round(srcH * scale))
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale))
     };
+  }
+
+  // ---------- the capture follows the guide ----------
+  //
+  // The oval is a promise — "position your face inside the oval" — so the frame
+  // sent to the engine is the oval's part of the camera image, not the whole
+  // webcam view. The face then fills the captured frame the way it fills the
+  // guide, instead of arriving as a head in the middle of a room.
+  //
+  // The margin around the guide keeps the whole head inside a turned head or a
+  // lean, so following the guide never costs a detection the engine would have
+  // made on the full frame.
+  const GUIDE_MARGIN = 1.15;
+
+  /**
+   * Maps the guide back into camera pixels.
+   *
+   * <p>{@code box} is the preview's box and {@code guide} the oval's, both as
+   * the browser laid them out (CSS pixels); {@code sourceW}/{@code sourceH} are
+   * the camera's own frame size. The preview shows the image with
+   * {@code object-fit: cover} — scaled to cover the element and centred — so
+   * the offsets below undo that fit before the guide's centre is converted. The
+   * result is clamped inside the camera frame, so a guide near an edge can
+   * never ask for pixels that do not exist.</p>
+   *
+   * <p>Falls back to the whole frame when either box is unknown: without a
+   * layout there is nothing to follow, and the full frame is what the engine
+   * expects.</p>
+   */
+  function guideRect(sourceW, sourceH, box, guide) {
+    const full = { x: 0, y: 0, w: sourceW, h: sourceH };
+    if (!(sourceW > 0 && sourceH > 0)) return full;
+    if (!box || !guide) return full;
+    if (!(box.width > 0 && box.height > 0)) return full;
+    if (!(guide.width > 0 && guide.height > 0)) return full;
+    const scale = Math.max(box.width / sourceW, box.height / sourceH);
+    const offsetX = (box.width - sourceW * scale) / 2;
+    const offsetY = (box.height - sourceH * scale) / 2;
+    const centreX = (guide.left + guide.width / 2 - box.left - offsetX) / scale;
+    const centreY = (guide.top + guide.height / 2 - box.top - offsetY) / scale;
+    const w = Math.min(sourceW, (guide.width / scale) * GUIDE_MARGIN);
+    const h = Math.min(sourceH, (guide.height / scale) * GUIDE_MARGIN);
+    return {
+      x: Math.max(0, Math.min(centreX - w / 2, sourceW - w)),
+      y: Math.max(0, Math.min(centreY - h / 2, sourceH - h)),
+      w,
+      h
+    };
+  }
+
+  // Read-only, for the guards harness (src/test/js/console-guards.test.mjs):
+  // the mapping is arithmetic a test can pin from numbers alone, by the same
+  // reasoning as CAPTURE_BUDGET above.
+  window.CAPTURE_GUIDE = Object.freeze({ margin: GUIDE_MARGIN, rect: guideRect });
+
+  /**
+   * The oval that belongs to this preview, as laid out, or null when it is not
+   * measurable — a hidden screen, or a DOM without layout.
+   */
+  function guideBox(source) {
+    const wrapper = typeof source.closest === "function"
+      ? source.closest(".camera-viewport-wrapper") : null;
+    const guide = wrapper && typeof wrapper.querySelector === "function"
+      ? wrapper.querySelector(".camera-oval") : null;
+    if (!guide || typeof guide.getBoundingClientRect !== "function") return null;
+    return guide.getBoundingClientRect();
+  }
+
+  /** The preview's own box, or null when it has not been laid out. */
+  function previewBox(source) {
+    return typeof source.getBoundingClientRect === "function"
+      ? source.getBoundingClientRect() : null;
   }
 
   // The source <video> is a parameter: the Supervisor console and the Resident
   // capture screen each capture from their own preview (both share this canvas,
-  // and the page's CSS mirroring never touches the drawn pixels).
+  // and the page's CSS mirroring never touches the drawn pixels — the guide is
+  // mirrored with them, and an ellipse is symmetric either way).
   function grabFrame(source, quality = CAPTURE_JPEG_QUALITY) {
-    const target = captureTarget(source);
+    const srcW = source.videoWidth || 640;
+    const srcH = source.videoHeight || 480;
+    const crop = guideRect(srcW, srcH, previewBox(source), guideBox(source));
+    const target = captureTarget(crop.w, crop.h);
     if (captureCanvas.width !== target.width) captureCanvas.width = target.width;
     if (captureCanvas.height !== target.height) captureCanvas.height = target.height;
-    // The 9-argument form: the source rectangle is the camera's whole frame and
-    // the destination rectangle is the capped canvas. The 5-argument form would
-    // copy the frame's top-left corner into the canvas — a crop, not a downscale.
-    captureCtx.drawImage(source, 0, 0,
-      source.videoWidth || target.width, source.videoHeight || target.height,
+    // The 9-argument form: the source rectangle is the guide's region of the
+    // camera frame and the destination rectangle is the capped canvas. The
+    // 5-argument form would copy the frame's top-left corner into the canvas —
+    // a crop of the wrong part, not what the guide frames.
+    captureCtx.drawImage(source, crop.x, crop.y, crop.w, crop.h,
       0, 0, target.width, target.height);
     return captureCanvas.toDataURL("image/jpeg", quality);
   }
@@ -783,7 +898,7 @@
       const session = await api("/sessions", {
         method: "POST",
         body: JSON.stringify({
-          workflowType: $("workflow").value,
+          workflowType: currentUserType(),
           deviceId: $("deviceId").value || "WEB-CAM"
         })
       });
@@ -2820,6 +2935,7 @@
 
   // Initially show only the login page for role selection
   showLoginPage();
+  renderUserType();
 
   // Check existing session if available
   api("/auth/me").then(me => {

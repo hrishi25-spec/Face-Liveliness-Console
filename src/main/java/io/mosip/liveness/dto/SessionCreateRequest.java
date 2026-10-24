@@ -18,6 +18,16 @@ import lombok.NoArgsConstructor;
 @Builder
 public class SessionCreateRequest {
 
+    /**
+     * The user type the session runs as.
+     *
+     * <p>Required, and for a caller that presented a session cookie it must name
+     * the account's own type: {@code SessionsController} derives the type from
+     * the role and refuses a claim that disagrees with 403. An anonymous caller
+     * (the registration client's resident capture) is the one case where this
+     * value decides the workflow, because this service holds no resident
+     * identity to derive one from.</p>
+     */
     @NotNull(message = "workflow_type is required")
     private WorkflowType workflowType;
 

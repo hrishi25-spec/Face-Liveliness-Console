@@ -186,9 +186,17 @@ match whichever palette is active.
   `proceed` / `reject` / `escalate` variants; the resting state is neutral.
 - **Camera surface** — hardened `#020617` container, dashed guide with four
   calibration ticks, a scan sweep that runs only while a run is analysing, a
-  pinned translucent guidance pill, and a monospace HUD. Guide states:
+  pinned translucent guidance pill, and a monospace HUD. The guide is sized from
+  the viewfinder's own height (74% of it at most, capped at 378 px) so a larger
+  oval cannot push itself out of a short preview. Guide states:
   white dashed (idle) → cobalt solid (analysing) → amber (challenge open) →
   green (session passed) or red (rejected).
+- **Capture follows the guide** — the frame sent to the engine is the oval's
+  region of the camera image plus a 15% margin, not the whole webcam view, so
+  the face fills the captured frame the way it fills the oval. The mapping
+  undoes `object-fit: cover`, is clamped inside the camera frame, and falls back
+  to the whole frame when the guide has no layout (a hidden screen, or a DOM
+  without layout in `src/test/js/console-guards.test.mjs`).
 - **Current-step card** — eyebrow with an activity dot, title, one-line note, a
   6px progress track and a monospace stage row (`Stage 1 of 3` / `Idle`).
 - **Tables** — uppercase label headers on a subtle fill, hairline dividers,
