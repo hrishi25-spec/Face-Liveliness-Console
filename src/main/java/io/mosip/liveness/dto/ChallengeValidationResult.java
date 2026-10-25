@@ -34,5 +34,14 @@ public class ChallengeValidationResult {
      * never a grant of another challenge inside this session.
      */
     private Boolean mayRetrySession;
+    /**
+     * True when a presentation attack ended this check. Set only on the verdict
+     * this stage itself produced (a PAD rejection), never on a plain action
+     * miss: the client lists the attack next to the rejection, so the operator
+     * learns what the engine saw instead of only "try again".
+     */
+    private Boolean padFlag;
+    /** The attack class behind {@link #padFlag} (e.g. {@code SCREEN_REPLAY}). */
+    private String padAttackType;
     private String message;
 }

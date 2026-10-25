@@ -724,10 +724,10 @@
           "faceDetected": true,
           "faceQuality": 0.72,
           "livenessScore": 0.41,
-          "padFlag": false,
-          "action": "escalate_to_active",
-          "challenge": {
-            "challengeId": "b41a2c77-2f3e-4b8a-9c11-77de9a4b6a02",
+      "padFlag": false,
+      "action": "escalate_to_active",
+      "challenge": {
+        "challengeId": "b41a2c77-2f3e-4b8a-9c11-77de9a4b6a02",
             "challengeType": "BLINK",
             "timeoutMs": 8000,
             "attemptNumber": 1
@@ -745,7 +745,25 @@
           "action": "reject",
           "message": "Face verification could not be completed. Please try again.",
           "derived_from_source": true,
-          "note": "A single flagged frame is terminal. There is no confirmation across two frames."
+          "note": "Only reached when the workflow has no challenge stage to hand the verdict to. With an active stage, a confirmed hit answers escalate_to_active instead."
+        },
+        "pad_escalated": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "stage": "ACTIVE",
+          "faceDetected": true,
+          "faceQuality": 0.71,
+          "padFlag": true,
+          "padAttackType": "SCREEN_REPLAY",
+          "action": "escalate_to_active",
+          "challenge": {
+            "challengeId": "b41a2c77-2f3e-4b8a-9c11-77de9a4b6a02",
+            "challengeType": "BLINK",
+            "timeoutMs": 8000,
+            "attemptNumber": 1
+          },
+          "message": "Please blink.",
+          "derived_from_source": true,
+          "note": "A confirmed hit is carried by the escalation, so the client can name the attack behind the challenge instead of showing a clean frame."
         },
         "passive_failed_active_disabled": {
           "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
@@ -799,11 +817,38 @@
         "action": {
           "type": "ChallengeAction"
         },
+        "padFlag": {
+          "type": "boolean",
+          "notes": "set (true) only when this check ended as a presentation attack; the challenge's frames are re-run through both PAD sources, so a replay cannot clear a passive-stage flag by performing the action"
+        },
+        "padAttackType": {
+          "type": "PadAttackType",
+          "notes": "omitted unless padFlag is true"
+        },
         "message": {
           "type": "string"
         }
       },
       "examples": {
+        "presentation_attack": {
+          "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+          "challenge": {
+            "id": "b41a2c77-2f3e-4b8a-9c11-77de9a4b6a02",
+            "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
+            "challengeType": "BLINK",
+            "status": "FAILED",
+            "attemptNumber": 1,
+            "timeoutMs": 8000,
+            "issuedAt": "2026-10-08T22:31:12.100+05:30",
+            "completedAt": "2026-10-08T22:31:15.402+05:30"
+          },
+          "passed": false,
+          "action": "reject",
+          "padFlag": true,
+          "padAttackType": "SCREEN_REPLAY",
+          "message": "Face verification could not be completed. Please try again.",
+          "derived_from_source": true
+        },
         "verified": {
           "sessionId": "3f6c1d92-6a1e-4c0f-b1d2-8e9a4d2c7f10",
           "challenge": {

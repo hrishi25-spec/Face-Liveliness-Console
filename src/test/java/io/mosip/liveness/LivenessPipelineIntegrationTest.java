@@ -6,6 +6,12 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 import io.mosip.liveness.app.config.AppConfig;
 import io.mosip.liveness.testing.RawHttpSupport;
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+import org.opencv.core.MatOfByte;
+import org.opencv.core.Scalar;
+import org.opencv.imgcodecs.Imgcodecs;
+import org.opencv.imgproc.Imgproc;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -429,6 +435,97 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
                 exchange(HttpMethod.POST, "/api/v1/sessions/" + sessionId + "/close", null, false));
         assertEquals("EXPIRED", summary.get("status").asText());
         assertEquals(1, summary.get("totalChallengesIssued").asInt());
+    }
+
+    /**
+     * A video played from a phone screen must not pass, and the client must be
+     * told what the engine saw.
+     *
+     * <p>The composite below is a face filling a phone screen in a 1280×720
+     * frame (dark bezel, screen softness) — the frame a webcam sees when someone
+     * holds up a replaying phone. The heuristic FFT/texture signals cannot see
+     * a well-lit modern screen, so this case is carried by MiniFASNet: the
+     * passive stage flags it, and because the active challenge now runs the
+     * model too, performing the requested action with the video does not wash
+     * the flag off. Both responses must name the attack, which is what the
+     * console's warning list reads.</p>
+     */
+    @Test
+    void phoneScreenReplay_isRejectedAtTheActiveChallenge() throws Exception {
+        String replayB64 = phoneReplayFrameB64();
+        UUID sessionId = UUID.fromString(expect(HttpStatus.CREATED,
+                exchange(HttpMethod.POST, "/api/v1/sessions",
+                        sessionBody("RESIDENT"), false)).get("id").asText());
+
+        JsonNode last = null;
+        int sent = 0;
+        while ((last == null || !terminal(last.get("action").asText())) && sent < MAX_FRAMES) {
+            last = postFrame(sessionId, replayB64);
+            sent++;
+        }
+        assertEquals("escalate_to_active", last.get("action").asText(), last.toString());
+        assertTrue(last.get("padFlag").asBoolean(),
+                "the escalation must carry the attack, not a clean frame: " + last);
+        assertEquals("SCREEN_REPLAY", last.get("padAttackType").asText(), last.toString());
+        assertNotNull(last.get("challenge"), "the escalation must carry a challenge");
+        UUID challengeId = UUID.fromString(last.get("challenge").get("challengeId").asText());
+
+        // The phone is still replaying: the challenge frames are the same attack.
+        // PAD decides before the action does, so this must reject immediately
+        // rather than stay open and let the video perform the challenge.
+        ObjectNode validate = mapper.createObjectNode();
+        validate.put("challengeId", challengeId.toString());
+        ArrayNode frames = validate.putArray("framesBase64");
+        frames.add(replayB64).add(replayB64).add(replayB64);
+        JsonNode result = expect(HttpStatus.OK, exchange(HttpMethod.POST,
+                "/api/v1/sessions/" + sessionId + "/challenges/validate",
+                validate.toString(), false));
+        assertEquals("reject", result.get("action").asText(), result.toString());
+        assertEquals(Boolean.TRUE, result.get("padFlag").asBoolean(), result.toString());
+        assertEquals("SCREEN_REPLAY", result.get("padAttackType").asText(), result.toString());
+
+        JsonNode after = expect(HttpStatus.OK,
+                exchange(HttpMethod.GET, "/api/v1/sessions/" + sessionId, null, false));
+        assertEquals("FAILED", after.get("status").asText());
+        assertEquals("presentation_attack:SCREEN_REPLAY", after.get("failureReason").asText());
+
+        JsonNode audit = expect(HttpStatus.OK,
+                exchange(HttpMethod.GET, "/api/v1/sessions/" + sessionId + "/audit", null, false));
+        assertTrue(hasEvent(audit, "PAD_FLAGGED"), "audit must record the passive hit: " + audit);
+        assertTrue(hasEvent(audit, "PAD_REJECTED"), "audit must record the active hit: " + audit);
+    }
+
+    /**
+     * The replay frame as a base64 JPEG: {@code fixtures/real-face.jpg} filling a
+     * phone screen inside a 1280×720 capture, with a dark bezel and a light
+     * screen blur. Synthetic and checked in as code, not as new biometric data.
+     */
+    private static String phoneReplayFrameB64() {
+        Mat face = Imgcodecs.imdecode(
+                new MatOfByte(Base64.getDecoder().decode(frameB64)), Imgcodecs.IMREAD_COLOR);
+        Mat frame = new Mat(720, 1280, CvType.CV_8UC3, new Scalar(32, 34, 37));
+        Mat scaled = new Mat();
+        Mat body = null;
+        Mat screen = null;
+        MatOfByte out = new MatOfByte();
+        try {
+            int x = 430, y = 30, w = 420, h = 660;
+            body = frame.submat(new org.opencv.core.Rect(x - 14, y - 14, w + 28, h + 28));
+            body.setTo(new Scalar(6, 6, 8));
+            screen = frame.submat(new org.opencv.core.Rect(x, y, w, h));
+            Imgproc.resize(face, scaled, new org.opencv.core.Size(w, h));
+            scaled.copyTo(screen);
+            Imgproc.GaussianBlur(frame, frame, new org.opencv.core.Size(5, 5), 0.8);
+            Imgcodecs.imencode(".jpg", frame, out);
+            return Base64.getEncoder().encodeToString(out.toArray());
+        } finally {
+            if (screen != null) screen.release();
+            if (body != null) body.release();
+            scaled.release();
+            frame.release();
+            face.release();
+            out.release();
+        }
     }
 
     // ------------------------------------------------------------------ 5. error path, real decoder

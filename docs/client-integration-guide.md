@@ -660,6 +660,13 @@ When a session ends, read `action`:
 `mayRetrySession` is `false`/absent for `locked` and `escalate_to_operator`. A
 failure action **never** issues another challenge in the same session.
 
+A `reject` caused by a presentation attack also carries `padFlag: true` and the
+`padAttackType` that caused it, on both the escalation frame and the challenge
+verdict. Use it for the operator's own warning list — keep the subject's screen
+on the generic message. An escalation (`escalate_to_active`) carries the same
+pair when PAD is why it was issued, so the attack is visible while the subject
+is still performing the challenge.
+
 ### 5.5 Session ownership and `X-Subject-Ref`
 
 If you create a session **with** `subjectRef` (the resident/operator/supervisor

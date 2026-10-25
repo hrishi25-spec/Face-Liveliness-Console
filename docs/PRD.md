@@ -243,10 +243,19 @@ An end-to-end run looks like this:
 `PadVerdict`. A flagged frame sets `padFlag` and `padAttackType` (one of `PRINTED_PHOTO`,
 `SCREEN_REPLAY`, `VIDEO_REPLAY`, `OTHER`) and stores the frame event with the PAD confidence. The
 verdict is acted on only once it is confirmed across consecutive frames: a workflow with an active
-stage receives `action: escalate_to_active` and a `PAD_FLAGGED` audit entry (PAD stays terminal on
-every challenge frame); only a workflow with no challenge to run answers `action: reject`, writes
-`PAD_REJECTED`, and fails the session with `failure_reason = presentation_attack:<type>`. The
-user-facing message stays generic either way.
+stage receives `action: escalate_to_active` and a `PAD_FLAGGED` audit entry; only a workflow with no
+challenge to run answers `action: reject`, writes `PAD_REJECTED`, and fails the session with
+`failure_reason = presentation_attack:<type>`. The user-facing message stays generic either way.
+
+Both PAD sources — the OpenCV heuristics and the selected backend's `assessPad` — run on **every**
+stage, including the challenge frames. That is what makes an escalation a second check rather than
+a reprieve: a phone-screen replay that the passive stage flagged cannot perform the requested
+action and leave with `PASSED`, because the same model flags the challenge frames again and the
+active stage answers `action: reject` with the attack type once two frames of the burst are flagged
+(a single flip on a live face is not a verdict). The escalation response keeps the
+verdict it was issued for (`padFlag`, `padAttackType`), and a PAD rejection from a challenge keeps
+the same two fields, so a client can present the attack it actually saw instead of only a generic
+failure.
 
 ### 4.5 Active challenge stage
 
@@ -438,7 +447,9 @@ are under `/api/v1`.
 - `ChallengeValidationResult` — `sessionId`, `challenge`, `passed`, `action`
   (`proceed` / `retry_challenge` / `reject`, plus the budget-exhausted
   `locked` / `escalate_to_operator` / `failed`), `message`, and — only on a
-  terminal budget-exhausted verdict — `mayRetrySession`.
+  terminal budget-exhausted verdict — `mayRetrySession`. A rejection caused by a
+  presentation attack also carries `padFlag` / `padAttackType`, the same pair an
+  escalation carries, so the client can name the attack it saw.
 - `SessionSummary` — counters and `durationMs` for a closed session.
 - `SessionListItem` — one row of the operator feeds: `id`, `workflowType`, `deviceId`,
   `status`, `currentStage`, `retryCount`, `finalResult`, `failureReason`, `createdAt`,

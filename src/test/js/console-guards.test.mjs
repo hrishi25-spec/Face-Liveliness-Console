@@ -252,6 +252,10 @@ let loginAnswer = { username: "sup-01", role: "SUPERVISOR", mustChangePassword: 
 let loginFailure = false;
 let challengeAction = "proceed";   // action a challenge-validation stub answers with
 let frameAction = "proceed";       // action a frame-POST stub answers with
+// PAD answers: a flagged frame must reach the warning list on the screen that
+// ran the check, so the stub can say an attack was seen on either stage.
+let framePadFlag = false;
+let challengePadFlag = false;
 // What GET /sessions/{id} reports — the truth the Sessions table has to show.
 let sessionDetailStatus = "ACTIVE";
 let sessionDetailRetries = 0;
@@ -373,6 +377,8 @@ async function fetch(url, options = {}) {
     return respond({
       action: frameAction,
       message: "stub",
+      padFlag: framePadFlag || undefined,
+      padAttackType: framePadFlag ? "SCREEN_REPLAY" : undefined,
       challenge: frameAction === "escalate_to_active"
         ? { challengeId: "challenge-1", challengeType: "BLINK", timeoutMs: 15000, attemptNumber: 1 }
         : undefined
@@ -398,6 +404,8 @@ async function fetch(url, options = {}) {
     return respond({ passed: challengeAction === "manual_check_passed",
                      action: challengeAction,
                      mayRetrySession,
+                     padFlag: challengePadFlag || undefined,
+                     padAttackType: challengePadFlag ? "SCREEN_REPLAY" : undefined,
                      message,
                      challenge: { id: "challenge-manual-1", challengeType: "BLINK",
                                   status: "FAILED", timeoutMs: 15000 } });
@@ -731,6 +739,48 @@ assert(fetchCalls.filter(c => c.url.includes("/challenges/validate")).length ===
     "the failed verdict is terminal too");
 frameAction = "proceed";
 challengeAction = "proceed";
+
+section("PAD warnings — the attack is named on the screen that saw it");
+// A flagged frame is a security event, not a quiet retry: the passive stage's
+// warning panel must name the attack it saw. Before this, an escalation frame
+// carried no verdict at all, so a replay was reported nowhere.
+frameAction = "retry_passive";
+framePadFlag = true;
+$id("btn-run").dispatch("click");
+await new Promise(r => setTimeout(r, 500));   // the first frame is answered
+await settle();
+assert($id("sup-warning-panel").hidden === false,
+    "a PAD flag opens the console's warning panel");
+assert($id("sup-warnings").textContent.includes("SCREEN_REPLAY"),
+    "the warning names the attack class, not a generic failure");
+assert($id("sup-warnings").textContent.includes("capture stage"),
+    "the warning names the stage that saw it");
+assert($id("log").textContent.includes("PAD attack"),
+    "the decision log carries the same event");
+frameAction = "proceed";
+framePadFlag = false;
+await new Promise(r => setTimeout(r, 500));
+await settle();
+assert($id("verdict-action").textContent === "PROCEED",
+    "the flagged run still reaches its verdict");
+
+// The active stage rejects the replay; the rejection must keep the attack name
+// it came from, which is what the console's reject warning reads.
+frameAction = "escalate_to_active";
+challengeAction = "reject";
+challengePadFlag = true;
+$id("btn-run").dispatch("click");
+await new Promise(r => setTimeout(r, 1300));   // the challenge loop captures before validating
+await settle();
+assert($id("verdict-action").textContent === "REJECT",
+    "a PAD rejection at the active stage ends the run");
+assert($id("sup-warnings").textContent.includes("Rejected"),
+    "the rejection is listed as a rejection");
+assert($id("sup-warnings").textContent.includes("SCREEN_REPLAY"),
+    "the rejection names the attack that caused it");
+frameAction = "proceed";
+challengeAction = "proceed";
+challengePadFlag = false;
 
 section("capture budget — 640px long edge at quality 0.7 (task 1)");
 assert(windowTarget.CAPTURE_BUDGET

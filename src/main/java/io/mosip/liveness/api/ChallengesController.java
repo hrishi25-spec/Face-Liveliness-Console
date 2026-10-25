@@ -116,6 +116,8 @@ public class ChallengesController {
                     .passed((Boolean) result.get("passed"))
                     .action(action)
                     .mayRetrySession((Boolean) result.get("mayRetrySession"))
+                    .padFlag((Boolean) result.get("padFlag"))
+                    .padAttackType((String) result.get("padAttackType"))
                     .message((String) result.get("message"))
                     .build();
         } finally {

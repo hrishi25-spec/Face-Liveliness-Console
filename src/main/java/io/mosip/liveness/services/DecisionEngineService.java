@@ -87,6 +87,18 @@ public class DecisionEngineService {
     public static final int PAD_CONFIRM_FRAMES = 3;
 
     /**
+     * Flagged frames required within one challenge burst before the active
+     * stage rejects.
+     *
+     * <p>Two, not one: the burst is a single capture condition, so an isolated
+     * model flip on a live face (motion, an exposure hunt) must not fail the
+     * person at the last stage, while a replay is consistent across the frames
+     * it was played on. It cannot be evaded by sending one frame, because the
+     * requested action itself needs at least two frames to be detectable.</p>
+     */
+    static final int CHALLENGE_PAD_CONFIRM_FRAMES = 2;
+
+    /**
      * The floor a stored {@code challengeTimeoutMs} is raised to, i.e. how long a
      * challenge really stays open. Defaults to {@link #MIN_CHALLENGE_WINDOW_MS}.
      *
@@ -140,7 +152,7 @@ public class DecisionEngineService {
             if (open == null) {
                 open = issueChallenge(session, policy);
             }
-            return challengeResult(session, open, "escalate_to_active", null, null);
+            return challengeResult(session, open, "escalate_to_active", null, null, null);
         }
 
         // Face observation
@@ -225,7 +237,7 @@ public class DecisionEngineService {
                 session.setCurrentStage(LivenessStage.ACTIVE);
                 ChallengeEntity challenge = issueChallenge(session, policy);
                 return challengeResult(session, challenge, "escalate_to_active", null,
-                        observation.faceQuality());
+                        observation.faceQuality(), padResult);
             }
 
             // No active stage to hand the decision to: the passive stage is the
@@ -355,11 +367,11 @@ public class DecisionEngineService {
         session.setCurrentStage(LivenessStage.ACTIVE);
         ChallengeEntity challenge = issueChallenge(session, policy);
         return challengeResult(session, challenge, "escalate_to_active",
-                livenessScore, observation.faceQuality());
+                livenessScore, observation.faceQuality(), null);
     }
 
     /**
-     * Combines the heuristic PAD (FFT energy, texture variance, brightness) with
+     * Combines the heuristic PAD (FFT energy, texture variance) with
      * the model PAD (MiniFASNet print/replay classes) into one verdict. Either
      * source detecting an attack wins — defence in depth, and the model covers
      * the well-lit screen replays the frequency heuristic cannot see.
@@ -379,14 +391,20 @@ public class DecisionEngineService {
      * this frame made the decision — a re-served lock response did not score.
      */
     private FrameProcessResult challengeResult(LivenessSession session, ChallengeEntity challenge,
-                                               String action, Double livenessScore, Double faceQuality) {
+                                               String action, Double livenessScore, Double faceQuality,
+                                               PadVerdict pad) {
+        // A PAD verdict travels with the escalation it caused: the client lists
+        // the attack on the screen that ran the check, and a replay that is
+        // about to be challenged is not silently re-labelled as a clean frame.
+        boolean padFlag = pad != null && pad.attackDetected();
         return FrameProcessResult.builder()
                 .sessionId(session.getId())
                 .stage(LivenessStage.ACTIVE)
                 .faceDetected(true)
                 .faceQuality(faceQuality)
                 .livenessScore(livenessScore)
-                .padFlag(false)
+                .padFlag(padFlag)
+                .padAttackType(padFlag ? pad.attackType().name() : null)
                 .action(action)
                 .message("Please " + challenge.getChallengeType().name().toLowerCase().replace("_", " ") + ".")
                 .challenge(FrameProcessResult.ChallengeInfo.builder()
@@ -476,36 +494,60 @@ public class DecisionEngineService {
         // decision stands, including when this check sees an attack.
         boolean manual = Boolean.TRUE.equals(challenge.getManual());
 
-        // Re-run PAD across challenge frames. One hit is enough here: this is the
-        // terminal stage, it runs the deterministic OpenCV heuristic rather than
-        // the single-frame ONNX model that needed confirming above, and a person
-        // who performed the requested action has already proved themselves live.
+        // Re-run PAD across challenge frames, through the same two sources as
+        // the passive gate: the OpenCV heuristics plus MiniFASNet. The model is
+        // what catches a phone or monitor replay — the heuristic cannot see a
+        // well-lit modern screen — and leaving it out here was how a replay that
+        // the passive stage had already flagged could perform the requested
+        // action and leave with PASSED.
+        //
+        // Two hits within the burst, not one: a replay is consistent across the
+        // frames it was recorded on, while a live face can flip to an attack
+        // class for a single frame (motion, an exposure hunt). The passive stage
+        // already refuses to act on one flagged frame for the same reason; a
+        // single model flip must not fail the person at the last stage either.
+        // A client cannot exploit the floor by sending one frame, because the
+        // action itself needs at least two frames to be detectable.
+        PadVerdict padAttack = null;
+        int padHits = 0;
         for (Mat frame : frames) {
-            PadVerdict padResult = padEngine.detect(frame, imageUtils);
+            LivenessEngineService.FaceObservation observation =
+                    livenessEngine.observeFace(frame, imageUtils);
+            PadVerdict padResult = detectPad(frame, observation, imageUtils);
             if (padResult.attackDetected()) {
-                challenge.setStatus(ChallengeStatus.FAILED);
-                challenge.setCompletedAt(OffsetDateTime.now());
-                logAudit(session, "PAD_REJECTED", Map.of(
-                        "attackType", padResult.attackType().name(),
-                        "confidence", padResult.confidence(),
-                        "stage", manual ? "active_manual" : "active",
-                        "manual", manual));
-                if (manual) {
-                    return Map.of(
-                            "passed", false,
-                            "action", "manual_check_failed",
-                            "message", "Extra check could not be completed. The session result "
-                                    + "is unchanged.");
+                padAttack = padResult;
+                if (++padHits >= CHALLENGE_PAD_CONFIRM_FRAMES) {
+                    break;
                 }
-                session.setStatus(SessionStatus.FAILED);
-                session.setFailureReason("presentation_attack:" + padResult.attackType().name());
-                session.setCurrentStage(LivenessStage.COMPLETED);
-                session.setClosedAt(OffsetDateTime.now());
+            }
+        }
+        if (padHits >= CHALLENGE_PAD_CONFIRM_FRAMES) {
+            challenge.setStatus(ChallengeStatus.FAILED);
+            challenge.setCompletedAt(OffsetDateTime.now());
+            logAudit(session, "PAD_REJECTED", Map.of(
+                    "attackType", padAttack.attackType().name(),
+                    "confidence", padAttack.confidence(),
+                    "stage", manual ? "active_manual" : "active",
+                    "manual", manual));
+            if (manual) {
                 return Map.of(
                         "passed", false,
-                        "action", "reject",
-                        "message", "Face verification could not be completed. Please try again.");
+                        "action", "manual_check_failed",
+                        "padFlag", true,
+                        "padAttackType", padAttack.attackType().name(),
+                        "message", "Extra check could not be completed. The session result "
+                                + "is unchanged.");
             }
+            session.setStatus(SessionStatus.FAILED);
+            session.setFailureReason("presentation_attack:" + padAttack.attackType().name());
+            session.setCurrentStage(LivenessStage.COMPLETED);
+            session.setClosedAt(OffsetDateTime.now());
+            return Map.of(
+                    "passed", false,
+                    "action", "reject",
+                    "padFlag", true,
+                    "padAttackType", padAttack.attackType().name(),
+                    "message", "Face verification could not be completed. Please try again.");
         }
 
         boolean passed = livenessEngine.validateActive(challenge.getChallengeType(), frames, imageUtils);

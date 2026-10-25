@@ -260,8 +260,11 @@ class DecisionEngineServicePassiveFlowTest {
                 "a confirmed PAD hit must hand the verdict to the active challenge");
         assertNotNull(r.getChallenge(), "the escalation must carry a challenge");
         assertEquals(LivenessStage.ACTIVE, session.getCurrentStage());
-        // The hit is recorded on the session's trail even though the client only
-        // learns it was escalated: the challenge is the same request either way.
+        // The verdict travels with the escalation: the screen that ran the check
+        // lists the attack instead of showing a silently clean frame.
+        assertTrue((Boolean) r.getPadFlag(), "the escalation must carry the PAD flag");
+        assertEquals("SCREEN_REPLAY", r.getPadAttackType());
+        // The hit is also recorded on the session's trail.
         verify(auditLogRepo, org.mockito.Mockito.atLeastOnce()).save(
                 org.mockito.ArgumentMatchers.argThat(a ->
                         "PAD_FLAGGED".equals(a.getEventType())));

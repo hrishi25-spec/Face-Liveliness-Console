@@ -143,6 +143,21 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
      */
     static final double PAD_ATTACK_MIN_CONFIDENCE = 0.60;
 
+    /**
+     * Minimum replay-class probability before a frame is called a screen
+     * replay, with no margin requirement beyond beating the live class.
+     *
+     * <p>Replay is the class a phone or monitor playing a video lands in, and a
+     * genuine phone replay can sit in the 0.45–0.60 range where the stricter
+     * print rule would miss it. The 0.45 floor still rejects the ranked-noise
+     * near-tie that made the old "any class above live" rule unsafe (a
+     * 0.36 / 0.34 / 0.30 split no longer fires). A false positive is not a
+     * rejection any more: a confirmed hit escalates to the active challenge, so
+     * the cost of the extra sensitivity is one live action, not a failed
+     * person.</p>
+     */
+    static final double PAD_REPLAY_MIN_CONFIDENCE = 0.45;
+
     private OrtEnvironment env;
     private OrtSession session;
     private CascadeClassifier faceCascade;
@@ -839,7 +854,7 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
         if (p[CLASS_PRINT] >= p[CLASS_REPLAY] && isAttack(p[CLASS_PRINT], p[CLASS_LIVE])) {
             return PadVerdict.attack(PadAttackType.PRINTED_PHOTO, p[CLASS_PRINT]);
         }
-        if (isAttack(p[CLASS_REPLAY], p[CLASS_LIVE])) {
+        if (isReplayAttack(p[CLASS_REPLAY], p[CLASS_LIVE])) {
             return PadVerdict.attack(PadAttackType.SCREEN_REPLAY, p[CLASS_REPLAY]);
         }
         return PadVerdict.bonaFide(p[CLASS_LIVE]);
@@ -855,6 +870,17 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
     private static boolean isAttack(double attackProbability, double liveProbability) {
         return attackProbability >= PAD_ATTACK_MIN_CONFIDENCE
                 && attackProbability - liveProbability >= PAD_ATTACK_MARGIN;
+    }
+
+    /**
+     * The replay rule: a clear replay-class confidence that also beats live.
+     * The near-tie guard here is the floor, not the margin — a phone replay can
+     * win narrowly, while an almost-uniform softmax never clears
+     * {@link #PAD_REPLAY_MIN_CONFIDENCE}.
+     */
+    private static boolean isReplayAttack(double replayProbability, double liveProbability) {
+        return replayProbability >= PAD_REPLAY_MIN_CONFIDENCE
+                && replayProbability > liveProbability;
     }
 
     @Override

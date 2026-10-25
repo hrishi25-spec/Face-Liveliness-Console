@@ -167,9 +167,13 @@ below are identical for the running service and for desktop/Android embedding.
   genuine screen replay is consistent, while a one-off model flip (motion blur,
   exposure, a large/edge face crop) is not, and two frames still share one
   capture condition. Once confirmed it **escalates to the active challenge**
-  when the workflow has one (PAD keeps running there, where a hit is terminal);
-  the passive stage rejects outright only when there is no challenge to hand the
-  verdict to.
+  when the workflow has one — and the escalation carries the verdict
+  (`padFlag`/`padAttackType`), so the client can present the attack it saw. PAD
+  keeps running on the challenge frames through **both** sources, and two
+  flagged frames in the burst (`CHALLENGE_PAD_CONFIRM_FRAMES`) reject the
+  session — a single flip on a live face is not enough — so a replay cannot
+  clear the flag by performing the action. The passive stage rejects outright
+  only when there is no challenge to hand the verdict to.
 - **Challenge lock**: the `PASSIVE → ACTIVE` transition is atomic with issuing
   the challenge (pessimistic row lock on `liveness_sessions`,
   `LivenessSessionRepository.findByIdForUpdate`). While a challenge is open,

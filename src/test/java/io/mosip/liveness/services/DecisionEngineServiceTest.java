@@ -97,6 +97,13 @@ class DecisionEngineServiceTest {
         when(configService.toDbChallenge(any())).thenReturn(DB_TURN_LEFT);
         when(challengeSelector.selectChallenge(anyList(), any())).thenReturn(DB_TURN_LEFT);
         when(padEngine.detect(any(Mat.class), any())).thenReturn(PadVerdict.bonaFide(0.9));
+        // Challenge validation observes each frame and ORs the model PAD opinion
+        // with the heuristic one; these tests pin the challenge timing and the
+        // heuristic path, so the model has no opinion unless a test says so.
+        when(livenessEngine.observeFace(any(Mat.class), any()))
+                .thenReturn(new LivenessEngineService.FaceObservation(
+                        true, false, 0.9, new int[]{0, 0, 10, 10}));
+        when(passiveScorer.assessPad(any(Mat.class), any())).thenReturn(java.util.Optional.empty());
         when(challengeRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(challengeRepo.countBySessionIdAndStatus(any(), any())).thenReturn(0L);
         when(challengeRepo.countBySessionId(any())).thenReturn(0L);
@@ -337,6 +344,51 @@ class DecisionEngineServiceTest {
         assertEquals("reject", result.get("action"));
         assertEquals(SessionStatus.FAILED, session.getStatus());
         assertEquals(ChallengeStatus.FAILED, challenge.getStatus());
+        assertEquals(Boolean.TRUE, result.get("padFlag"));
+        assertEquals("PRINTED_PHOTO", result.get("padAttackType"));
+    }
+
+    @Test
+    void aModelPadHitDuringAnAttemptRejectsEvenWhenTheHeuristicIsClean() {
+        // The heuristic cannot see a well-lit phone screen; the model can. A
+        // replay that was already flagged on the passive stage must not be able
+        // to perform the blink and leave with PASSED.
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
+        when(passiveScorer.assessPad(any(Mat.class), any()))
+                .thenReturn(java.util.Optional.of(
+                        PadVerdict.attack(PadAttackType.SCREEN_REPLAY, 0.97)));
+
+        Map<String, Object> result =
+                service.processChallengeValidation(session, challenge, frames, imageUtils);
+
+        assertEquals("reject", result.get("action"));
+        assertEquals(Boolean.TRUE, result.get("padFlag"));
+        assertEquals("SCREEN_REPLAY", result.get("padAttackType"));
+        assertEquals(SessionStatus.FAILED, session.getStatus());
+        assertEquals("presentation_attack:SCREEN_REPLAY", session.getFailureReason());
+        verify(livenessEngine, never()).validateActive(any(), anyList(), any());
+    }
+
+    @Test
+    void aSingleModelFlipInsideTheBurstDoesNotRejectThePerson() {
+        // One flagged frame in a live burst is the same ranked noise the passive
+        // stage refuses to act on; only a consistent replay fails the check.
+        when(configService.getEffectivePolicy(any())).thenReturn(policy(1, 2));
+        when(passiveScorer.assessPad(any(Mat.class), any()))
+                .thenReturn(java.util.Optional.of(
+                                PadVerdict.attack(PadAttackType.SCREEN_REPLAY, 0.97)),
+                        java.util.Optional.empty(),
+                        java.util.Optional.empty());
+        when(livenessEngine.validateActive(eq(DB_TURN_LEFT), anyList(), any())).thenReturn(false);
+
+        Map<String, Object> result = service.processChallengeValidation(session, challenge,
+                List.of(mock(Mat.class), mock(Mat.class), mock(Mat.class)), imageUtils);
+
+        assertEquals("continue", result.get("action"),
+                "a single flip must leave the challenge open, not fail it");
+        assertEquals(SessionStatus.ACTIVE, session.getStatus());
+        assertEquals(ChallengeStatus.ISSUED, challenge.getStatus());
+        assertNull(result.get("padAttackType"), "no PAD verdict was reached");
     }
 
     // -------------------------------------------------- manual extra check

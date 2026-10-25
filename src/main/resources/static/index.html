@@ -238,6 +238,14 @@
         </div>
       </div>
 
+      <!-- Security warnings: every PAD attack the engine names and every
+           rejection it returns for this run, listed as they arrive and mirrored
+           to the browser console. Hidden until there is something to say. -->
+      <div class="warning-panel" id="res-warning-panel" hidden>
+        <div class="warning-panel-head">Security warnings</div>
+        <ul class="warning-list" id="res-warnings" aria-live="polite"></ul>
+      </div>
+
       <details class="resident-details-box mt14">
         <summary>Camera guidance and technical details</summary>
         <p class="hint">The preview is <b>mirrored</b> (like a selfie) so it matches instructions. Frames sent to the engine stay raw and un-mirrored.</p>
@@ -403,6 +411,13 @@
                 <div class="action" id="verdict-action"></div>
                 <div class="msg" id="verdict-msg"></div>
               </div>
+            </div>
+
+            <!-- Security warnings: PAD attacks and rejections for this run, in
+                 the order the engine reported them. -->
+            <div class="warning-panel" id="sup-warning-panel" hidden>
+              <div class="warning-panel-head">Security warnings</div>
+              <ul class="warning-list" id="sup-warnings" aria-live="polite"></ul>
             </div>
           </div>
         </div>

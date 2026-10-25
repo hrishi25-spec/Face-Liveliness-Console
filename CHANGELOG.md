@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 2026-10-17
 
+### Fixed — a phone-screen replay is rejected at the challenge, and the console names it
+
+A video played from a phone was reaching `PASSED`, with no screen-replay warning anywhere. The
+passive stage *did* see it — MiniFASNet scored the phone screen at ~0.99 for replay — but the
+confirmed hit escalated to the active challenge, and the challenge only ran the cheap OpenCV
+heuristic. The heuristic was a placeholder (`freqRatio = 0.1`) and could never fire, so the video
+performed the blink and left verified. The escalation response also hard-coded `padFlag(false)`,
+which is why the console had nothing to show.
+
+- **The challenge stage runs the model too.** Challenge frames now go through the same PAD
+  fusion as the passive stage (FFT/texture heuristics **or** MiniFASNet). A replay that was
+  flagged before the challenge is flagged again during it, and the active stage rejects with
+  `presentation_attack:<TYPE>` instead of passing. Two frames of the burst must agree
+  (`CHALLENGE_PAD_CONFIRM_FRAMES`), mirroring the passive stage's confirmation rule, so a single
+  model flip on a live face does not fail the person at the last stage.
+- **The verdict follows the escalation.** `escalate_to_active` now carries `padFlag` and
+  `padAttackType` when PAD caused it, and a PAD rejection from `challenges/validate` carries the
+  same two fields. The console's warning panel therefore lists `SCREEN_REPLAY on the capture
+  stage` and the rejection that follows, instead of a clean frame and a generic failure.
+- **The screen-replay band is real, not a placeholder.** `PadEngineService` measures the share of
+  the non-DC spectrum in the outer half of a 512×512 plane (`DFT_COMPLEX_OUTPUT` on an
+  `INTER_AREA` downscale) and calls it a screen replay above `0.45`. A live face measures ~0.25 and
+  a fine screen grid ~0.61; a photographed phone screen measures ~0.21, so this is a cheap backstop
+  for a visible grid, **not** the detector a real replay relies on — the model is. The threshold
+  stays above the live-face value so it cannot fire on one.
+- **Both are pinned end to end.** `LivenessPipelineIntegrationTest` drives a synthetic 1280×720
+  phone-screen frame (face on a dark-bezelled screen) through the real model and asserts the
+  escalation names `SCREEN_REPLAY` and the challenge validation rejects it; `console-guards`
+  asserts the warning panel and the log entries on both stages.
+
 ### Fixed — an honest face is no longer rejected by the passive PAD stage
 
 A real face on a real webcam could be terminally rejected during the passive stage. Three

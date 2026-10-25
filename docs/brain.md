@@ -288,9 +288,12 @@ POST /api/v1/sessions/{sessionId}/frames
    frames (a real replay is consistent; a single noisy frame must not fail an
    honest session), and then **escalates to the active challenge** instead of
    ending the session: the challenge is the stronger check and PAD keeps running
-   on every one of its frames, where it is terminal. The passive stage rejects
-   outright only when the workflow has no challenge to hand the verdict to
-   (`activeLivenessEnabled=false`, or liveness disabled)
+   on every one of its frames — the heuristics **and** the model — where it is
+   terminal. The passive stage rejects outright only when the workflow has no
+   challenge to hand the verdict to (`activeLivenessEnabled=false`, or liveness
+   disabled). The escalation response keeps the verdict it was issued for
+   (`padFlag`, `padAttackType`), so the client can name the attack behind the
+   challenge
 5. If no face / multiple faces → retry
 6. Computes the passive score for this frame — MiniFASNet live-class
    probability when the model is loaded, the OpenCV quality heuristic otherwise
@@ -326,12 +329,19 @@ POST /api/v1/sessions/{sessionId}/challenges/validate
             | "locked" | "escalate_to_operator" | "failed"
             | "manual_check_passed" | "manual_check_failed",
       mayRetrySession: true/false,   // only on a terminal *failure* action
+      padFlag: true/false,           // set only on a PAD rejection
+      padAttackType: "SCREEN_REPLAY", // omitted unless padFlag is true
       message: "generic user-facing message"
     }
 ```
 
 **Challenge validation flow:**
-1. Re-run PAD on all challenge frames (attack = immediate reject)
+1. Re-run PAD on all challenge frames through both sources — the FFT/texture
+   heuristics and the model — and reject once **two frames of the burst** are
+   flagged (`CHALLENGE_PAD_CONFIRM_FRAMES`): one flip on a live face is not a
+   verdict, a replay is consistent. This is what stops a phone replay that the
+   passive stage flagged from performing the action and leaving with `PASSED`:
+   the model sees the same screen again on the challenge frames
 2. Evaluate the specific challenge type across the frame sequence
 3. If passed → resolve immediately:
    - enough challenges completed → `proceed` (PASSED)
