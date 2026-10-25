@@ -402,6 +402,9 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
         JsonNode first = postFrame(sessionId, attackB64);
         assertEquals("retry_passive", first.get("action").asText(), first.toString());
         assertTrue(first.get("padFlag").asBoolean(), "attack must be flagged on the first frame");
+        // MiniFASNet labels this print through its replay class; the texture rule
+        // is what distinguishes a flat print from a screen, so the print label
+        // survives the fusion.
         assertEquals("PRINTED_PHOTO", first.get("padAttackType").asText());
 
         // Frame 2: still confirming, still not decided.

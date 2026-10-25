@@ -23,6 +23,22 @@ which is why the console had nothing to show.
   `padAttackType` when PAD caused it, and a PAD rejection from `challenges/validate` carries the
   same two fields. The console's warning panel therefore lists `SCREEN_REPLAY on the capture
   stage` and the rejection that follows, instead of a clean frame and a generic failure.
+- **A print stays a print when both sources flag.** MiniFASNet's print class does not fire in
+  practice — it measures ≈0.0000 on the print fixture *and* on a phone-screen replay, labelling
+  both through its replay class — so the model alone cannot tell the two apart. The texture rule
+  is the print evidence: a flat presentation keeps `PRINTED_PHOTO` even when the model calls it
+  replay, and the model names the replay it can see that the texture rule cannot. The attack
+  decision is unchanged either way.
+- **A flat frame is not automatically paper.** The texture rule calls any low-variance frame a
+  print, and a defocused phone screen is exactly that — a blurry replay was being reported as
+  `PRINTED_PHOTO`. `PadEngineService` now looks for the screen's body before it says print: a
+  large near-black rectangular blob, kept off the frame edge, in a brighter room, whose inner band
+  is dark and smooth and whose centre is a brighter panel. That survives defocus by design (the
+  pass downscales to 480 px and blurs first), and a printed sheet has no such body, so a
+  defocused replay is `SCREEN_REPLAY` and a print stays `PRINTED_PHOTO`. The cue only chooses
+  between the two labels for a frame already flagged as an attack; it never turns an attack into a
+  pass. `PadEngineServiceScreenReplayTest` pins both sides — a blurred phone composite with a bezel
+  reads `SCREEN_REPLAY`, the print fixture has zero bezel evidence and stays `PRINTED_PHOTO`.
 - **The screen-replay band is real, not a placeholder.** `PadEngineService` measures the share of
   the non-DC spectrum in the outer half of a 512×512 plane (`DFT_COMPLEX_OUTPUT` on an
   `INTER_AREA` downscale) and calls it a screen replay above `0.45`. A live face measures ~0.25 and

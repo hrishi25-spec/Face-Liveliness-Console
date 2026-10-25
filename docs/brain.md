@@ -284,9 +284,17 @@ POST /api/v1/sessions/{sessionId}/frames
 4. Runs PAD check = FFT/texture heuristics **OR** MiniFASNet print/replay
    verdict. The model must clear `PAD_ATTACK_MIN_CONFIDENCE` (0.60) and beat the
    live class by `PAD_ATTACK_MARGIN` (0.15) — a near-tie softmax is ranked
-   noise. A hit counts once confirmed on `PAD_CONFIRM_FRAMES` (3) consecutive
-   frames (a real replay is consistent; a single noisy frame must not fail an
-   honest session), and then **escalates to the active challenge** instead of
+   noise. When both sources flag the same frame, the type is decided by
+   evidence: MiniFASNet's print class measures ≈0.0000 on both the print fixture
+   and a phone-screen replay (it labels both through its replay class), so a
+   flat presentation keeps the texture rule's `PRINTED_PHOTO` label — unless the
+   bezel pass finds a large near-black rectangular body held off the frame edge
+   inside a brighter room and framing a brighter panel, which is a display, so a
+   defocused phone screen stays `SCREEN_REPLAY`; anything
+   the texture rule cannot name is reported with the model's type. A hit counts
+   once confirmed on `PAD_CONFIRM_FRAMES` (3) consecutive frames (a real replay
+   is consistent; a single noisy frame must not fail an honest session), and then
+   **escalates to the active challenge** instead of
    ending the session: the challenge is the stronger check and PAD keeps running
    on every one of its frames — the heuristics **and** the model — where it is
    terminal. The passive stage rejects outright only when the workflow has no

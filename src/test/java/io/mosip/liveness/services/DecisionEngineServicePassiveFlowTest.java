@@ -263,7 +263,8 @@ class DecisionEngineServicePassiveFlowTest {
         // The verdict travels with the escalation: the screen that ran the check
         // lists the attack instead of showing a silently clean frame.
         assertTrue((Boolean) r.getPadFlag(), "the escalation must carry the PAD flag");
-        assertEquals("SCREEN_REPLAY", r.getPadAttackType());
+        assertEquals("SCREEN_REPLAY", r.getPadAttackType(),
+                "a sharp frame the texture rule cannot see is named by the model");
         // The hit is also recorded on the session's trail.
         verify(auditLogRepo, org.mockito.Mockito.atLeastOnce()).save(
                 org.mockito.ArgumentMatchers.argThat(a ->
@@ -272,6 +273,23 @@ class DecisionEngineServicePassiveFlowTest {
                 "the session stays open for the challenge");
         assertNull(session.getFailureReason());
         verify(challengeRepo).save(any());
+    }
+
+    @Test
+    void aFlatPresentationStaysAPrintEvenWhenTheModelCallsItReplay() {
+        // MiniFASNet labels a printed photo through its replay class (its print
+        // class measures 0.0000 on the fixture), so its type cannot tell the two
+        // presentations apart. The texture rule can: a flat frame is a print.
+        when(padEngine.detect(any(Mat.class), any()))
+                .thenReturn(PadVerdict.attack(PadAttackType.PRINTED_PHOTO, 0.99));
+        when(passiveScorer.assessPad(any(), any()))
+                .thenReturn(Optional.of(PadVerdict.attack(PadAttackType.SCREEN_REPLAY, 0.93)));
+
+        FrameProcessResult r = pushFrame();
+
+        assertEquals("escalate_to_active", r.getAction());
+        assertEquals("PRINTED_PHOTO", r.getPadAttackType(),
+                "the print evidence, not the model's replay label, names a flat presentation");
     }
 
     @Test

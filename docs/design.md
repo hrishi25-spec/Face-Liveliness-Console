@@ -163,6 +163,17 @@ below are identical for the running service and for desktop/Android embedding.
   heuristics **OR** the MiniFASNet print/replay verdict. The model's attack
   class must clear `PAD_ATTACK_MIN_CONFIDENCE` (0.60) and beat the live class by
   `PAD_ATTACK_MARGIN` (0.15): a near-tie softmax is ranked noise, not a verdict.
+  When both sources flag the same frame, the type is split by evidence, not by
+  source precedence: MiniFASNet's print class measures ≈0.0000 on both a print
+  and a phone-screen replay (it labels both as replay), so the texture rule's
+  `PRINTED_PHOTO` is kept for a flat presentation, and the model's type names
+  everything it can see that the texture rule cannot. Either source can still
+  flag on its own. The heuristic's flat-presentation branch is itself split by a
+  third cue before it reports a print: a large near-black rectangular body, kept
+  off the frame edge, sitting in a brighter room and framing a brighter panel, is
+  a screen bezel — the texture pass runs at 480 px after a blur so defocus cannot
+  hide it — and a flat frame that has one is `SCREEN_REPLAY`, because a defocused
+  phone is flat while printed paper has no body held around it.
   A hit is **confirmed across `PAD_CONFIRM_FRAMES` (3) consecutive frames** — a
   genuine screen replay is consistent, while a one-off model flip (motion blur,
   exposure, a large/edge face crop) is not, and two frames still share one

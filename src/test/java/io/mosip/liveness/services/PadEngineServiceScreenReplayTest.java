@@ -4,9 +4,13 @@ import io.mosip.liveness.core.PadAttackType;
 import io.mosip.liveness.core.PadVerdict;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfDouble;
+import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
+import org.opencv.core.Size;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
@@ -66,6 +70,48 @@ class PadEngineServiceScreenReplayTest {
     }
 
     @Test
+    void defocusedPhoneWithAVisibleBezelIsAScreenReplayNotAPrint() {
+        // Defocus flattens the frame enough for the print rule to fire (asserted
+        // below); the bezel is what keeps the type right, because a display is a
+        // dark body around a lit panel even when nothing on it is in focus.
+        Mat frame = phoneWithBezel(1.6);
+        try {
+            Mat gray = new Mat();
+            try {
+                Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
+                assertTrue(textureVariance(gray) < 15.0,
+                        "the fixture must be flat enough to be called a print");
+                assertTrue(PadEngineService.screenBezelStrength(gray) > 0.0,
+                        "the phone body around the panel is bezel evidence");
+            } finally {
+                gray.release();
+            }
+            PadVerdict verdict = pad.detect(frame, imageUtils);
+            assertTrue(verdict.attackDetected(), "a defocused phone screen is a presentation attack");
+            assertEquals(PadAttackType.SCREEN_REPLAY, verdict.attackType());
+        } finally {
+            frame.release();
+        }
+    }
+
+    @Test
+    void printedPhotoHasNoBezelEvidence() {
+        Mat frame = fixture("print-attack.jpg");
+        try {
+            Mat gray = new Mat();
+            try {
+                Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
+                assertEquals(0.0, PadEngineService.screenBezelStrength(gray),
+                        "a print has no dark body held in front of a lit room");
+            } finally {
+                gray.release();
+            }
+        } finally {
+            frame.release();
+        }
+    }
+
+    @Test
     void fineScreenSurfaceIsScreenReplay() {
         Mat frame = screenPattern();
         try {
@@ -94,6 +140,48 @@ class PadEngineServiceScreenReplayTest {
         } finally {
             gray.release();
         }
+    }
+
+    /** Laplacian variance - the texture rule's own signal, reproduced for the test. */
+    private static double textureVariance(Mat gray) {
+        Mat laplacian = new Mat();
+        MatOfDouble mean = new MatOfDouble();
+        MatOfDouble stddev = new MatOfDouble();
+        try {
+            Imgproc.Laplacian(gray, laplacian, CvType.CV_64F);
+            Core.meanStdDev(laplacian, mean, stddev);
+            return stddev.get(0, 0)[0] * stddev.get(0, 0)[0];
+        } finally {
+            laplacian.release();
+            mean.release();
+            stddev.release();
+        }
+    }
+
+    /**
+     * A portrait filling a phone screen with a dark body around it, in a lit
+     * room: the capture a webcam sees when a phone holds the replay. Blurred by
+     * {@code defocus} to exercise the case the texture rule misreads.
+     */
+    private static Mat phoneWithBezel(double defocus) {
+        int width = 1280, height = 720, x = 430, y = 30, screenW = 420, screenH = 660;
+        Mat frame = new Mat(height, width, CvType.CV_8UC3, new Scalar(120, 120, 120));
+        Mat body = new Mat(frame, new Rect(x - 14, y - 14, screenW + 28, screenH + 28));
+        body.setTo(new Scalar(6, 6, 8));
+        body.release();
+        Mat portrait = Imgcodecs.imread("src/test/resources/fixtures/real-face.jpg");
+        Mat screen = new Mat(frame, new Rect(x, y, screenW, screenH));
+        Mat scaled = new Mat();
+        try {
+            Imgproc.resize(portrait, scaled, new Size(screenW, screenH));
+            scaled.copyTo(screen);
+            Imgproc.GaussianBlur(frame, frame, new Size(5, 5), defocus);
+        } finally {
+            screen.release();
+            scaled.release();
+            portrait.release();
+        }
+        return frame;
     }
 
     /** A fine LCD-like grid over a slowly varying luminance ramp, at capture size. */

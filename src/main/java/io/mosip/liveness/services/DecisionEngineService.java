@@ -3,6 +3,7 @@ package io.mosip.liveness.services;
 import io.mosip.liveness.config.EffectivePolicy;
 import io.mosip.liveness.config.LivenessConfig;
 import io.mosip.liveness.core.ChallengeType;
+import io.mosip.liveness.core.PadAttackType;
 import io.mosip.liveness.core.PadVerdict;
 import io.mosip.liveness.shared.definitions.RepeatedFailureAction;
 import io.mosip.liveness.crud.AuditLogRepository;
@@ -375,14 +376,30 @@ public class DecisionEngineService {
      * the model PAD (MiniFASNet print/replay classes) into one verdict. Either
      * source detecting an attack wins — defence in depth, and the model covers
      * the well-lit screen replays the frequency heuristic cannot see.
+     *
+     * <p><b>Which source names the attack when both flag the same frame:</b> the
+     * two are not equally able to. MiniFASNet's print class does not fire in
+     * practice — it measures 0.0000 on the print fixture <em>and</em> on a phone
+     * screen replay, labelling both through its replay class — so the model can
+     * only say "replay". The texture heuristic is the print evidence: a flat
+     * presentation is a print. The fused verdict therefore keeps
+     * {@code PRINTED_PHOTO} when the texture rule fired, and reports the model's
+     * type otherwise: a sharp phone screen is {@code SCREEN_REPLAY} while a
+     * printed photo stays {@code PRINTED_PHOTO}, even though the model calls
+     * both of them replay.</p>
      */
     private PadVerdict detectPad(Mat frame, LivenessEngineService.FaceObservation observation,
                                  ImageUtils imageUtils) {
         PadVerdict heuristic = padEngine.detect(frame, imageUtils);
-        if (heuristic.attackDetected()) {
-            return heuristic;
+        if (heuristic.attackDetected()
+                && heuristic.attackType() == PadAttackType.PRINTED_PHOTO) {
+            return heuristic;      // flat-presentation evidence the model does not have
         }
-        return passiveScorer.assessPad(frame, observation).orElse(heuristic);
+        PadVerdict model = passiveScorer.assessPad(frame, observation).orElse(null);
+        if (model != null && model.attackDetected()) {
+            return model;
+        }
+        return heuristic;
     }
 
     /**

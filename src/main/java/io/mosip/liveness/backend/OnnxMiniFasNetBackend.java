@@ -117,6 +117,14 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
      * ({@code label == 1} is a real/live face). Best-effort attack typing for
      * the two non-live classes: 0 = printed photo, 2 = screen replay. The
      * attack <em>decision</em> gates a session; the type is informational.
+     *
+     * <p><b>The print class does not fire in practice.</b> Measured on the
+     * committed fixtures, a printed photo and a phone-screen replay both arrive
+     * through class 2 ({@code p[print]} ≈ 0.0000, {@code p[replay]} ≈ 0.999 and
+     * ≈ 0.990). Callers must not use this class to tell a print from a screen;
+     * {@code DecisionEngineService} keeps the texture rule's
+     * {@link PadAttackType#PRINTED_PHOTO} for that, and this backend names the
+     * replay.</p>
      */
     private static final int CLASS_PRINT = 0;
     private static final int CLASS_LIVE = 1;

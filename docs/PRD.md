@@ -248,7 +248,15 @@ challenge to run answers `action: reject`, writes `PAD_REJECTED`, and fails the 
 `failure_reason = presentation_attack:<type>`. The user-facing message stays generic either way.
 
 Both PAD sources — the OpenCV heuristics and the selected backend's `assessPad` — run on **every**
-stage, including the challenge frames. That is what makes an escalation a second check rather than
+stage, including the challenge frames. They split the naming: MiniFASNet's print class does not fire
+in practice (≈0.0000 on both the print fixture and a phone-screen replay), so the model names a
+replay; the texture rule is the print evidence, and a flat presentation stays `PRINTED_PHOTO` even
+when the model arrives through its replay class. A flat frame is not automatically paper, though:
+the same heuristic looks for a screen bezel — a large near-black rectangular body held inside a
+brighter room and framing a brighter panel — and a flat presentation that has one is reported as
+`SCREEN_REPLAY`, because a defocused display is flat too while printed paper has no body around it.
+A sharp phone screen the texture rule cannot see
+(i.e. it reports no attack) is still named `SCREEN_REPLAY` by the model. That is what makes an escalation a second check rather than
 a reprieve: a phone-screen replay that the passive stage flagged cannot perform the requested
 action and leave with `PASSED`, because the same model flags the challenge frames again and the
 active stage answers `action: reject` with the attack type once two frames of the burst are flagged

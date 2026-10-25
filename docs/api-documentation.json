@@ -653,13 +653,13 @@
           "type": "boolean",
           "notes": "true when this frame's PAD verdict flagged an attack"
         },
-        "padAttackType": {
-          "type": "PadAttackType",
-          "notes": "omitted unless padFlag is true"
-        },
-        "action": {
-          "type": "FrameAction"
-        },
+    "padAttackType": {
+      "type": "PadAttackType",
+      "notes": "omitted unless padFlag is true; a flat presentation (the texture rule's evidence) is reported as PRINTED_PHOTO unless the bezel pass finds a screen body around it (a defocused replay is flat too, and reads SCREEN_REPLAY), otherwise this is the model's type (MiniFASNet's own print class does not fire, so it names replays)"
+    },
+    "action": {
+      "type": "FrameAction"
+    },
         "challenge": {
           "type": "object",
           "notes": "present only on escalate_to_active",
@@ -823,7 +823,7 @@
         },
         "padAttackType": {
           "type": "PadAttackType",
-          "notes": "omitted unless padFlag is true"
+          "notes": "omitted unless padFlag is true; a flat presentation is reported as PRINTED_PHOTO unless a screen bezel is found around it, otherwise the model's type"
         },
         "message": {
           "type": "string"
