@@ -57,7 +57,11 @@ Every figure is measured and dated in [docs/performance-baseline.md](docs/perfor
 | | |
 |---|---|
 | **Defence in depth** | PAD runs on every frame before scoring, then passive liveness, then a randomised active challenge only when passive is inconclusive |
+<<<<<<< Updated upstream
 | **Terminal PAD** | A confirmed attack ends the session: no retry, a distinct audit event, and only a generic message shown so attackers learn nothing about what was detected |
+=======
+| **PAD before scoring** | A confirmed attack is handed to the active challenge while the workflow has one (PAD keeps running there); only a workflow with no challenge stage rejects outright. The user always sees a generic message, so attackers learn nothing |
+>>>>>>> Stashed changes
 | **Median-window voting** | The passive decision is the median of the last 7 scores once 5 exist, so one blurry frame cannot escalate a session and one lucky frame cannot pass it |
 | **Offline by design** | Only policy and model updates need connectivity |
 | **Pluggable scoring** | One `LivenessBackend` SPI: mock, ONNX MiniFASNet-V2, MediaPipe FaceMesh, TFLite MiniFASNet. A vendor SDK drops in without touching the pipeline |
@@ -97,14 +101,14 @@ flowchart TD
     A[POST /sessions<br/>policy resolved and frozen] --> B[POST /sessions/id/frames]
     B --> C{Face gate<br/>1 face, quality ok?}
     C -- no --> R1[retry_passive]
-    C -- yes --> D{PAD<br/>confirmed on 2 consecutive frames?}
-    D -- attack --> X[reject<br/>session FAILED, PAD_REJECTED audit]
+    C -- yes --> D{PAD<br/>confirmed on 3 consecutive frames?}
+    D -- attack --> G{Active liveness enabled?}
     D -- bona fide --> E[Passive score<br/>MiniFASNet-V2 or heuristic fallback]
     E --> F{Median of last 7 scores<br/>at or above threshold?<br/>needs 5 frames}
     F -- warming up --> R1
     F -- yes --> P[proceed<br/>session PASSED]
-    F -- no --> G{Active liveness enabled?}
-    G -- no --> X2[reject]
+    F -- no --> G
+    G -- no --> X2[reject<br/>session FAILED, PAD_REJECTED audit]
     G -- yes --> H[escalate_to_active<br/>random challenge: blink, smile, turn, gaze]
     H --> I[POST /challenges/validate<br/>burst of frames]
     I -- passed, more needed --> H

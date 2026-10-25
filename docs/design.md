@@ -159,12 +159,17 @@ below are identical for the running service and for desktop/Android embedding.
 - **Decision**: median ≥ threshold → proceed (session `PASSED`); median <
   threshold → **automatic initiation of active liveness** (Stage 2), or a hard
   fail when `activeLivenessEnabled=false`.
-- **PAD runs on every frame** alongside passive scoring — the FFT/texture/
-  brightness heuristics **OR** the MiniFASNet print/replay verdict. An attack is
-  terminal (no retry), but it must be **confirmed across `PAD_CONFIRM_FRAMES` (2)
-  consecutive frames**: a genuine screen replay is consistent, while a one-off
-  model flip (motion blur, exposure, a large/edge face crop) is not — this is
-  what caused device-specific false rejects on some cameras.
+- **PAD runs on every frame** alongside passive scoring — the FFT/texture
+  heuristics **OR** the MiniFASNet print/replay verdict. The model's attack
+  class must clear `PAD_ATTACK_MIN_CONFIDENCE` (0.60) and beat the live class by
+  `PAD_ATTACK_MARGIN` (0.15): a near-tie softmax is ranked noise, not a verdict.
+  A hit is **confirmed across `PAD_CONFIRM_FRAMES` (3) consecutive frames** — a
+  genuine screen replay is consistent, while a one-off model flip (motion blur,
+  exposure, a large/edge face crop) is not, and two frames still share one
+  capture condition. Once confirmed it **escalates to the active challenge**
+  when the workflow has one (PAD keeps running there, where a hit is terminal);
+  the passive stage rejects outright only when there is no challenge to hand the
+  verdict to.
 - **Challenge lock**: the `PASSIVE → ACTIVE` transition is atomic with issuing
   the challenge (pessimistic row lock on `liveness_sessions`,
   `LivenessSessionRepository.findByIdForUpdate`). While a challenge is open,

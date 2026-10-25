@@ -202,14 +202,18 @@ An end-to-end run looks like this:
    overrides) and snapshots it onto the session, so later policy edits cannot change the rules
    mid-session.
 2. **`POST /api/v1/sessions/{id}/frames`** — the client streams frames (base64).
-3. **PAD runs first**, before any liveness scoring. A flagged presentation attack short-
-   circuits the request: the session fails with a PAD reason and no liveness score is computed
-   — a spoof never gets to influence the score.
+3. **PAD runs first**, before any liveness scoring. A presentation attack must be confirmed on
+   consecutive frames (one noisy frame must never fail an honest session). Once confirmed and the
+   workflow has an active stage, the request short-circuits into `escalate_to_active` with **no
+   liveness score computed** — a spoof never gets to influence the score. PAD stays terminal
+   during the challenge; the passive stage rejects (`presentation_attack:<TYPE>`) only when the
+   workflow has no challenge stage to hand the verdict to.
 4. **Passive liveness** scores face quality and liveness across a short window of frames
    (`passive-min-frames` / `passive-window-frames`). Above `passive-threshold`, the session
    passes.
-5. **Active challenge** is escalated to only when passive scoring is inconclusive. The engine
-   issues a challenge (e.g. `blink`, `smile`, `turn_left`) with a timeout.
+5. **Active challenge** is escalated to when passive scoring is inconclusive, or when PAD
+   confirmed a presentation attack and a challenge can be run. The engine issues a challenge
+   (e.g. `blink`, `smile`, `turn_left`) with a timeout.
 6. **`POST /api/v1/sessions/{id}/challenges/validate`** — the client submits the frame burst
    captured in response to the challenge.
 7. On a pass, the liveness score is **re-evaluated** over the challenge window; if it dropped,
@@ -236,10 +240,13 @@ An end-to-end run looks like this:
 ### 4.4 Presentation attack detection
 
 *Implemented* in `PadEngineService` over the selected backend's `assessPad`, producing a
-`PadVerdict`. A flagged attack yields `action: reject`, sets `padFlag` and `padAttackType`
-(one of `PRINTED_PHOTO`, `SCREEN_REPLAY`, `VIDEO_REPLAY`, `OTHER`), stores the frame event with the PAD confidence, writes a
-`PAD_REJECTED` audit entry, and fails the session with
-`failure_reason = presentation_attack:<type>`. The user-facing message stays generic.
+`PadVerdict`. A flagged frame sets `padFlag` and `padAttackType` (one of `PRINTED_PHOTO`,
+`SCREEN_REPLAY`, `VIDEO_REPLAY`, `OTHER`) and stores the frame event with the PAD confidence. The
+verdict is acted on only once it is confirmed across consecutive frames: a workflow with an active
+stage receives `action: escalate_to_active` and a `PAD_FLAGGED` audit entry (PAD stays terminal on
+every challenge frame); only a workflow with no challenge to run answers `action: reject`, writes
+`PAD_REJECTED`, and fails the session with `failure_reason = presentation_attack:<type>`. The
+user-facing message stays generic either way.
 
 ### 4.5 Active challenge stage
 

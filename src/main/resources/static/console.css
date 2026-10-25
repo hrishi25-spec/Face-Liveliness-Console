@@ -1458,11 +1458,19 @@ video {
 }
 
 .camera-oval {
-  width: 212px;
-  height: 286px;
+  /* Sized from the viewfinder's own height rather than fixed pixels, so the
+     guide fills the preview the way the capture crop does:
+     80% of the preview, capped at 430px, on the same 212:286 ellipse.
+     The 28px bottom margin is clearance, not spacing: the guidance pill is
+     pinned 16px above the preview's floor, and the oval must stop short of it
+     even when the preview is only a few hundred pixels tall. */
+  height: min(430px, 80%);
+  aspect-ratio: 212 / 286;
+  width: auto;
+  flex: 0 0 auto;
   border: 2px dashed rgba(255, 255, 255, 0.85);
   border-radius: 50%;
-  margin-bottom: 16px;
+  margin-bottom: 28px;
   transition: border-color 240ms ease, border-style 240ms ease, box-shadow 240ms ease;
   /* Four calibration ticks at the guide's extremes, drawn as background
      gradients so the guide stays a single element with no wrapper markup. */
@@ -1519,8 +1527,8 @@ video {
 }
 
 @keyframes camera-scan {
-  0%, 100% { transform: translateY(-84px); }
-  50% { transform: translateY(84px); }
+  0%, 100% { transform: translateY(-126px); }
+  50% { transform: translateY(126px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

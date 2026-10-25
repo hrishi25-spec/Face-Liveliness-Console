@@ -12,7 +12,7 @@ Legend: ✅ aligned · 🟡 partial · 🔴 gap.
 | Requirement | Status | Evidence |
 |---|---|---|
 | Shared vocabulary (attack/bona fide presentation, PAD subsystem) | ✅ | `PadEngineService`, `AssessmentStatus` ("presentation attack detected — terminal"), `design.md §5`, "bona fide" used throughout `eval` |
-| PAD framework: categorise + report attacks | ✅ | `PadVerdict` + `PadAttackType` (PRINTED_PHOTO / SCREEN_REPLAY / VIDEO_REPLAY / OTHER) per frame; terminal, distinct audit event |
+| PAD framework: categorise + report attacks | ✅ | `PadVerdict` + `PadAttackType` (PRINTED_PHOTO / SCREEN_REPLAY / VIDEO_REPLAY / OTHER) per frame; confirmed across frames; distinct audit event, terminal once confirmed (at the passive gate when no challenge exists, and on every challenge frame) |
 | Scope boundary: only attacks at the capture device | ✅ | ISO scope boundary adopted and stated: digital **injection attacks** (virtual camera, hooked camera API, frame replay) are threat-modelled as a separate class — `design.md` §6 (threat surface, layered countermeasures, explicit residual risk) using Part-1 scope wording |
 | "PAI" (presentation attack instrument) terminology | ✅ | Part-1 vocabulary defined and used in `design.md` §5–§6 — PAI, attack presentation, bona fide presentation, PAD subsystem — incl. the `PresentationLabel` → PAI class mapping (§6.4) |
 | Self-testing ≠ certification | ✅ | `status-report.md` §7 (honest caveats), `acceptance-audit.md` §Remaining gaps |

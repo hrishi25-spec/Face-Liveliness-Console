@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 2026-10-17
 
+### Fixed — an honest face is no longer rejected by the passive PAD stage
+
+A real face on a real webcam could be terminally rejected during the passive stage. Three
+independent rules fed that outcome: MiniFASNet called any attack class that merely *outranked*
+live an attack, so a 0.36 / 0.34 / 0.30 softmax was a spoof at confidence 0.36; the OpenCV
+heuristic called any frame darker than 0.15 a video replay, which is exactly what a webcam still
+auto-exposing from black produces; and two consecutive frames were enough to confirm both, so one
+capture condition confirmed itself and ended the session before the active challenge could run.
+
+- **A near-tie is not a verdict.** `assessPad` now requires the winning attack class to clear
+  `PAD_ATTACK_MIN_CONFIDENCE` (0.60) and beat the live class by `PAD_ATTACK_MARGIN` (0.15). A
+  genuine attack puts its class far above live; a three-way tie on a moving face is ranked noise.
+- **Darkness is a capture problem, not attack evidence.** The brightness → `VIDEO_REPLAY` rule is
+  gone. An under-exposed frame is answered by asking for another frame, not by failing the person.
+- **Three frames, not two.** `PAD_CONFIRM_FRAMES` is 3, so a single exposure or head position can
+  no longer confirm its own verdict.
+- **A confirmed hit hands over to the challenge.** When the workflow has an active stage, a
+  confirmed PAD hit escalates to it (`PAD_FLAGGED` audit) instead of failing the session; PAD keeps
+  running on every challenge frame, where a hit remains terminal. Only a workflow with no
+  challenge to run rejects at the passive gate (`PAD_REJECTED`).
+
+### Changed — the capture guide fills more of the preview
+
+The oval was a fixed 212×286 px, small on a desktop preview and larger than a short mobile one.
+It is now `80%` of the viewfinder's height, capped at `430px`, on the same 212:286 ellipse, with
+clearance for the pinned guidance pill; the scan sweep follows the taller guide.
+
 ### Fixed — a restarted service can no longer be hidden behind a cached console
 
 The console's three files were served with a 10-minute freshness window and no validator, so a browser that had loaded the page before an upgrade kept running the old markup and script against the new jar. That is not a cosmetic staleness: after the sign-in dialog gained its role options, an unreloaded tab still showed the supervisor-only form, and the credentials typed into it could only re-authorise a policy — which reads as "sign in is broken" while the server was answering correctly.

@@ -778,7 +778,7 @@ curl -s -X POST localhost:8000/api/v1/sessions \
 | Multiple faces | "Multiple faces detected. Only one person may be in the frame." | Yes |
 | Poor face quality | "Face is not clear. Please improve lighting and hold still." | Yes |
 | Liveness below threshold (active disabled) | "Liveness check incomplete. Please continue looking at the camera." | No (hard fail) |
-| PAD failure | "Face verification could not be completed. Please try again." | **No** (terminal, distinct audit) |
+| PAD failure | "Face verification could not be completed. Please try again." | **No** when the workflow has no active challenge (terminal, distinct audit); otherwise the confirmed hit escalates to the challenge, where PAD stays terminal |
 | Challenge failure | "Verification action was not completed. Please try again." | Yes (retry) |
 | Challenge timeout | "Verification timed out. Please try again." | Yes (retry) |
 | Max retries exceeded (`LOCK_OUT`) | "Face verification failed. Please contact an operator for assistance." | No |

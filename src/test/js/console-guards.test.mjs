@@ -124,6 +124,15 @@ class Element extends EventTargetLike {
   getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; }
   append(...nodes) { for (const n of nodes) this.children.push(n); }
   appendChild(node) { this.children.push(node); return node; }
+  // The modern replacement for `textContent = ""` + append, and the one
+  // updateRoleDisplay uses when it swaps the signed-in name into the top bar.
+  // Without it that call threw inside signIn(), which read as a refused sign-in
+  // and silently stopped the policy save the dialog had just authorised.
+  replaceChildren(...nodes) {
+    this.children = [];
+    this._text = "";
+    for (const n of nodes) this.children.push(n);
+  }
   focus() {}
   // The canvas API console.js touches, recording what the capture path asked
   // for so the guards can assert the capture budget without a real encoder:
@@ -196,6 +205,9 @@ const document = {
     createdElements.push(el);
     return el;
   },
+  // console.js labels the user pill with a text node beside its status dot, so
+  // the stub has to provide the same primitive a browser does.
+  createTextNode: text => ({ textContent: String(text) }),
   // console.js listens for visibilitychange to pause capture; a bare object
   // here would throw while the page is loading.
   _listeners: new Map(),
@@ -1009,6 +1021,19 @@ assert(![...byId.values()].some(el => el.textContent.includes("correct-horse-bat
     "the password appears nowhere in the page's text afterwards");
 assert(posts().some(c => c.method === "PUT" && c.url.includes("/api/v1/config/")),
     "the save the dialog authorised then proceeds");
+
+// The top bar is the only place the page says who the credential was for, so
+// it has to be updated by the same sign-in that authorised the save. This is
+// asserted explicitly because updateRoleDisplay() runs inside signIn(): a DOM
+// API the stub does not implement throws there, and the failure reads as a
+// refused sign-in rather than a broken stub — which silently aborted this save
+// once already.
+assert($id("pill-user").hidden === false
+    && $id("pill-user").textContent.includes("sup-01"),
+    "the top-bar user pill names the account the dialog signed in");
+assert($id("topbar-user-label").hidden === false
+    && $id("topbar-username").textContent === "sup-01",
+    "the top-bar label shows the signed-in account");
 
 section("credential dialog — a first sign-in sets the password in the dialog");
 // An account the service confines to the change-password route: signing in is

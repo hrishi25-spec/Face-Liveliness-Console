@@ -281,10 +281,16 @@ POST /api/v1/sessions/{sessionId}/frames
    challenge (`escalate_to_active`, idempotent) — no scoring, no pass, no
    duplicate challenge (pessimistic row lock on `liveness_sessions`)
 3. Runs face detection (Haar cascade)
-4. Runs PAD check = FFT/texture/brightness heuristics **OR** MiniFASNet
-   print/replay verdict — an attack is terminal, but only once it is confirmed on
-   `PAD_CONFIRM_FRAMES` (2) consecutive frames (a real replay is consistent; a
-   single noisy frame must not fail an honest session)
+4. Runs PAD check = FFT/texture heuristics **OR** MiniFASNet print/replay
+   verdict. The model must clear `PAD_ATTACK_MIN_CONFIDENCE` (0.60) and beat the
+   live class by `PAD_ATTACK_MARGIN` (0.15) — a near-tie softmax is ranked
+   noise. A hit counts once confirmed on `PAD_CONFIRM_FRAMES` (3) consecutive
+   frames (a real replay is consistent; a single noisy frame must not fail an
+   honest session), and then **escalates to the active challenge** instead of
+   ending the session: the challenge is the stronger check and PAD keeps running
+   on every one of its frames, where it is terminal. The passive stage rejects
+   outright only when the workflow has no challenge to hand the verdict to
+   (`activeLivenessEnabled=false`, or liveness disabled)
 5. If no face / multiple faces → retry
 6. Computes the passive score for this frame — MiniFASNet live-class
    probability when the model is loaded, the OpenCV quality heuristic otherwise
@@ -299,7 +305,8 @@ POST /api/v1/sessions/{sessionId}/frames
    ("Checking face liveness...")
 8. Once warm: median of the last `passiveWindowFrames` (7) scores ≥
    `passiveThreshold` → `proceed` (session PASSED); below → `escalate_to_active`
-   + issue a challenge (or `reject` when active liveness is disabled)
+   + issue a challenge (or `reject` when active liveness is disabled). A
+   confirmed PAD hit from step 4 escalates by the same route
 
 > **Median over a window, not a single frame.** The HTTP path decides on the
 > median of the last `passiveWindowFrames` scores, and only once at least
