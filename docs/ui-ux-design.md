@@ -184,19 +184,11 @@ match whichever palette is active.
   badges use the cobalt `#EFF6FF`/`#BFDBFE` pair.
 - **Banners** — icon circle plus title and body, one component (`verdict`) with
   `proceed` / `reject` / `escalate` variants; the resting state is neutral.
-- **Security warnings** — a `warning-panel` under the result banner, one row per
-  event this run actually received (`PAD attack` in amber, `Rejected` in red),
-  each carrying the time, the tag and the engine's own attack name, stage and
-  action. The same text is mirrored to the browser console, so the panel and the
-  devtools log never disagree. A repeated event is listed once, the list caps and
-  scrolls, and it is cleared when the next run starts rather than accumulating
-  across people.
 - **Camera surface** — hardened `#020617` container, dashed guide with four
   calibration ticks, a scan sweep that runs only while a run is analysing, a
   pinned translucent guidance pill, and a monospace HUD. The guide is sized from
-  the viewfinder's own height (80% of it at most, capped at 430 px) so the oval
-  fills the preview without pushing itself, or the guidance pill it must stop
-  short of, out of a short one. Guide states:
+  the viewfinder's own height (74% of it at most, capped at 378 px) so a larger
+  oval cannot push itself out of a short preview. Guide states:
   white dashed (idle) → cobalt solid (analysing) → amber (challenge open) →
   green (session passed) or red (rejected).
 - **Capture follows the guide** — the frame sent to the engine is the oval's

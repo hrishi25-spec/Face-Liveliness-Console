@@ -160,6 +160,10 @@ plus `prev_hash` already binds an entry uniquely.
   already publishes the current policy). Only writes require a session, and only
   a supervisor's session at that.
 
+ponytail: the feed is a bounded, newest-first read of one table with no
+per-workflow server-side filter — the workflow type lives inside the JSON
+`details` column, which is deliberately unqueryable (text, identical on H2 and  PostgreSQL). Filter client-side, as `static/console.js` does.
+
 - `supportedChallengeTypes` must not be empty (and if `activeLivenessEnabled`, must have ≥ 1 type)
 
 ---

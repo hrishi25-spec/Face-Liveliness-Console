@@ -115,33 +115,13 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
     /**
      * Class indices of the 3-class output, matching the upstream reference
      * ({@code label == 1} is a real/live face). Best-effort attack typing for
-     * the two non-live classes: 0 = printed photo, 2 = screen replay. The
-     * attack <em>decision</em> gates a session; the type is informational.
+     * the two non-live classes: 0 = printed photo, 2 = screen replay. Only the
+     * attack <em>decision</em> (any index != live) gates a session; the type is
+     * informational.
      */
     private static final int CLASS_PRINT = 0;
     private static final int CLASS_LIVE = 1;
     private static final int CLASS_REPLAY = 2;
-
-    /**
-     * How far the winning attack class must beat the live class before
-     * {@link #assessPad} calls a frame an attack.
-     *
-     * <p>A three-class softmax lands near a three-way tie on ordinary capture
-     * conditions — motion, an exposure hunt, a face at the crop edge. At that
-     * point the ranking between print, replay and live is noise, not evidence,
-     * yet the previous rule (&ldquo;any class ranked above live&rdquo;) called a
-     * 0.36 / 0.34 / 0.30 split a presentation attack and reported it with
-     * confidence 0.36. That ranked-noise verdict is the largest source of false
-     * rejects on real cameras; a genuine attack puts its class far above live.</p>
-     */
-    static final double PAD_ATTACK_MARGIN = 0.15;
-
-    /**
-     * Minimum winning-class probability before a frame is called an attack, so
-     * an almost-uniform softmax is never a verdict even when it beats live by
-     * {@link #PAD_ATTACK_MARGIN}.
-     */
-    static final double PAD_ATTACK_MIN_CONFIDENCE = 0.60;
 
     private OrtEnvironment env;
     private OrtSession session;
@@ -836,25 +816,13 @@ public final class OnnxMiniFasNetBackend implements LivenessBackend {
         }
         double[] p = probabilitiesFor(frame);
         if (p == null) return PadVerdict.bonaFide(0.0);
-        if (p[CLASS_PRINT] >= p[CLASS_REPLAY] && isAttack(p[CLASS_PRINT], p[CLASS_LIVE])) {
+        if (p[CLASS_PRINT] >= p[CLASS_REPLAY] && p[CLASS_PRINT] > p[CLASS_LIVE]) {
             return PadVerdict.attack(PadAttackType.PRINTED_PHOTO, p[CLASS_PRINT]);
         }
-        if (isAttack(p[CLASS_REPLAY], p[CLASS_LIVE])) {
+        if (p[CLASS_REPLAY] > p[CLASS_LIVE]) {
             return PadVerdict.attack(PadAttackType.SCREEN_REPLAY, p[CLASS_REPLAY]);
         }
         return PadVerdict.bonaFide(p[CLASS_LIVE]);
-    }
-
-    /**
-     * Whether an attack-class probability is a verdict rather than the winner of
-     * a near-tie: it must clear {@link #PAD_ATTACK_MIN_CONFIDENCE} outright and
-     * beat the live class by {@link #PAD_ATTACK_MARGIN}. Both bounds are checked
-     * on the probability scale, so the rule reads the same whatever the model's
-     * confidence looks like on a given camera.
-     */
-    private static boolean isAttack(double attackProbability, double liveProbability) {
-        return attackProbability >= PAD_ATTACK_MIN_CONFIDENCE
-                && attackProbability - liveProbability >= PAD_ATTACK_MARGIN;
     }
 
     @Override

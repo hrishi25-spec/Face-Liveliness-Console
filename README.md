@@ -322,7 +322,7 @@ Explicit backends never silently fall back. An unavailable one fails closed with
 
 | Path | What it is |
 |---|---|
-| `src/`, `pom.xml` | **The active codebase.** Spring Boot service and shared engine (190 main classes, 88 test classes, 752 tests) |
+| `src/`, `pom.xml` | **The active codebase.** Spring Boot service and shared engine (190 main classes, 88 test classes, 751 tests) |
 | `android_client/` | Pinned Flutter 3.10.4 / Dart 3.0.3 harness, Pigeon bindings, CameraX source. Not the full Registration Client |
 | `pad_liveness_backend/` | Independent FastAPI + PostgreSQL reference implementation (Python 3.12, Alembic), not wired into the Java build <!-- boundary-allow: repository map names each sibling project's own stack --> |
 | `training/` | Workstation-only synthetic-data pipeline for MiniFASNet. No real faces, not in CI |
@@ -335,7 +335,7 @@ Inside `io.mosip.liveness`: `api/` (controllers and filters), `auth/`, `services
 ## Testing and CI
 
 ```bash
-./mvnw --batch-mode test                         # Java unit + integration (88 test classes, 752 tests)
+./mvnw --batch-mode test                         # Java unit + integration (88 test classes, 751 tests)
 node src/test/js/console-guards.test.mjs        # console DOM guards, no Maven needed
 node scripts/check-launchers.mjs                # developer launchers never build installers
 node scripts/check-project-boundaries.mjs       # docs-vs-CI consistency gate

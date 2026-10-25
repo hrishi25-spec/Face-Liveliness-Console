@@ -16,12 +16,6 @@ import org.springframework.stereotype.Service;
 public class PadEngineService {
 
     private static final double FREQ_ENERGY_ATTACK_THRESHOLD = 0.35;
-
-    /**
-     * Laplacian variance below which the frame is too flat to be a live face —
-     * the print-attack proxy. Calibrated against the printed-photo fixture, which
-     * must still be caught, so this is not a knob to loosen casually.
-     */
     private static final double TEXTURE_VARIANCE_ATTACK_THRESHOLD = 15.0;
 
     /**
@@ -40,6 +34,7 @@ public class PadEngineService {
         MatOfDouble mean = new MatOfDouble();
         MatOfDouble stddev = new MatOfDouble();
         double textureVariance;
+        double brightness;
         try {
             Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
             gray.convertTo(grayFloat, CvType.CV_32F);
@@ -52,6 +47,9 @@ public class PadEngineService {
             Imgproc.Laplacian(gray, laplacian, CvType.CV_64F);
             Core.meanStdDev(laplacian, mean, stddev);
             textureVariance = stddev.get(0, 0)[0] * stddev.get(0, 0)[0];
+
+            // Brightness check
+            brightness = imageUtils.brightnessScore(frame);
         } finally {
             // Six native buffers per frame; a throw here must not leave them behind.
             gray.release();
@@ -75,12 +73,9 @@ public class PadEngineService {
             double confidence = Math.min(1.0, 1.0 - (textureVariance / TEXTURE_VARIANCE_ATTACK_THRESHOLD));
             return PadVerdict.attack(PadAttackType.PRINTED_PHOTO, confidence);
         }
-        // No brightness rule. An under-exposed frame is a *capture* problem —
-        // owned by the face-quality gate, which asks for another frame — not
-        // evidence of a presentation attack. Treating mean brightness below 0.15
-        // as VIDEO_REPLAY flagged the first frames of a capture (a webcam still
-        // auto-exposing from black) and, once confirmed over consecutive frames,
-        // rejected an honest session before a single frame could be scored.
+        if (brightness < 0.15) {
+            return PadVerdict.attack(PadAttackType.VIDEO_REPLAY, 0.6);
+        }
 
         // Bona fide
         double margin = Math.min(1.0,

@@ -100,11 +100,11 @@ class DecisionEngineServicePassiveFlowTest {
         when(sessionRepo.findByIdForUpdate(any())).thenReturn(Optional.empty());
         when(padEngine.detect(any(Mat.class), any())).thenReturn(PadVerdict.bonaFide(0.9));
         when(passiveScorer.assessPad(any(), any())).thenReturn(Optional.empty());
-        // Default: a PAD verdict is already confirmed by the preceding frames, so
-        // attack tests can decide on one push. Tests that exercise the
+        // Default: a PAD verdict is already confirmed by the preceding frame, so
+        // attack tests can reject on one push. Tests that exercise the
         // confirmation gate override this.
         when(frameEventRepo.findRecentPadFlags(any(), any(), any()))
-                .thenReturn(List.of(true, true, true));
+                .thenReturn(List.of(true, true));
         when(livenessEngine.observeFace(any(Mat.class), any()))
                 .thenReturn(new LivenessEngineService.FaceObservation(
                         true, false, 0.85, new int[]{10, 10, 120, 140}));
@@ -250,48 +250,7 @@ class DecisionEngineServicePassiveFlowTest {
     // ---- PAD fusion ----
 
     @Test
-    void modelPadAttackEscalatesToTheChallengeInsteadOfRejecting() {
-        when(passiveScorer.assessPad(any(), any()))
-                .thenReturn(Optional.of(PadVerdict.attack(PadAttackType.SCREEN_REPLAY, 0.93)));
-
-        FrameProcessResult r = pushFrame();
-
-        assertEquals("escalate_to_active", r.getAction(),
-                "a confirmed PAD hit must hand the verdict to the active challenge");
-        assertNotNull(r.getChallenge(), "the escalation must carry a challenge");
-        assertEquals(LivenessStage.ACTIVE, session.getCurrentStage());
-        // The hit is recorded on the session's trail even though the client only
-        // learns it was escalated: the challenge is the same request either way.
-        verify(auditLogRepo, org.mockito.Mockito.atLeastOnce()).save(
-                org.mockito.ArgumentMatchers.argThat(a ->
-                        "PAD_FLAGGED".equals(a.getEventType())));
-        assertEquals(SessionStatus.ACTIVE, session.getStatus(),
-                "the session stays open for the challenge");
-        assertNull(session.getFailureReason());
-        verify(challengeRepo).save(any());
-    }
-
-    @Test
-    void heuristicPadAttackAlsoEscalatesBeforeScoring() {
-        when(padEngine.detect(any(Mat.class), any()))
-                .thenReturn(PadVerdict.attack(PadAttackType.PRINTED_PHOTO, 0.99));
-
-        FrameProcessResult r = pushFrame();
-
-        assertEquals("escalate_to_active", r.getAction());
-        assertEquals(SessionStatus.ACTIVE, session.getStatus());
-        verify(passiveScorer, never()).score(any(), any(), any());
-    }
-
-    @Test
-    void confirmedPadWithActiveLivenessDisabledStillRejects() {
-        // No challenge stage exists to hand the verdict to, so the passive
-        // stage's attack decision is final.
-        when(configService.getEffectivePolicy(any())).thenReturn(
-                new EffectivePolicy(true, false, THRESHOLD, 0.50, MIN_FRAMES, WINDOW_FRAMES,
-                        1, 3, 60_000L,
-                        EnumSet.of(ChallengeType.BLINK), RepeatedFailureAction.LOCK_OUT,
-                        -1.0, 30_000L, 1, 10, 0.6, 0.4));
+    void modelPadAttackRejectsEvenWhenTheHeuristicClearsTheFrame() {
         when(passiveScorer.assessPad(any(), any()))
                 .thenReturn(Optional.of(PadVerdict.attack(PadAttackType.SCREEN_REPLAY, 0.93)));
 
@@ -304,13 +263,25 @@ class DecisionEngineServicePassiveFlowTest {
     }
 
     @Test
-    void aSinglePadFrameDoesNotDecideUntilTheVerdictPersists() {
-        // The model flipped to an attack class on this frame, but the preceding
-        // frames were clean: an isolated flip must not move the session at all.
+    void heuristicPadAttackStaysTerminalWithoutAModel() {
+        when(padEngine.detect(any(Mat.class), any()))
+                .thenReturn(PadVerdict.attack(PadAttackType.PRINTED_PHOTO, 0.99));
+
+        FrameProcessResult r = pushFrame();
+
+        assertEquals("reject", r.getAction());
+        assertEquals("presentation_attack:PRINTED_PHOTO", session.getFailureReason());
+        verify(passiveScorer, never()).score(any(), any(), any());
+    }
+
+    @Test
+    void aSinglePadFrameDoesNotRejectUntilTheVerdictPersists() {
+        // The model flipped to an attack class on this frame, but the previous
+        // frame was clean: an isolated flip must not terminally fail the session.
         when(passiveScorer.assessPad(any(), any()))
                 .thenReturn(Optional.of(PadVerdict.attack(PadAttackType.SCREEN_REPLAY, 0.75)));
         when(frameEventRepo.findRecentPadFlags(any(), any(), any()))
-                .thenReturn(List.of(true, true, false));
+                .thenReturn(List.of(true, false));
 
         FrameProcessResult r = pushFrame();
 

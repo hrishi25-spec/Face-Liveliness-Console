@@ -92,9 +92,6 @@ class Element extends EventTargetLike {
     this._text = "";
     this.className = "";
     this.classList = new ClassList(this);
-    // `dataset` is how console.js tags an element for later assertions; a
-    // browser creates it for free, so the harness has to as well.
-    this.dataset = {};
     this.style = {};
     this.hidden = false;
     this.disabled = false;
@@ -243,11 +240,6 @@ let loginAnswer = { username: "sup-01", role: "SUPERVISOR", mustChangePassword: 
 let loginFailure = false;
 let challengeAction = "proceed";   // action a challenge-validation stub answers with
 let frameAction = "proceed";       // action a frame-POST stub answers with
-// A frame stub can also carry the PAD verdict the engine would report, so the
-// console's own warning panel (PAD attack + rejection) is driven with real
-// response shapes instead of a hand-built object.
-let framePadFlag = false;
-let framePadAttack = null;
 // What GET /sessions/{id} reports — the truth the Sessions table has to show.
 let sessionDetailStatus = "ACTIVE";
 let sessionDetailRetries = 0;
@@ -361,21 +353,18 @@ async function fetch(url, options = {}) {
     });
   }
   if (url.includes("/frames")) {
-    const frame = {
+    if (hangFrames) {
+      return new Promise(resolve => pendingFrameReleases.push(
+        () => resolve(respond({ action: frameAction, message: "stub" }))));
+    }
+    // `escalate_to_active` has to carry the challenge the client then validates.
+    return respond({
       action: frameAction,
       message: "stub",
-      stage: "PASSIVE",
-      padFlag: framePadFlag,
-      padAttackType: framePadAttack,
-      // `escalate_to_active` has to carry the challenge the client then validates.
       challenge: frameAction === "escalate_to_active"
         ? { challengeId: "challenge-1", challengeType: "BLINK", timeoutMs: 15000, attemptNumber: 1 }
         : undefined
-    };
-    if (hangFrames) {
-      return new Promise(resolve => pendingFrameReleases.push(() => resolve(respond(frame))));
-    }
-    return respond(frame);
+    });
   }
   if (url.includes("/active-liveness")) {
     return respond({ id: "challenge-manual-1", challengeType: "BLINK",
@@ -426,23 +415,13 @@ windowTarget.confirm = () => confirmAnswer;
 const navigator = { mediaDevices: { getUserMedia: async () => ({ id: "stub-stream" }) } };
 const intervals = [];   // recorded, never scheduled: the harness must be able to exit
 
-// "Warnings on the console" includes the browser console, so the harness records
-// what the page logged rather than letting it vanish into the runner's output.
-const warnCalls = [];
-
 const sandbox = {
   document,
   navigator,
   window: windowTarget,
   sessionStorage: makeStorage(),
   fetch,
-  console: {
-    log: (...a) => console.log(...a),
-    info: (...a) => console.info(...a),
-    error: (...a) => console.error(...a),
-    debug: (...a) => console.debug(...a),
-    warn: (...a) => warnCalls.push(a.join(" "))
-  },
+  console,
   setTimeout,
   clearTimeout,
   clearInterval: () => {},
@@ -740,43 +719,6 @@ assert(fetchCalls.filter(c => c.url.includes("/challenges/validate")).length ===
     "the failed verdict is terminal too");
 frameAction = "proceed";
 challengeAction = "proceed";
-
-section("PAD attacks and rejections are warned on the console");
-// A spoof the engine names is a security event and so is a rejection: both must
-// reach the panel in the engine's own words (attack, stage, action) and the
-// browser console, instead of being softened into "try again".
-framePadFlag = true;
-framePadAttack = "SCREEN_REPLAY";
-frameAction = "escalate_to_active";   // a named attack escalates while active is on
-challengeAction = "reject";
-const warnedBefore = warnCalls.length;
-$id("btn-run").dispatch("click");
-await new Promise(r => setTimeout(r, 1300));
-await settle();
-const supWarnings = $id("sup-warnings");
-assert($id("sup-warning-panel").hidden === false,
-    "a named attack opens the warning panel");
-assert(supWarnings.children.some(r => /warning-pad/.test(r.className)
-        && r.textContent.includes("SCREEN_REPLAY") && r.textContent.includes("passive")),
-    "the PAD row names the attack and the stage the engine reported");
-assert(supWarnings.children.some(r => /warning-reject/.test(r.className)
-        && r.textContent.includes("action reject")),
-    "the rejection is listed with the action that ended the session");
-assert(warnCalls.slice(warnedBefore).some(w =>
-        w.includes("PAD attack") && w.includes("SCREEN_REPLAY")),
-    "the same event reaches the browser console (console.warn), not just the panel");
-assert(supWarnings.children.filter(r => /warning-pad/.test(r.className)).length === 1,
-    "a PAD hit that repeats is warned once, not once per frame");
-
-framePadFlag = false;
-framePadAttack = null;
-frameAction = "proceed";
-challengeAction = "proceed";
-$id("btn-run").dispatch("click");
-await new Promise(r => setTimeout(r, 700));
-await settle();
-assert($id("sup-warning-panel").hidden === true && supWarnings.children.length === 0,
-    "the next run starts clean: the panel is cleared, not accumulated");
 
 section("capture budget — 640px long edge at quality 0.7 (task 1)");
 assert(windowTarget.CAPTURE_BUDGET

@@ -55,10 +55,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       frames cannot perform the action, so validation stays {@code continue}.</li>
  *   <li>OPERATOR with {@code passiveThreshold=1.0} + active liveness off — the
  *       escalation branch must terminate as {@code reject} → FAILED.</li>
- *   <li>RESIDENT + {@code fixtures/print-attack.jpg} — three consecutive
- *       PAD-positive frames must escalate to the active challenge before any
- *       score is computed, and the hit must be audited ({@code PAD_FLAGGED}).
- *       No config is mutated.</li>
+ *   <li>RESIDENT + {@code fixtures/print-attack.jpg} — two consecutive
+ *       PAD-positive frames must terminally reject before scoring
+ *       ({@code presentation_attack:PRINTED_PHOTO}). No config is mutated.</li>
  *   <li>SUPERVISOR with a 3s challenge window (the deployment floor itself) and
  *       {@code maxRetryCount=2} — a real-time test that waits out both windows:
  *       {@code continue} → {@code retry_challenge} → {@code reject}
@@ -385,50 +384,45 @@ class LivenessPipelineIntegrationTest extends RawHttpSupport {
     // ------------------------------------------------------------------ 4. terminal PAD rejection
 
     @Test
-    void printAttackFixture_isHandedToTheActiveChallenge() throws Exception {
+    void printAttackFixture_isTerminallyRejectedByPad() throws Exception {
         UUID sessionId = UUID.fromString(expect(HttpStatus.CREATED,
                 exchange(HttpMethod.POST, "/api/v1/sessions",
                         sessionBody("RESIDENT"), false)).get("id").asText());
 
         // Frame 1: PAD flags the printed presentation immediately, but the
-        // verdict needs PAD_CONFIRM_FRAMES (3) consecutive attack frames before
-        // it moves the session — one noisy frame must not kill it.
+        // verdict needs PAD_CONFIRM_FRAMES (2) consecutive attack frames
+        // before it is terminal — one noisy frame must not kill a session.
         JsonNode first = postFrame(sessionId, attackB64);
         assertEquals("retry_passive", first.get("action").asText(), first.toString());
         assertTrue(first.get("padFlag").asBoolean(), "attack must be flagged on the first frame");
         assertEquals("PRINTED_PHOTO", first.get("padAttackType").asText());
 
-        // Frame 2: still confirming, still not decided.
+        // Frame 2: confirmation — immediate terminal reject, before scoring.
         JsonNode second = postFrame(sessionId, attackB64);
-        assertEquals("retry_passive", second.get("action").asText(), second.toString());
-        assertEquals("PASSIVE", second.get("stage").asText());
-
-        // Frame 3: confirmed. The passive stage does not end the session — it
-        // hands the decision to the randomised live challenge, and PAD keeps
-        // running there.
-        JsonNode third = postFrame(sessionId, attackB64);
-        assertEquals("escalate_to_active", third.get("action").asText(), third.toString());
-        assertEquals("ACTIVE", third.get("stage").asText());
-        assertNotNull(third.get("challenge"), "the escalation must carry a challenge");
+        assertEquals("reject", second.get("action").asText(), second.toString());
+        assertEquals("COMPLETED", second.get("stage").asText());
 
         JsonNode after = expect(HttpStatus.OK,
                 exchange(HttpMethod.GET, "/api/v1/sessions/" + sessionId, null, false));
-        assertEquals("ACTIVE", after.get("status").asText());
-        assertEquals("ACTIVE", after.get("currentStage").asText());
-        JsonNode failureReason = after.get("failureReason");
-        assertTrue(failureReason == null || failureReason.isNull(),
-                "an escalated session has not failed: " + after);
+        assertEquals("FAILED", after.get("status").asText());
+        assertEquals("presentation_attack:PRINTED_PHOTO", after.get("failureReason").asText());
 
         JsonNode audit = expect(HttpStatus.OK,
                 exchange(HttpMethod.GET, "/api/v1/sessions/" + sessionId + "/audit", null, false));
-        assertTrue(hasEvent(audit, "PAD_FLAGGED"), "audit must record the attack: " + audit);
-        assertTrue(hasEvent(audit, "CHALLENGE_ISSUED"), "audit must record issuance: " + audit);
+        assertTrue(hasEvent(audit, "PAD_REJECTED"), "audit must record the attack: " + audit);
 
-        // Closing an escalated session that never performed the action expires it.
+        // Terminal means terminal: the session left ACTIVE, so any further
+        // frame is refused with 409 instead of being evaluated.
+        ObjectNode body = mapper.createObjectNode();
+        body.put("frameBase64", attackB64);
+        JsonNode conflict = expect(HttpStatus.CONFLICT, exchange(HttpMethod.POST,
+                "/api/v1/sessions/" + sessionId + "/frames", body.toString(), false));
+        assertEquals("CONFLICT", conflict.get("error").asText());
+
         JsonNode summary = expect(HttpStatus.OK,
                 exchange(HttpMethod.POST, "/api/v1/sessions/" + sessionId + "/close", null, false));
-        assertEquals("EXPIRED", summary.get("status").asText());
-        assertEquals(1, summary.get("totalChallengesIssued").asInt());
+        assertEquals("FAILED", summary.get("status").asText());
+        assertEquals("presentation_attack:PRINTED_PHOTO", summary.get("failureReason").asText());
     }
 
     // ------------------------------------------------------------------ 5. error path, real decoder

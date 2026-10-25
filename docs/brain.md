@@ -54,7 +54,7 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 │   └── test/java/io/mosip/liveness/       # 88 test classes + 7 support files (95 files)
 │
 ├── pad_liveness_backend/                   # Python FastAPI ORIGINAL reference backend
-│   ├── app/                                # FastAPI application (43 .py files)
+│   ├── app/                                # FastAPI application (35 .py files)
 │   ├── alembic/                            # DB migrations (Alembic)
 │   ├── requirements.txt                    # Python dependencies
 │   ├── Dockerfile                          # Python container
@@ -281,16 +281,10 @@ POST /api/v1/sessions/{sessionId}/frames
    challenge (`escalate_to_active`, idempotent) — no scoring, no pass, no
    duplicate challenge (pessimistic row lock on `liveness_sessions`)
 3. Runs face detection (Haar cascade)
-4. Runs PAD check = FFT/texture heuristics **OR** MiniFASNet print/replay
-   verdict. The model must clear `PAD_ATTACK_MIN_CONFIDENCE` (0.60) and beat the
-   live class by `PAD_ATTACK_MARGIN` (0.15) — a near-tie softmax is ranked
-   noise. A hit counts once confirmed on `PAD_CONFIRM_FRAMES` (3) consecutive
-   frames (a real replay is consistent; a single noisy frame must not fail an
-   honest session), and then **escalates to the active challenge** instead of
-   ending the session: the challenge is the stronger check and PAD keeps running
-   on every one of its frames, where it is terminal. The passive stage rejects
-   outright only when the workflow has no challenge to hand the verdict to
-   (`activeLivenessEnabled=false`, or liveness disabled)
+4. Runs PAD check = FFT/texture/brightness heuristics **OR** MiniFASNet
+   print/replay verdict — an attack is terminal, but only once it is confirmed on
+   `PAD_CONFIRM_FRAMES` (2) consecutive frames (a real replay is consistent; a
+   single noisy frame must not fail an honest session)
 5. If no face / multiple faces → retry
 6. Computes the passive score for this frame — MiniFASNet live-class
    probability when the model is loaded, the OpenCV quality heuristic otherwise
@@ -305,8 +299,7 @@ POST /api/v1/sessions/{sessionId}/frames
    ("Checking face liveness...")
 8. Once warm: median of the last `passiveWindowFrames` (7) scores ≥
    `passiveThreshold` → `proceed` (session PASSED); below → `escalate_to_active`
-   + issue a challenge (or `reject` when active liveness is disabled). A
-   confirmed PAD hit from step 4 escalates by the same route
+   + issue a challenge (or `reject` when active liveness is disabled)
 
 > **Median over a window, not a single frame.** The HTTP path decides on the
 > median of the last `passiveWindowFrames` scores, and only once at least
@@ -973,10 +966,8 @@ refuses to freeze less, and the engine clamps stored values up to it.
 
 ## 11. Database Schema
 
-Seven tables across twelve Flyway migrations (`V1`–`V13`; one number in the range
-was never used). `V1__init_schema.sql` creates the five core ones (the same
-migration's unused `audit_log` table was dropped by `V10`), and `V12` adds
-`auth_users` + `auth_tokens`:
+Eight tables across twelve Flyway migrations (`V1`–`V13`; one number in the range
+was never used). `V1__init_schema.sql` creates the five core ones:
 
 ```sql
 liveness_sessions     -- id(UUID), workflow_type, device_id, status, current_stage,
@@ -1077,7 +1068,7 @@ The Java version is a **complete superset** of the Python version — it adds th
 
 ## 14. Test Suite
 
-**88 test classes + 7 support files (95 files), 752 tests, all green.** The
+**88 test classes + 7 support files (95 files), 751 tests, all green.** The
 cross-backend contract test runs in its own CI job (it needs both runtimes), so
 it is excluded from the unit matrix rather than skipping there.
 
@@ -1210,44 +1201,30 @@ already in use.
 
 ## 17. File Inventory
 
-### Java Source (190 files, ~24,100 LOC)
+### Java Source (156 files, ~19,400 LOC)
 
 **Entry Point (1)**
 - `PadLivenessApplication.java`
 
-**API Layer (30) — 13 controllers plus the global error handler**
-- `SessionsController.java` — POST/GET sessions, POST close, GET the operator session feed
+**API Layer — Controllers (9)**
+- `SessionsController.java` — POST/GET sessions, POST close
 - `FramesController.java` — POST frames
 - `ChallengesController.java` — POST validate
-- `ActiveLivenessController.java` — POST an extra, manual active check on a passed session
-- `ConfigController.java` — GET/PUT config, config audit feed and chain verification
+- `ConfigController.java` — GET/PUT config
 - `CalibrationController.java` — GET threshold-sweep (BPCER/APCER table + recommendation)
 - `MetricsController.java` — GET metrics
-- `AuditController.java` — GET a session's audit trail
-- `RejectionsController.java` — GET the failed-session / rejection feed
+- `AuditController.java` — GET audit trail
 - `HealthController.java` — GET health
-- `AuthController.java` — sign in, sign out, who am I, change password, role probe
-- `UsersController.java` — supervisor-only account management
-- `DiagnosticsController.java` — loopback-only, opt-in debug snapshot
 - `GlobalExceptionHandler.java` — @RestControllerAdvice for all error types
 
-**API Layer — filters and guards (16)**
-- `SecurityHeadersFilter`, `RateLimitFilter` + `RateLimitCounters`, `ClientIpFilter` +
-  `ClientIpResolver`, `AuthContextFilter`, `SupervisorGateFilter`, `OperatorKeyFilter` +
-  `OperatorKeyGuard`, `AuthGate`, `SessionCookie`, `SessionOwnershipFilter` +
-  `UserSessionGuard`, `RouteInventory`, `FilterRefusal`, `FeedLimit`
+**DTOs (12)**
+- `SessionCreateRequest`, `SessionResponse`, `SessionSummary`
+- `FrameSubmitRequest`, `FrameProcessResult`
+- `ChallengeValidateRequest`, `ChallengeValidationResult`, `ChallengeResponse`
+- `ConfigPolicyUpdate`, `ConfigPolicyResponse`
+- `OperationalMetrics`, `AuditLogEntry`
 
-**DTOs (22)**
-- Sessions: `SessionCreateRequest`, `SessionResponse`, `SessionSummary`, `SessionListItem`
-- Frames and challenges: `FrameSubmitRequest`, `FrameProcessResult`,
-  `ChallengeValidateRequest`, `ChallengeValidationResult`, `ChallengeResponse`
-- Evidence: `EvidenceVerificationRequest`, `EvidenceVerificationResponse`
-- Config and audit: `ConfigPolicyUpdate`, `ConfigPolicyResponse`, `AuditLogEntry`,
-  `OperationalMetrics`, `RejectionFeed`, `RejectionEvent`
-- Accounts: `LoginRequest`, `ChangePasswordRequest`, `UserCreateRequest`,
-  `UserUpdateRequest`, `UserResponse`
-
-**Services (9)**
+**Services (8)**
 - `DecisionEngineService` — orchestrates passive→active→accept/reject (challenge lock, median-window decision)
 - `LivenessEngineService` — face observation, passive scoring (heuristic), active challenge validation (OpenCV-based)
 - `PassiveScoringService` — scorer façade: MiniFASNet ONNX model or heuristic fallback (`mosip.liveness.backend`)
@@ -1256,21 +1233,16 @@ already in use.
 - `ChallengeSelectorService` — dynamic challenge selection with SecureRandom
 - `ConfigService` — bridges DB config with engine EffectivePolicy
 - `ImageUtils` — frame decode (base64→Mat), face/eye detection, sharpness/brightness scoring
-- `LivenessEvidenceVerifier` — checks a client's evidence payload against the session it holds
 
-**CRUD Repositories (7)**
-- `LivenessSessionRepository`, `FrameEventRepository`, `ChallengeRepository`,
-  `AuditLogRepository`, `ConfigPolicyRepository`, `AuthUserRepository`, `AuthTokenRepository`
+**CRUD Repositories (5)**
+- `LivenessSessionRepository`, `FrameEventRepository`, `ChallengeRepository`, `AuditLogRepository`, `ConfigPolicyRepository`
 
-**Core Domain Types (14)**
+**Core Domain Types (13)**
 - `Frame`, `FaceSignals`, `Challenge`, `ChallengeType`, `ChallengeProgress`
-- `PadVerdict`, `PadAttackType`, `ProbabilityCalibration`
+- `PadVerdict`, `PadAttackType`
 - `CombinedLivenessScore`, `ActiveFrameResult`
-- `WorkflowType`, `LivenessMessageKeys`
+- `WorkflowType`, `RepeatedFailureAction`
 - `LivenessException`, `LivenessErrorCode`
-
-> `RepeatedFailureAction` lives in `shared/definitions/` (1 file), because the Android
-> build compiles that package on its own — see `android_client/AGENTS.md`.
 
 **Engine (8)**
 - `FaceLivenessEngine` — main engine: session lifecycle, frame processing, challenge management
@@ -1282,9 +1254,8 @@ already in use.
 - `SessionSummary` — close-session audit record
 - `AssessmentStatus` — enum of frame assessment states
 
-**Backends (6)**
+**Backends (5)**
 - `LivenessBackend` — interface
-- `LivenessBackendSelection` — the one vocabulary that picks the backend for both wiring paths
 - `MockLivenessBackend` — scriptable test double
 - `OnnxMiniFasNetBackend` — real passive liveness + PAD via ONNX Runtime on the bundled `minifasnet_v2.onnx` (checksum-verified)
 - `TfLiteMiniFasNetBackend` — real PAD via TFLite + OpenCV
@@ -1294,20 +1265,13 @@ already in use.
 - `ChallengeEvaluators` — rule-based evaluators for all 9 challenge types (batch + frame-by-frame)
 - `ChallengeSelector` — shuffled-bag selection with SecureRandom
 
-**Config (6)**
+**Config (3)**
 - `LivenessConfig` — full config with builder
 - `EffectivePolicy` — resolved policy record
 - `LivenessPolicy` — per-workflow override (all fields nullable)
-- `WorkflowPolicyDefaults` — the per-workflow operating points (single source of truth)
-- `EffectivePolicyValidator`, `SecurityValidator` — policy and startup-secret validation
 
-**Auth (6)**
-- `AuthService`, `PasswordHasher`, `SessionTokens`, `AuthPrincipal`, `AuthRefusals`,
-  `AuthUserBootstrap`
-
-**Audit (8)**
+**Audit (6)**
 - `AuditEvent`, `AuditEventType`, `AuditLogger`, `StructuredAuditLogger`
-- `AuditChain`, `AuditChainKey` — the hash chain and its HMAC key
 - `MetricsCollector`, `MetricsSnapshot`
 
 **Device Adapters (10)**
@@ -1334,42 +1298,28 @@ already in use.
 - `AppConfig` — Spring @Configuration: bean wiring, OpenCV init (catches `Throwable`,
   including `LinkageError`, and degrades instead of aborting startup), CORS
 
-**Client (8)** — integration surface for host applications
+**Client (5)** — integration surface for host applications
 - `LivenessClient` — platform-neutral client interface + result records
 - `LivenessHttpClient` — HTTP client for this service's REST API, including session
   ownership (`X-Subject-Ref`) for the sessions it creates
 - `LivenessClientException` — client-side error type
 - `DesktopLivenessAdapter` — Desktop (JavaFX/Java) adapter
 - `AndroidLivenessAdapter` — Android (Flutter / Pigeon bridge) adapter
-- `LivenessChallengeOverlay`, `LivenessOverlayPresenter`, `ServiceLivenessEventMapper` —
-  the JavaFX overlay and the HTTP-response-to-overlay-event mapping
 
-**Android host support (23)** — orchestrator, policy floor, evidence signing, model store
-- `AndroidLivenessOrchestrator`, `AndroidLivenessPolicyProvider`, `LivenessGatePolicy`
-- `LivenessEvidence` + `LivenessEvidenceSigner`, `ModelStore` + `InMemoryModelStore` +
-  `SignedManifestModelStore` + `SignedModelManifest`, `LockoutStore`, `FrameRateMeter`
-- `FaceFrameSource` + `MockFaceFrameSource`, and the state / hint / failure types
-
-**Also present** — `diagnostics/` (2: `DiagnosticsService`, `DiagnosticsSnapshot`),
-`security/` (1: `AntiReplayValidator`), `metrics/` (1: `PipelineTimers`),
-`tools/` (1: `ModelManifestTool`), `app/config/` (1: `AppConfig`).
-
-**Models (17)** — API/DB layer, kept deliberately separate from `core/`
-- `entity/` — `LivenessSession`, `FrameEvent`, `ChallengeEntity`, `AuditLog`, `ConfigPolicy`,
-  `AuthUser`, `AuthToken`
+**Models (13)** — API/DB layer, kept deliberately separate from `core/`
+- `entity/` — `LivenessSession`, `FrameEvent`, `ChallengeEntity`, `AuditLog`, `ConfigPolicy`
 - `enums/` — `WorkflowType`, `SessionStatus`, `LivenessStage`, `ChallengeStatus`,
   `ChallengeType`, `FailurePolicy`
-- `converter/` — `StringListJsonConverter`, `StringObjectMapJsonConverter`,
-  `EffectivePolicyJsonConverter` (JSON text ↔ Java collections, so H2 and PostgreSQL
-  behave identically)
+- `converter/` — `StringListJsonConverter`, `StringObjectMapJsonConverter`
+  (JSON text ↔ Java collections, so H2 and PostgreSQL behave identically)
 
-### Java Tests (95 files, 88 test classes, 752 tests)
+### Java Tests (95 files, 88 test classes, 751 tests)
 - Engine, challenge, config, API (one class per controller plus the fail-closed
   and route-inventory gates), device, evaluation, model, service and audit tests
 - Support files: `TestConfig`, `MutableClock`, `RecordingAuditLogger`,
   `AuthTestFixture`, `RawHttpSupport`, `HeadlessFx`, `AndroidOrchestratorSupport`
 
-### Python Reference Backend (53 files, ~3,840 LOC)
+### Python Reference Backend (50 files, ~3,390 LOC)
 - FastAPI app with identical API contract
 - SQLAlchemy + Alembic for DB
 - Same decision flow, pluggable engines, audit logging
@@ -1424,4 +1374,4 @@ already in use.
 *Last updated: 2026-10-17*
 *Branch: main*
 *Artifact: `io.mosip.liveness:pad-liveness-backend:1.0.0-SNAPSHOT`*
-*Verified against: 190 main source files / 95 test files / 752 passing tests*
+*Verified against: 190 main source files / 95 test files / 751 passing tests*
