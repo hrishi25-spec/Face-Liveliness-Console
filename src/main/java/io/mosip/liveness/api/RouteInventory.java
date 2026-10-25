@@ -391,7 +391,7 @@ final class RouteInventory {
      * so the inventory matches on the path the request is actually routed to
      * rather than the one it was written as.
      */
-    private static String normalise(String path) {
+    static String normalise(String path) {
         if (path.indexOf("//") < 0 && path.indexOf("/.") < 0) {
             return path; // fast path: nothing to resolve
         }

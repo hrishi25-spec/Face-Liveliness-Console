@@ -21,8 +21,10 @@ public class FrameSubmitRequest {
     @Size(max = 8_000_000, message = "frame_base64 exceeds the maximum frame size")
     private String frameBase64;
 
+    @Size(max = 128, message = "nonce exceeds the maximum length")
     private String nonce;
     private Long frameSeq;
     private Long capturedAtEpochMs;
+    @Size(max = 64, message = "frameSha256 exceeds the maximum length")
     private String frameSha256;
 }

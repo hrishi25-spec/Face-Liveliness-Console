@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -105,6 +106,21 @@ class RateLimitFilterTest {
                 "another IP must not be starved by the first");
     }
 
+    @Test
+    void sessionCreate_pathSpellingsCannotEscapeTheBudget() throws Exception {
+        // The dispatcher routes these to the same handler, so the limiter has to
+        // read them as the same path — otherwise a caller mints a fresh budget by
+        // spelling the URI differently (`//`, `/./`, trailing slash).
+        RateLimitFilter filter = filter(1, 60);
+
+        assertTrue(run(filter, "POST", "/api/v1/sessions", "10.0.0.1").passed());
+        for (String spelling : List.of("/api/v1/sessions/", "//api/v1/sessions",
+                "/api/v1/./sessions", "/api/v1//sessions")) {
+            assertEquals(429, run(filter, "POST", spelling, "10.0.0.1").response().getStatus(),
+                    spelling + " must spend the same budget as /api/v1/sessions");
+        }
+    }
+
     // ------------------------------------------------------------------ frames (per session)
 
     @Test
@@ -143,6 +159,31 @@ class RateLimitFilterTest {
         assertTrue(run(filter, "POST", extra, "10.0.0.1").passed());
         assertEquals(429, run(filter, "POST", extra, "10.0.0.1").response().getStatus(),
                 "the manual extra check writes per session and must share its budget");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void distinctKeysAreCappedSoAFloodCannotGrowTheWindowMap() throws Exception {
+        RateLimitFilter filter = filter(30, 60);
+        ConcurrentHashMap<String, long[]> windows = (ConcurrentHashMap<String, long[]>)
+                ReflectionTestUtils.getField(filter, "windows");
+        long now = System.currentTimeMillis();
+        windows.put("create:10.0.0.1", new long[]{now, 1L});
+        for (int i = 0; i < RateLimitFilter.MAX_WINDOW_KEYS - 1; i++) {
+            // Live windows (started now), so the sweep cannot free a slot.
+            windows.put("session:flood-" + i, new long[]{now, 1L});
+        }
+
+        Result capped = run(filter, "POST", "/api/v1/sessions", "10.0.0.2");
+        assertEquals(429, capped.response().getStatus());
+        assertEquals("session-create", capped.response().getHeader("X-RateLimit-Bucket"),
+                "a capacity refusal still names the budget it would have spent");
+        assertEquals("0", capped.response().getHeader("X-RateLimit-Remaining"));
+        assertEquals(RateLimitFilter.MAX_WINDOW_KEYS, windows.size(),
+                "a refused new key must not be admitted to the map");
+
+        // An existing key keeps working: only new keys are refused at capacity.
+        assertTrue(run(filter, "POST", "/api/v1/sessions", "10.0.0.1").passed());
     }
 
     // ------------------------------------------------------------------ pass-through

@@ -121,8 +121,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     /** Resolves the caller's address; see {@link ClientIpResolver}. */
     private final ClientIpResolver clientIpResolver;
 
+    /** Upper bound on live window entries; see {@link #pruneIfNeeded(long)}. */
+    static final int MAX_WINDOW_KEYS = 8192;
+
     /** key -> {windowStartMillis, count} */
     private final ConcurrentHashMap<String, long[]> windows = new ConcurrentHashMap<>();
+
+    /** When the last O(n) sweep ran, so a busy map is not swept on every request. */
+    private volatile long lastPruneMillis;
 
     /** Per-rule tallies surfaced by {@code /api/v1/metrics}. */
     private final RateLimitCounters counters;
@@ -178,7 +184,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        String path = request.getRequestURI();
+        // Match the path the dispatcher will route to, not the spelling the
+        // caller used: `//api/v1/sessions`, `/api/v1/./sessions` and a trailing
+        // slash all reach the same handler, and must spend the same budget.
+        String path = RouteInventory.normalise(request.getRequestURI());
+        if (path.length() > 1 && path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
         String key;
         int limit;
         long windowMs;
@@ -238,6 +250,23 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         long now = clock.millis();
+        pruneIfNeeded(now);
+        // Hard ceiling, after the sweep: a flood of *distinct* session ids (or
+        // spoofed addresses behind a misconfigured proxy) could otherwise add a
+        // key per request and grow this map without bound inside one window.
+        // At the ceiling a key with no live window is refused rather than
+        // admitted, so memory stays flat under the flood that caused it.
+        if (windows.size() >= MAX_WINDOW_KEYS && !windows.containsKey(key)) {
+            record(rule, false);
+            response.setHeader(H_BUCKET, bucket);
+            response.setHeader(H_LIMIT, String.valueOf(limit));
+            response.setHeader(H_REMAINING, "0");
+            response.setHeader(H_RESET, String.valueOf(Math.max(1, windowMs / 1000)));
+            response.setHeader("Retry-After", "1");
+            FilterRefusal.write(request, response, 429, "RATE_LIMITED",
+                    "The rate limiter is at capacity for this window. Try again shortly.");
+            return;
+        }
         long[] slot = windows.compute(key, (k, current) -> {
             if (current == null || now - current[0] >= windowMs) {
                 return new long[]{now, 1L};
@@ -296,17 +325,22 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     /**
-     * ponytail: counters for finished windows are dropped only once the map
-     * exceeds 4096 keys (an O(n) sweep), keeping the steady-state path lock-free
-     * per key. Ceiling: a sustained flood of *distinct* session ids could grow
-     * the map to that bound between sweeps — bounded and small. Upgrade path:
-     * scheduled cleanup or a caffeine expiry cache if sessions ever number in
-     * the millions per hour.
+     * ponytail: counters for finished windows are dropped once the map exceeds
+     * 4096 keys and at most once per second (an O(n) sweep), keeping the
+     * steady-state path lock-free per key. The hard ceiling below the sweep is
+     * what bounds memory: without it a flood of distinct session ids adds a key
+     * per request, and the sweep itself becomes the attack (an O(n) scan on
+     * every request that removes nothing). Upgrade path: a scheduled cleanup or
+     * a caffeine expiry cache if sessions ever number in the millions per hour.
      */
     private void pruneIfNeeded(long now) {
         if (windows.size() <= 4096) {
             return;
         }
+        if (now - lastPruneMillis < 1000L) {
+            return;
+        }
+        lastPruneMillis = now;
         long maxWindow = Math.max(sessionCreateWindowMs, frameWindowMs);
         windows.entrySet().removeIf(e -> now - e.getValue()[0] >= maxWindow);
     }

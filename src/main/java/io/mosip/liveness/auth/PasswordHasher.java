@@ -68,13 +68,17 @@ public class PasswordHasher {
      * A real hash of a value nothing knows, at the live cost. Used to spend the
      * same time on a login for a username that does not exist. Never compared
      * against anything a caller can supply.
+     *
+     * <p>Built on first use rather than in the constructor: hashing at cost 12
+     * costs ~300 ms on the 2-core target, and paying that during startup bought
+     * nothing — an unknown-username login is the only caller. The fix keeps the
+     * timing-equalisation property for every attempt after the first, and the
+     * first failed attempt is still bounded by the same work.</p>
      */
-    private final String dummyHash;
+    private volatile String dummyHash;
 
     public PasswordHasher(@Value("${mosip.security.auth.bcrypt-cost:12}") int cost) {
         this.cost = cost;
-        this.dummyHash = BCrypt.withDefaults()
-                .hashToString(cost, "timing-equalisation-placeholder".toCharArray());
     }
 
     /** The configured cost, for the startup validation that refuses a weak one. */
@@ -119,7 +123,22 @@ public class PasswordHasher {
      */
     public void verifyAgainstDummy(String password) {
         BCrypt.verifyer().verify(
-                password == null ? new char[0] : password.toCharArray(), dummyHash);
+                password == null ? new char[0] : password.toCharArray(), dummyHash());
+    }
+
+    /** The dummy hash, created once at the configured cost on first demand. */
+    private String dummyHash() {
+        String hash = dummyHash;
+        if (hash != null) {
+            return hash;
+        }
+        synchronized (this) {
+            if (dummyHash == null) {
+                dummyHash = BCrypt.withDefaults()
+                        .hashToString(cost, "timing-equalisation-placeholder".toCharArray());
+            }
+            return dummyHash;
+        }
     }
 
     /** The byte length BCrypt will actually consider; over this the input is refused. */

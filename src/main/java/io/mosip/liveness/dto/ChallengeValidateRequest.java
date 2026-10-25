@@ -28,9 +28,13 @@ public class ChallengeValidateRequest {
 
     @NotEmpty(message = "frames_base64 must contain at least one frame")
     @Size(max = 60, message = "frames_base64 must contain at most 60 frames")
-    private List<@Size(max = 8_000_000, message = "frame exceeds the maximum frame size") String> framesBase64;
+    private List<@NotNull(message = "frame must not be null")
+            @Size(max = 8_000_000, message = "frame exceeds the maximum frame size") String> framesBase64;
 
+    @Size(max = 128, message = "nonce exceeds the maximum length")
     private String nonce;
+    @Size(max = 60, message = "capturedAtEpochMs must contain at most 60 entries")
     private List<Long> capturedAtEpochMs;
-    private List<String> framesSha256;
+    @Size(max = 60, message = "framesSha256 must contain at most 60 entries")
+    private List<@Size(max = 64, message = "frameSha256 exceeds the maximum length") String> framesSha256;
 }

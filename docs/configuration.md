@@ -471,6 +471,7 @@ The application reads several environment variables for configuration. Secret va
 | `MOSIP_OPERATOR_API_KEY` | no (operator routes refuse everyone while it is blank) | **yes** | Operator API key (`X-Operator-API-Key`), which proves the `OPERATOR` role on the read-only operator feeds and on `GET /api/v1/auth/role`. Minimum 16 characters when set. It is never accepted on a privileged route: a leaked key can read feeds and cannot write a policy or an account. |
 | `MOSIP_AUDIT_HMAC_SECRET` | **yes** (recommended for tamper‑evident audit chain) | **yes** | Secret for HMAC‑SHA‑256 audit chain; minimum 16 characters |
 | `MOSIP_AUDIT_HMAC_PREVIOUS_SECRET` | no | **yes** | Previous audit HMAC secret for key rotation; must differ from current |
+| `SERVER_ADDRESS` | no (defaults to `127.0.0.1`) | no | Socket address to bind. Loopback by default because the client-facing session routes are unauthenticated; the Docker images set `0.0.0.0`, and a host that needs LAN access must opt in deliberately. |
 | `SERVER_PORT` | no (defaults to `8000`) | no | HTTP server port |
 | `TOMCAT_THREADS_MAX` | no (defaults to `50`) | no | Maximum Tomcat threads |
 | `DB_POOL_SIZE` | no (defaults to `5`) | no | HikariCP maximum pool size |

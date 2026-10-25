@@ -30,7 +30,9 @@ services:
     environment:
       POSTGRES_HOST: postgres
     ports:
-      - "8000:8000"
+      # Local-first: session routes in this reference backend are not
+      # authenticated, so keep the published port on host loopback.
+      - "127.0.0.1:8000:8000"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./app:/app/app

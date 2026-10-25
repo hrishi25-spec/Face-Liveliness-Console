@@ -1,14 +1,21 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 from pydantic import BaseModel, Field
 
 from app.models.enums import ChallengeType, ChallengeStatus
 
 
+FrameBase64 = Annotated[str, Field(max_length=8_000_000)]
+
+
 class ChallengeValidateRequest(BaseModel):
     challenge_id: uuid.UUID
-    frames_base64: list[str] = Field(
-        ..., min_length=1, description="Ordered frame stream captured while the challenge was active"
+    frames_base64: list[FrameBase64] = Field(
+        ...,
+        min_length=1,
+        max_length=60,
+        description="Ordered frame stream captured while the challenge was active",
     )
 
 

@@ -6,7 +6,11 @@ from app.models.enums import LivenessStage
 
 
 class FrameSubmitRequest(BaseModel):
-    frame_base64: str = Field(..., description="Single JPEG/PNG frame, base64-encoded")
+    frame_base64: str = Field(
+        ...,
+        max_length=8_000_000,
+        description="Single JPEG/PNG frame, base64-encoded",
+    )
 
 
 class ChallengeInfo(BaseModel):

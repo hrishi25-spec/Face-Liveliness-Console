@@ -3,6 +3,7 @@ package io.mosip.liveness.dto;
 import io.mosip.liveness.models.enums.WorkflowType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -32,8 +33,10 @@ public class SessionCreateRequest {
     private WorkflowType workflowType;
 
     @NotBlank(message = "device_id is required")
+    @Size(max = 128, message = "device_id exceeds the maximum length")
     private String deviceId;
 
+    @Size(max = 128, message = "subject_ref exceeds the maximum length")
     private String subjectRef;
 
     @Builder.Default

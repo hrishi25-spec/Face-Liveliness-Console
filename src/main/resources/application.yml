@@ -1,4 +1,9 @@
 server:
+  # Local-first by default: the client-facing session routes are not authenticated,
+  # so the socket is the access boundary (see docs/brain.md and UserSessionGuard).
+  # The Docker images and compose files opt into 0.0.0.0 explicitly, and a host
+  # that needs LAN access can set SERVER_ADDRESS=0.0.0.0 deliberately.
+  address: ${SERVER_ADDRESS:127.0.0.1}
   # Matches the Dockerfile EXPOSE / docker-compose port mapping and the README examples.
   port: ${SERVER_PORT:8000}
 
@@ -100,6 +105,15 @@ spring:
   # Do not restore it — there is no feature to turn on or off any more.
   jackson:
     default-property-inclusion: non_null
+    # The Content-Length guard in SecurityHeadersFilter cannot see a chunked
+    # body's size before it is read. These Jackson stream constraints are the
+    # backstop for exactly that case: the parser stops at the same ceiling the
+    # filter applies, instead of buffering whatever a chunked request sends.
+    factory:
+      constraints:
+        read:
+          max-document-length: ${MAX_REQUEST_BODY_BYTES:25165824}
+          max-string-length: 8000000
 
 # ---- MOSIP Liveness Engine ----
 mosip:

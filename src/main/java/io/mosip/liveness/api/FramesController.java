@@ -68,6 +68,18 @@ public class FramesController {
         // DTO — scores, quality, flag, action — plus this frame's elapsed time.
         // Disabled, the call is a no-op and nothing is retained (spec §10).
         diagnostics.recordFrame(result, System.nanoTime() - diagnosticsStart);
+        // A terminal verdict ends this capture stream. Release its replay
+        // bookkeeping now instead of waiting for an explicit close (a client can
+        // stop after proceed/reject and never call close).
+        if (isTerminal(result.getAction())) {
+            antiReplayValidator.cleanupSession(sessionId);
+        }
         return result;
+    }
+
+    private static boolean isTerminal(String action) {
+        return "proceed".equals(action) || "reject".equals(action)
+                || "locked".equals(action) || "escalate_to_operator".equals(action)
+                || "failed".equals(action);
     }
 }

@@ -234,9 +234,10 @@ Hardening built into the service (no extra dependencies):
   `Content-Security-Policy`. FastAPI's own `/docs`, `/redoc` and `/openapi.json`
   are exempt from CSP only, because their webjar boots inline.
 - **Request size cap** — POST/PUT bodies over `MAX_REQUEST_BODY_BYTES`
-  (default 24 MB) are refused with 413 before they are parsed, and frames are
-  decoded with an isolated `InvalidFrameError` handler that answers 422 rather
-  than leaking a decoder message or a 500.
+  (default 24 MB) are refused with 413 before they are parsed. A body with no
+  `Content-Length` (chunked) is refused with 411 instead of being streamed in
+  unchecked, and frames are decoded with an isolated `InvalidFrameError`
+  handler that answers 422 rather than leaking a decoder message or a 500.
 - **Error responses** carry no stack trace and no model internals: liveness and
   PAD failures stay the generic, user-facing strings.
 

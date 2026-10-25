@@ -5,7 +5,6 @@ import io.mosip.liveness.dto.FrameSubmitRequest;
 import io.mosip.liveness.models.entity.ChallengeEntity;
 import io.mosip.liveness.models.entity.LivenessSession;
 import lombok.extern.slf4j.Slf4j;
-import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
@@ -23,6 +22,13 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Validates frame freshness, monotonic sequencing, cryptographic nonces, and
  * detects exact and perceptual-hash duplicate frames (replay attacks).
+ *
+ * <p>The cross-session check is exact-digest only. A perceptual hash over a
+ * downscaled 9x8 image is a weak identity: two different people in similar light
+ * can land within the one-bit threshold, and comparing every frame against every
+ * hash ever seen made the per-frame cost grow with the process uptime. The
+ * in-session perceptual check (the same capture stream repeating a frame) stays,
+ * because there the candidate set is one session and the signal is meaningful.</p>
  */
 @Component
 @Slf4j
@@ -36,10 +42,14 @@ public class AntiReplayValidator {
     private final Map<UUID, Set<Long>> sessionPerceptualHashes = new ConcurrentHashMap<>();
     private final Map<UUID, Set<String>> sessionFrameDigests = new ConcurrentHashMap<>();
 
-    /** Cross-session cache of exact frame digests to origin sessionId. */
+    /**
+     * Cross-session cache of exact frame digests to origin sessionId. Bounded:
+     * the entries for a finished session are dropped by
+     * {@link #cleanupSession(UUID)}, and the map is cleared at the ceiling so a
+     * long-lived process cannot retain every frame digest it has ever seen.
+     */
+    private static final int MAX_GLOBAL_DIGESTS = 50_000;
     private final Map<String, UUID> globalFrameDigests = new ConcurrentHashMap<>();
-    /** Cross-session cache of perceptual hashes to origin sessionId. */
-    private final Map<Long, UUID> globalPerceptualHashes = new ConcurrentHashMap<>();
 
     /** Generates a 32-character hex cryptographic nonce. */
     public static String generateNonce() {
@@ -117,6 +127,9 @@ public class AntiReplayValidator {
         // 5. Perceptual and exact duplicate detection (cross-session and in-session)
         if (req.getFrameBase64() != null) {
             String digest = sha256Hex(req.getFrameBase64().getBytes(StandardCharsets.UTF_8));
+            if (globalFrameDigests.size() >= MAX_GLOBAL_DIGESTS) {
+                globalFrameDigests.clear();
+            }
             UUID originSession = globalFrameDigests.putIfAbsent(digest, session.getId());
             if (originSession != null && !originSession.equals(session.getId())) {
                 log.warn("Session {}: cross-session replay detected of frame from session {}", session.getId(), originSession);
@@ -131,12 +144,6 @@ public class AntiReplayValidator {
 
         if (frame != null && !frame.empty()) {
             long pHash = computePerceptualHash(frame);
-            for (Map.Entry<Long, UUID> entry : globalPerceptualHashes.entrySet()) {
-                if (!entry.getValue().equals(session.getId()) && hammingDistance(pHash, entry.getKey()) <= 1) {
-                    log.warn("Session {}: cross-session perceptual replay detected of frame from session {}", session.getId(), entry.getValue());
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Duplicate frame detected (cross-session perceptual replay attempt)");
-                }
-            }
             Set<Long> seenHashes = sessionPerceptualHashes.computeIfAbsent(session.getId(), k -> ConcurrentHashMap.newKeySet());
             for (Long seen : seenHashes) {
                 if (hammingDistance(pHash, seen) <= 1) {
@@ -145,7 +152,6 @@ public class AntiReplayValidator {
                 }
             }
             seenHashes.add(pHash);
-            globalPerceptualHashes.put(pHash, session.getId());
         }
     }
 
@@ -180,6 +186,10 @@ public class AntiReplayValidator {
     public void cleanupSession(UUID sessionId) {
         sessionPerceptualHashes.remove(sessionId);
         sessionFrameDigests.remove(sessionId);
+        // The cross-session digest cache is deliberately NOT pruned here: a frame
+        // recorded in a session that has just ended is exactly what a replay in
+        // the next session presents. It stays until the bounded ceiling clears
+        // it wholesale.
     }
 
     /**

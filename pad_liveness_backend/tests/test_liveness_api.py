@@ -273,6 +273,34 @@ def set_policy(client, **fields):
     return response.json()
 
 
+# ------------------------------------------------------- request body ceiling
+
+
+def test_oversized_body_is_rejected_before_it_is_parsed(client, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_REQUEST_BODY_BYTES", 64)
+    response = client.post(
+        "/api/v1/sessions",
+        content=b"x" * 65,
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 413, response.text
+    assert response.json()["error"] == "PAYLOAD_TOO_LARGE"
+
+
+def test_a_body_without_content_length_is_refused(client):
+    """A chunked body has no length to check, so it must not be streamed in."""
+    def chunks():
+        yield b'{"workflow_type": "resident", "device_id": "test-camera"}'
+
+    response = client.post(
+        "/api/v1/sessions",
+        content=chunks(),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 411, response.text
+    assert response.json()["error"] == "LENGTH_REQUIRED"
+
+
 # ------------------------------------------------------- the policy write gate
 
 

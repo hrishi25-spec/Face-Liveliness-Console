@@ -6,6 +6,9 @@ RUN apk add --no-cache libstdc++
 # native memory — OpenCV/ONNX matrices are off-heap), use SerialGC for the
 # smallest native footprint, and exit on OOM instead of limping along.
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=50.0 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
+# Inside a container the service must listen on the container interface; the
+# compose files publish that port on host loopback only.
+ENV SERVER_ADDRESS=0.0.0.0
 
 WORKDIR /app
 

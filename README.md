@@ -358,6 +358,7 @@ Everything is overridable by environment variable. See [docs/configuration.md](d
 | `MOSIP_AUTH_BOOTSTRAP_USERNAME` / `_PASSWORD` | empty | First supervisor on an empty database, password ≥ 12 chars |
 | `MOSIP_OPERATOR_API_KEY` | blank (operator routes refuse everyone) | Read-only operator feeds, minimum 16 chars |
 | `MOSIP_AUTH_COOKIE_SECURE` | `false` | Set `true` behind TLS |
+| `SERVER_ADDRESS` | `127.0.0.1` | Bind address; Docker sets `0.0.0.0`, widen deliberately |
 | `SERVER_PORT` | `8000` | HTTP port |
 | `mosip.liveness.backend` | `auto` | Scoring backend selection |
 | `mosip.liveness.passive-threshold` | `0.80` | Calibrate with the sweep endpoint |

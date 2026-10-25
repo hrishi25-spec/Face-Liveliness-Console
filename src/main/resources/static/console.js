@@ -311,7 +311,11 @@
       if (pillUser) {
         pillUser.hidden = false;
         const roleCap = currentRole.charAt(0) + currentRole.slice(1).toLowerCase();
-        pillUser.innerHTML = `<span class="pill-dot"></span>${roleCap}`;
+        // textContent, never innerHTML: the label can carry a typed resident id.
+        pillUser.replaceChildren();
+        const roleDot = document.createElement("span");
+        roleDot.className = "pill-dot";
+        pillUser.append(roleDot, document.createTextNode(roleCap));
         pillUser.className = "pill-badge pill-brand";
       }
       if (userLabel && usernameEl) {
@@ -330,7 +334,10 @@
     } else if (signedInAs) {
       if (pillUser) {
         pillUser.hidden = false;
-        pillUser.innerHTML = `<span class="pill-dot"></span>${signedInAs}`;
+        pillUser.replaceChildren();
+        const userDot = document.createElement("span");
+        userDot.className = "pill-dot";
+        pillUser.append(userDot, document.createTextNode(signedInAs));
         pillUser.className = "pill-badge pill-brand";
       }
       if (userLabel && usernameEl) {

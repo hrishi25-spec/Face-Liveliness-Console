@@ -56,12 +56,15 @@ public class ChallengesController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Challenge not found for this session"));
 
-        antiReplayValidator.validateChallenge(session, challenge, req);
-
+        // Ownership before freshness: a challenge id from another session is a
+        // 404, not a nonce/timestamp validation error (which would confirm that
+        // the id exists).
         if (!challenge.getSession().getId().equals(sessionId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "Challenge not found for this session");
         }
+
+        antiReplayValidator.validateChallenge(session, challenge, req);
         if (challenge.getStatus() != ChallengeStatus.ISSUED) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Challenge is not awaiting validation (status=" + challenge.getStatus() + ")");
@@ -90,6 +93,11 @@ public class ChallengesController {
             ChallengeEntity responseChallenge =
                     newlyIssued instanceof ChallengeEntity issued ? issued : challenge;
 
+            String action = (String) result.get("action");
+            if (isTerminal(action)) {
+                antiReplayValidator.cleanupSession(sessionId);
+            }
+
             ChallengeResponse challengeResp = ChallengeResponse.builder()
                     .id(responseChallenge.getId())
                     .sessionId(sessionId)
@@ -106,12 +114,19 @@ public class ChallengesController {
                     .sessionId(sessionId)
                     .challenge(challengeResp)
                     .passed((Boolean) result.get("passed"))
-                    .action((String) result.get("action"))
+                    .action(action)
                     .mayRetrySession((Boolean) result.get("mayRetrySession"))
                     .message((String) result.get("message"))
                     .build();
         } finally {
             frames.forEach(Mat::release);
         }
+    }
+
+    private static boolean isTerminal(String action) {
+        return "proceed".equals(action) || "reject".equals(action)
+                || "locked".equals(action) || "escalate_to_operator".equals(action)
+                || "failed".equals(action) || "manual_check_passed".equals(action)
+                || "manual_check_failed".equals(action);
     }
 }

@@ -66,8 +66,23 @@ public class SecurityHeadersFilter implements Filter {
         res.setHeader("X-Frame-Options", "DENY");
         res.setHeader("Referrer-Policy", "no-referrer");
         res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+        res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
         res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
+        // API answers carry session state, account names, audit rows and
+        // aggregate metrics. Keeping them out of browser and shared caches is
+        // what the gates' comments mean by the "no-store policy": a cache hit
+        // must never hand one caller another caller's answer.
         String uri = req.getRequestURI();
+        if (uri.startsWith("/api/") || uri.equals("/health")) {
+            res.setHeader("Cache-Control", "no-store");
+            res.setHeader("Pragma", "no-cache");
+        }
+        // Only meaningful over TLS; a browser ignores it on plain HTTP, and the
+        // shipped dev launcher is loopback HTTP by design. Behind TLS this stops
+        // a downgrade to the HTTP origin from carrying the session cookie.
+        if (req.isSecure()) {
+            res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+        }
         boolean docs = uri.startsWith("/swagger-ui") || uri.startsWith("/v3/api-docs")
                 || uri.startsWith("/webjars");
         if (!docs) {

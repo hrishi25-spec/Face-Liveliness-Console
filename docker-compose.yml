@@ -28,6 +28,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      SERVER_ADDRESS: 0.0.0.0
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-pad_liveness}
@@ -51,7 +52,10 @@ services:
       # the reverse proxy or this compose network's gateway. Empty = trust nobody.
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     ports:
-      - "8000:8000"
+      # Host loopback, matching the service's own default. Put a reverse proxy
+      # in front for LAN access; do not publish an unauthenticated capture API
+      # to the network by accident.
+      - "127.0.0.1:8000:8000"
     command: java -jar /app/app.jar --spring.profiles.active=default
 
 volumes:

@@ -55,11 +55,22 @@ _CSP = (
 async def harden_requests(request: Request, call_next):
     """Security headers on every response + reject oversized bodies early."""
     if request.method in ("POST", "PUT"):
+        # A missing Content-Length means a chunked body whose size is not known
+        # before it is read. Accepting it would let one caller stream an
+        # arbitrarily large body past this check and have Pydantic buffer it.
+        raw_length = request.headers.get("content-length")
+        if raw_length is None:
+            return JSONResponse(
+                status_code=status.HTTP_411_LENGTH_REQUIRED,
+                content={"error": "LENGTH_REQUIRED",
+                         "message": "Content-Length is required for this request.",
+                         "status": 411},
+            )
         try:
-            content_length = int(request.headers.get("content-length", "0") or 0)
+            content_length = int(raw_length)
         except ValueError:
             content_length = -1
-        if content_length > settings.MAX_REQUEST_BODY_BYTES:
+        if content_length < 0 or content_length > settings.MAX_REQUEST_BODY_BYTES:
             return JSONResponse(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 content={"error": "PAYLOAD_TOO_LARGE",

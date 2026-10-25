@@ -3,6 +3,8 @@ FROM eclipse-temurin:17-jre-alpine AS runner
 
 # Low-end defaults: cap heap at 50% RAM, SerialGC for small footprint, exit on OOM
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=50.0 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
+# Listen on the container interface; the compose files publish loopback only.
+ENV SERVER_ADDRESS=0.0.0.0
 
 # Non-root user
 RUN addgroup -S mosip && adduser -S -G mosip mosip
