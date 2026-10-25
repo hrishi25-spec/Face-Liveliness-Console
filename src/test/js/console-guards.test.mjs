@@ -740,7 +740,7 @@ assert(enc.type === "image/jpeg" && enc.quality === 0.7,
     `frames are JPEG at quality 0.7, not the old 0.85/0.9 (got ${enc.quality})`);
 assert(enc.width / enc.height === 16 / 9, "the aspect ratio survives the downscale");
 assert(captureCanvas().lastDraw[3] === 1280 && captureCanvas().lastDraw[4] === 720,
-    "an unmeasurable guide (this DOM has no layout) falls back to the whole 1280x720 source rectangle");
+    "the whole 1280x720 source rectangle is drawn — the cap scales, it never crops");
 assert(createdElements.filter(e => e.tagName === "CANVAS").length === 1,
     "one canvas is allocated per page and reused for every frame, not one per capture");
 assert(captureCanvas().encodes > 1, "the reused canvas really is what encodes the frames");
@@ -755,44 +755,6 @@ assert(captureCanvas().lastEncode.width === 320 && captureCanvas().lastEncode.he
     "a 320x240 camera keeps its own size: the cap is a ceiling, never an upscale");
 $id("video").videoWidth = 1280;
 $id("video").videoHeight = 720;
-
-section("the captured frame is the guide's region of the camera image");
-// The DOM above has no layout, so the run above took the full-frame fallback.
-// The mapping itself is arithmetic and is pinned from numbers alone: the guide
-// decides which part of the camera frame is sent, so the face fills the capture
-// the way it fills the oval.
-const guide = windowTarget.CAPTURE_GUIDE;
-assert(guide && typeof guide.rect === "function" && guide.margin > 1,
-    "the console exposes the guide mapping, and its margin is wider than the guide");
-
-// A 640x480 camera in a 640x480 preview: CSS pixels are camera pixels.
-const centred = guide.rect(640, 480,
-    { left: 0, top: 0, width: 640, height: 480 },
-    { left: 250, top: 90, width: 140, height: 189 });
-assert(Math.round(centred.w) === Math.round(140 * guide.margin)
-    && Math.round(centred.h) === Math.round(189 * guide.margin),
-    `the crop is the guide plus its margin, not the whole 640x480 frame (got ${centred.w}x${centred.h})`);
-assert(centred.w < 640 && centred.h < 480,
-    "so the frame sent to the engine is smaller than the camera's own frame");
-assert(Math.abs(centred.x + centred.w / 2 - 320) <= 1
-    && Math.abs(centred.y + centred.h / 2 - (90 + 189 / 2)) <= 1,
-    "and it is centred on the guide, not on the frame's top-left corner");
-
-// object-fit: cover. A 16:9 camera in a 4:3 preview loses its sides — the
-// visible part is a centred 960-wide slice of the 1280-wide frame — so a guide
-// at the preview's centre must map to the camera's centre, not to 533.
-const covered = guide.rect(1280, 720,
-    { left: 0, top: 0, width: 640, height: 480 },
-    { left: 320 - 70, top: 240 - 95, width: 140, height: 190 });
-assert(Math.abs(covered.x + covered.w / 2 - 640) <= 1
-    && Math.abs(covered.y + covered.h / 2 - 360) <= 1,
-    `the cover-fit offset is undone: a centred guide maps to the camera's centre (got ${covered.x + covered.w / 2},${covered.y + covered.h / 2})`);
-const clamped = guide.rect(1280, 720,
-    { left: 0, top: 0, width: 640, height: 480 },
-    { left: -200, top: 100, width: 140, height: 190 });
-assert(clamped.x === 0 && clamped.y >= 0
-    && clamped.x + clamped.w <= 1280 && clamped.y + clamped.h <= 720,
-    "a guide beyond the preview's edge is clamped inside the camera frame, never negative");
 
 section("capture pauses while the tab is hidden (task 1)");
 frameAction = "retry_passive";   // keep the passive loop iterating while hidden

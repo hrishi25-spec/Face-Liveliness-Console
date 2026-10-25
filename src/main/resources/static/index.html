@@ -378,13 +378,13 @@
           </div>
 
           <div class="capture-side">
-            <!-- The user type is the signed-in account's, not a choice: the
-                 service derives it from the session and refuses a request that
-                 names a different one. Shown, so the screen never hides which
-                 policy the check will run under. -->
-            <div class="field-label">User type
-              <div id="workflow-derived" class="workflow-derived" aria-live="polite">—</div>
-            </div>
+            <label class="field-label">Workflow
+              <select id="workflow" class="select-control">
+                <option value="RESIDENT">RESIDENT</option>
+                <option value="OPERATOR">OPERATOR</option>
+                <option value="SUPERVISOR">SUPERVISOR</option>
+              </select>
+            </label>
 
             <label class="field-label">Device ID
               <input id="deviceId" class="text-control" value="L1-CAM-01">

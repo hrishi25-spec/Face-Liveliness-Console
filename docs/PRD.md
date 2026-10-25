@@ -197,12 +197,10 @@ Registration Client (Desktop / Android)
 
 An end-to-end run looks like this:
 
-1. **`POST /api/v1/sessions`** — the client opens a session for a workflow. A signed-in
-   caller's workflow is its account's role and a body naming another type is refused (403);
-   an anonymous caller, the registration client's resident capture, names it in the body. The
-   engine resolves an **effective policy** for that workflow (system defaults ⊕ per-workflow
-   policy overrides) and snapshots it onto the session, so later policy edits cannot change
-   the rules mid-session.
+1. **`POST /api/v1/sessions`** — the client opens a session for a workflow. The engine
+   resolves an **effective policy** for that workflow (system defaults ⊕ per-workflow policy
+   overrides) and snapshots it onto the session, so later policy edits cannot change the rules
+   mid-session.
 2. **`POST /api/v1/sessions/{id}/frames`** — the client streams frames (base64).
 3. **PAD runs first**, before any liveness scoring. A flagged presentation attack short-
    circuits the request: the session fails with a PAD reason and no liveness score is computed
@@ -392,7 +390,7 @@ are under `/api/v1`.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Liveness of the service; reports whether the engine is `available`. |
-| `POST` | `/api/v1/sessions` | Create a session (`workflowType`, `deviceId`, optional `subjectRef`, `online`). With a session cookie the workflow must match the account's role (`SUPERVISOR`/`OPERATOR`); a mismatch is `403` and nothing is created. |
+| `POST` | `/api/v1/sessions` | Create a session (`workflowType`, `deviceId`, optional `subjectRef`, `online`). |
 | `GET` | `/api/v1/sessions/{id}` | Current session state + the snapshotted effective policy. |
 | `GET` | `/api/v1/sessions` | Recent sessions, newest first (`workflowType`/`status` filters, `limit` 1..200, default 50). **Requires the operator API key or a signed-in session.** |
 | `POST` | `/api/v1/sessions/{id}/close` | Close an active session; returns a summary (counters, duration). |

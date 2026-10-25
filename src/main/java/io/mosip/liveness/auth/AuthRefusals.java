@@ -24,16 +24,6 @@ public final class AuthRefusals {
     /** Authenticated, but the role is too small for this route. */
     public static final String FORBIDDEN = "Not permitted for this role.";
 
-    /**
-     * A signed-in caller named a user type other than the one its role runs.
-     *
-     * <p>Refused rather than corrected: silently downgrading a supervisor's
-     * request to {@code SUPERVISOR_AUTH} would hand back evidence for a flow the
-     * caller did not ask for, and silently upgrading would be worse.</p>
-     */
-    public static final String USER_TYPE_FROM_ACCOUNT =
-            "The user type is taken from the signed-in account and cannot be chosen for a session.";
-
     /** Every login failure, whatever the underlying reason. */
     public static final String INVALID_CREDENTIALS = "Invalid username or password.";
 

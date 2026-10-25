@@ -901,26 +901,6 @@ button.danger:disabled {
   margin-top: 4px;
 }
 
-/* The user type the session will run as. Not a picker: the value comes from the
-   signed-in account, so it is displayed the way the inputs beside it look but
-   has no caret, no chevron and no focus ring of its own. */
-.workflow-derived {
-  display: flex;
-  align-items: center;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  height: var(--control-height);
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  border: 1px dashed var(--color-input-border);
-  background: var(--color-input-bg);
-  color: var(--color-text-primary);
-  width: 100%;
-  user-select: none;
-}
-
 input.text-control,
 select.select-control,
 input[type="text"],
@@ -1478,13 +1458,8 @@ video {
 }
 
 .camera-oval {
-  /* Sized from the viewfinder's own height rather than fixed pixels, so a
-     larger guide still cannot push itself out of a short or narrow preview:
-     74% of the preview, capped at 378px, on the same 212:286 ellipse. */
-  height: min(378px, 74%);
-  aspect-ratio: 212 / 286;
-  width: auto;
-  flex: 0 0 auto;
+  width: 212px;
+  height: 286px;
   border: 2px dashed rgba(255, 255, 255, 0.85);
   border-radius: 50%;
   margin-bottom: 16px;
@@ -1544,8 +1519,8 @@ video {
 }
 
 @keyframes camera-scan {
-  0%, 100% { transform: translateY(-111px); }
-  50% { transform: translateY(111px); }
+  0%, 100% { transform: translateY(-84px); }
+  50% { transform: translateY(84px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

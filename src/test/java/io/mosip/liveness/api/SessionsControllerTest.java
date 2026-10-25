@@ -1,10 +1,7 @@
 package io.mosip.liveness.api;
 
 import tools.jackson.databind.ObjectMapper;
-import io.mosip.liveness.auth.AuthPrincipal;
-import io.mosip.liveness.auth.AuthRefusals;
 import io.mosip.liveness.dto.SessionCreateRequest;
-import io.mosip.liveness.models.enums.AuthRole;
 import io.mosip.liveness.models.enums.SessionStatus;
 import io.mosip.liveness.models.enums.WorkflowType;
 import io.mosip.liveness.models.enums.LivenessStage;
@@ -129,90 +126,6 @@ class SessionsControllerTest {
                 "the effective policy must be frozen on the session at creation");
         assertEquals(0.85, saved.getValue().getPolicySnapshot().passiveThreshold(), 1e-9);
         assertNotNull(saved.getValue().getPolicySnapshotAt());
-    }
-
-    /**
-     * The user type is the signed-in account's, not a client choice: a supervisor
-     * session that asks for the resident workflow is refused before anything is
-     * persisted, because that would measure a staff authentication against the
-     * loosest policy the service has.
-     */
-    @Test
-    void createSession_signedInSupervisorClaimingResident_isRefused() throws Exception {
-        mockMvc.perform(post("/api/v1/sessions")
-                        .requestAttr(AuthGate.ATTRIBUTE, principal(AuthRole.SUPERVISOR))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                SessionCreateRequest.builder().workflowType(WorkflowType.RESIDENT)
-                                        .deviceId("L1-CAM-01").build())))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message").value(AuthRefusals.USER_TYPE_FROM_ACCOUNT));
-
-        verify(sessionRepo, never()).save(any());
-    }
-
-    @Test
-    void createSession_signedInOperatorClaimingSupervisor_isRefused() throws Exception {
-        mockMvc.perform(post("/api/v1/sessions")
-                        .requestAttr(AuthGate.ATTRIBUTE, principal(AuthRole.OPERATOR))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                SessionCreateRequest.builder().workflowType(WorkflowType.SUPERVISOR)
-                                        .deviceId("L1-CAM-01").build())))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message").value(AuthRefusals.USER_TYPE_FROM_ACCOUNT));
-
-        verify(sessionRepo, never()).save(any());
-    }
-
-    /**
-     * The workflow a signed-in caller gets is the one its role runs, with that
-     * role's frozen policy — never the value the body carried.
-     */
-    @Test
-    void createSession_signedInSupervisorRunsTheSupervisorWorkflow() throws Exception {
-        when(sessionRepo.save(any())).thenAnswer(inv -> {
-            LivenessSession s = inv.getArgument(0);
-            s.setId(sessionId); s.setCreatedAt(OffsetDateTime.now()); s.setUpdatedAt(OffsetDateTime.now());
-            return s;
-        });
-
-        mockMvc.perform(post("/api/v1/sessions")
-                        .requestAttr(AuthGate.ATTRIBUTE, principal(AuthRole.SUPERVISOR))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                SessionCreateRequest.builder().workflowType(WorkflowType.SUPERVISOR)
-                                        .deviceId("L1-CAM-01").build())))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.workflowType").value("SUPERVISOR"))
-                .andExpect(jsonPath("$.policy.passiveThreshold").value(0.85))
-                .andExpect(jsonPath("$.policy.minChallengeCount").value(2))
-                .andExpect(jsonPath("$.policy.onRepeatedFailure").value("LOCK_OUT"));
-    }
-
-    @Test
-    void createSession_signedInOperatorRunsTheOperatorWorkflow() throws Exception {
-        when(sessionRepo.save(any())).thenAnswer(inv -> {
-            LivenessSession s = inv.getArgument(0);
-            s.setId(sessionId); s.setCreatedAt(OffsetDateTime.now()); s.setUpdatedAt(OffsetDateTime.now());
-            return s;
-        });
-
-        mockMvc.perform(post("/api/v1/sessions")
-                        .requestAttr(AuthGate.ATTRIBUTE, principal(AuthRole.OPERATOR))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                SessionCreateRequest.builder().workflowType(WorkflowType.OPERATOR)
-                                        .deviceId("L1-CAM-01").build())))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.workflowType").value("OPERATOR"))
-                .andExpect(jsonPath("$.policy.passiveThreshold").value(0.82))
-                .andExpect(jsonPath("$.policy.onRepeatedFailure").value("FALLBACK"));
-    }
-
-    /** The resolved principal an {@code AuthContextFilter} run would have parked. */
-    private static AuthPrincipal principal(AuthRole role) {
-        return new AuthPrincipal(UUID.randomUUID(), role.name().toLowerCase(), role, false);
     }
 
     @Test

@@ -232,7 +232,7 @@ The release build is signed with the debug key (`android/app/build.gradle`), so 
 
 ## Per-role policy
 
-The user type is set once, at session creation, and that workflow's policy is frozen on the session. A signed-in caller does not choose it: the account's role decides (`SUPERVISOR` or `OPERATOR`), and a request naming a different type is refused, so staff authentication cannot be measured against the resident policy. An anonymous caller — the registration client's resident capture — still names it in the request. A later `PUT /api/v1/config/{workflow}` affects only new sessions.
+The user type is chosen once, at session creation, and that workflow's policy is frozen on the session. A later `PUT /api/v1/config/{workflow}` affects only new sessions.
 
 | Workflow | Passive threshold | Challenges required | Challenge window | Retry budget | On budget exhausted |
 |---|---|---|---|---|---|
