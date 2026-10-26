@@ -38,7 +38,9 @@ which is why the console had nothing to show.
   defocused replay is `SCREEN_REPLAY` and a print stays `PRINTED_PHOTO`. The cue only chooses
   between the two labels for a frame already flagged as an attack; it never turns an attack into a
   pass. `PadEngineServiceScreenReplayTest` pins both sides — a blurred phone composite with a bezel
-  reads `SCREEN_REPLAY`, the print fixture has zero bezel evidence and stays `PRINTED_PHOTO`.
+  reads `SCREEN_REPLAY`, the print fixture has zero bezel evidence and stays `PRINTED_PHOTO` — and
+  the composite goes through a JPEG round-trip first, because at the working size the bezel is a
+  few pixels wide and the encoder's smoothing is part of the frame the endpoint actually receives.
 - **The screen-replay band is real, not a placeholder.** `PadEngineService` measures the share of
   the non-DC spectrum in the outer half of a 512×512 plane (`DFT_COMPLEX_OUTPUT` on an
   `INTER_AREA` downscale) and calls it a screen replay above `0.45`. A live face measures ~0.25 and

@@ -86,8 +86,6 @@ public class PadEngineService {
     private static final int BEZEL_DARK_LEVEL = 45;
     /** Smallest dark blob (share of the frame) that can be a device body. */
     private static final double BEZEL_MIN_AREA_SHARE = 0.12;
-    /** A body fills its bounding box; a face or a suit does not. */
-    private static final double BEZEL_MIN_RECT_FILL = 0.80;
     /** The room around the body must be this much brighter than the bezel. */
     private static final int BEZEL_MIN_ROOM_CONTRAST = 30;
     /** The panel inside the bezel must be this much brighter than the bezel. */
@@ -170,7 +168,9 @@ public class PadEngineService {
      * panel, held up in front of a lit room. The frame is downscaled and blurred
      * first, so focus does not decide it — the bezel is a low-frequency step
      * that survives defocus. A dark blob that runs into the frame edge is
-     * scenery (a suit, a desk, a shadow) and is rejected.</p>
+     * scenery (a suit, a desk, a shadow) and is rejected, and the band a couple
+     * of pixels inside the rectangle must itself be dark, level and continuous:
+     * a bounding box around an L-shaped shadow is not a body.</p>
      *
      * <p>Known look-alike: a dark-framed picture or mirror on a wall has the same
      * shape. This only chooses between {@code PRINTED_PHOTO} and
@@ -194,7 +194,12 @@ public class PadEngineService {
                     0, 0, Imgproc.INTER_AREA);
             Imgproc.GaussianBlur(small, blurred, new Size(5, 5), 0);
             Imgproc.threshold(blurred, dark, BEZEL_DARK_LEVEL, 255, Imgproc.THRESH_BINARY_INV);
-            Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(5, 5));
+            // The band is only a few pixels wide at this working size and the
+            // panel's own content bleeds into it through the blur and the JPEG
+            // ringing, so the mask erodes in places. Closing with a kernel wider
+            // than those gaps keeps the body one contour; without it the ring
+            // fragments and its fill ratio drops far below the body's.
+            Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(9, 9));
             try {
                 Imgproc.morphologyEx(dark, dark, Imgproc.MORPH_CLOSE, kernel);
             } finally {
@@ -213,7 +218,12 @@ public class PadEngineService {
                 if (rect.x < BEZEL_FRAME_MARGIN || rect.y < BEZEL_FRAME_MARGIN
                         || rect.x + rect.width > small.cols() - BEZEL_FRAME_MARGIN
                         || rect.y + rect.height > small.rows() - BEZEL_FRAME_MARGIN) continue;
-                if (area / (rect.width * (double) rect.height) < BEZEL_MIN_RECT_FILL) continue;
+                // No fill-ratio test: the dark mask is the body *plus* whatever
+                // dark subject it frames, because the suit or hair reaches the
+                // panel edge and merges with the bezel. Requiring the blob to
+                // fill its own bounding box rejected exactly the capture this cue
+                // exists for — a phone showing a person — and the dark band below
+                // is the real test of whether the rectangle is a body.
                 if (area > bodyArea) {
                     body = rect;
                     bodyArea = area;
@@ -221,7 +231,9 @@ public class PadEngineService {
             }
             if (body == null) return 0.0;
 
-            double[] bezel = bandStats(small, body, 1, 2, true);
+            // Sampled just inside the body, not at its edge: the first pixel of
+            // the rect is where the body blurs into the bright room behind it.
+            double[] bezel = bandStats(small, body, 2, 2, true);
             if (bezel[0] > BEZEL_MAX_BAND_MEAN || bezel[1] > BEZEL_MAX_BAND_STD) return 0.0;
             double[] room = bandStats(small, body, 3, 7, false);
             if (room[0] - bezel[0] < BEZEL_MIN_ROOM_CONTRAST) return 0.0;

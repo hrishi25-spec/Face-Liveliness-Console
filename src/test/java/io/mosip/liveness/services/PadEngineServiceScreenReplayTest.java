@@ -161,7 +161,11 @@ class PadEngineServiceScreenReplayTest {
     /**
      * A portrait filling a phone screen with a dark body around it, in a lit
      * room: the capture a webcam sees when a phone holds the replay. Blurred by
-     * {@code defocus} to exercise the case the texture rule misreads.
+     * {@code defocus} to exercise the case the texture rule misreads, then put
+     * through a JPEG round-trip: the endpoint receives an encoded frame, and the
+     * encoder's smoothing and ringing act on a bezel only a few pixels wide at
+     * the working size. A raw in-memory Mat is not the capture the service
+     * classifies.
      */
     private static Mat phoneWithBezel(double defocus) {
         int width = 1280, height = 720, x = 430, y = 30, screenW = 420, screenH = 660;
@@ -181,7 +185,24 @@ class PadEngineServiceScreenReplayTest {
             scaled.release();
             portrait.release();
         }
-        return frame;
+        return jpegRoundTrip(frame);
+    }
+
+    /** Encode and decode as the frame endpoint does, at a console capture's quality. */
+    private static Mat jpegRoundTrip(Mat frame) {
+        org.opencv.core.MatOfByte encoded = new org.opencv.core.MatOfByte();
+        org.opencv.core.MatOfInt quality =
+                new org.opencv.core.MatOfInt(Imgcodecs.IMWRITE_JPEG_QUALITY, 85);
+        try {
+            assertTrue(Imgcodecs.imencode(".jpg", frame, encoded, quality), "JPEG encode");
+            Mat decoded = Imgcodecs.imdecode(encoded, Imgcodecs.IMREAD_COLOR);
+            assertFalse(decoded.empty(), "JPEG decode");
+            return decoded;
+        } finally {
+            quality.release();
+            encoded.release();
+            frame.release();
+        }
     }
 
     /** A fine LCD-like grid over a slowly varying luminance ramp, at capture size. */

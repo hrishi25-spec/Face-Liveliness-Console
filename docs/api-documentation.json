@@ -447,7 +447,7 @@
         "OTHER"
       ],
       "appears_in": "FrameProcessResult.padAttackType and the session failureReason 'presentation_attack:<TYPE>'",
-      "notes": "OTHER is a valid value. In the current heuristic PAD implementation the SCREEN_REPLAY branch cannot be reached (see known_issues.pad_heuristic_limits)."
+      "notes": "PRINTED_PHOTO and SCREEN_REPLAY are both reachable today: the OpenCV heuristics emit them, and the MiniFASNet model names replays. VIDEO_REPLAY and OTHER are valid values that no current PAD source emits. See known_issues.pad_heuristic_limits for the limits of each source."
     },
     "FrameAction": {
       "notes": "The action vocabulary the frame endpoint actually returns.",
@@ -2166,12 +2166,12 @@
       "title": "Presentation attack — fail-closed rejection",
       "steps": [
         "Subject presents a printed photo or a screen replay",
-        "POST .../frames -> the heuristics may flag the frame (padFlag true, padAttackType PRINTED_PHOTO or VIDEO_REPLAY)",
+        "POST .../frames -> the heuristics or the model may flag the frame (padFlag true, padAttackType PRINTED_PHOTO or SCREEN_REPLAY)",
         "A flagged frame is terminal immediately: action reject, message 'Face verification could not be completed. Please try again.', session FAILED with failureReason presentation_attack:<TYPE>, and an audit row PAD_REJECTED with the attack type and confidence",
         "No challenge is ever issued for an attack"
       ],
       "why_it_matters": "A rejected frame never earns a challenge, so an attack cannot buy extra attempts by design.",
-      "caveat": "The PAD heuristics are a placeholder: 60% of the verdict comes from comparing Laplacian texture variance against a fixed constant, so both false accepts and false rejects are expected. See known_issues.pad_heuristic_limits."
+      "caveat": "The PAD is a placeholder, not an evaluated model: an FFT band-energy proxy and a Laplacian-texture proxy, fused with MiniFASNet when a backend is available. The bezel pass only chooses the attack label on a frame that is already flagged, so it never turns an attack into a pass. Both false accepts and false rejects are expected — see known_issues.pad_heuristic_limits."
     },
     {
       "id": "active-challenge",
@@ -2268,9 +2268,9 @@
     {
       "id": "pad_heuristic_limits",
       "severity": "medium — detection quality",
-      "detail": "PadEngineService is a placeholder. The screen-replay branch compares a hard-coded freqRatio = 0.1 against a 0.35 threshold, so SCREEN_REPLAY can never be returned. The remaining signals are Laplacian texture variance (< 15 -> PRINTED_PHOTO) and brightness (< 0.15 -> VIDEO_REPLAY). The ONNX/TFLite backends in io.mosip.liveness.backend are not used by the HTTP path.",
-      "verified": "Source reading; SCREEN_REPLAY unreachable by construction.",
-      "recommended_fix": "Implement real frequency analysis or wire a trained model into the decision path before making accuracy claims."
+      "detail": "PAD is a placeholder rather than an evaluated model. PadEngineService measures an FFT outer-band ratio (a screen-moiré proxy) and Laplacian texture variance (< 15 -> attack); when the texture rule fires it also runs a screen-bezel pass, so a flat display is typed SCREEN_REPLAY instead of PRINTED_PHOTO. DecisionEngineService.detectPad ORs that heuristic with the MiniFASNet model's PAD when a backend is available. The thresholds are calibrated on the committed fixtures, not on capture hardware, and neither source has been measured against ISO/IEC 30107-3.",
+      "verified": "Fixture tests pin both sides of each rule: a live face is not flagged; the print fixture is PRINTED_PHOTO with zero bezel evidence; a synthetic screen grid and a defocused phone-with-bezel composite are SCREEN_REPLAY. Console captures of a phone replay and a print are rejected end to end.",
+      "recommended_fix": "Calibrate on the target capture hardware and evaluate against ISO/IEC 30107-3 PAD metrics before making accuracy claims. The bezel pass is a label tie-breaker, not an independent detector."
     },
     {
       "id": "liveness_disabled_not_enforced",
