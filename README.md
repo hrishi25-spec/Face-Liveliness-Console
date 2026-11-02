@@ -416,10 +416,11 @@ Where each MOSIP Decode deliverable lives. Rows marked **add link** are external
 
 Team **Cyber Hub** — MOSIP Decode 2026, Problem Statement 04.
 
-| Name | Focus |
-|---|---|
-| Hrishi Banerjee | Android client, platform pins, integration |
-| Dhrubajoti Thakur | Evaluation harness, ISO/IEC 30107 alignment |
+| Name                     | Focus                                           |
+| ------------------------ | ----------------------------------------------- |
+| Hrishi Banerjee          | Android client, platform pins                   |
+| Dhrubajoti Thakur        | Evaluation harness, ISO/IEC 30107 alignment     |
+| Pakki Devi Sri Manikanta | Evaluation harness, UI/UX designing integration |
 
 ## Contributing
 
