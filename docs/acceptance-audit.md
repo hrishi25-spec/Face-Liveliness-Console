@@ -1,6 +1,6 @@
 # Acceptance Audit — Face Liveness Detection & PAD (MOSIP Prob 04)
 
-**Date:** 2026-10-17 · **Branch:** `main` · **Test baseline:** Suites green
+**Date:** 2026-11-02 · **Branch:** `main` · **Test baseline:** 773 tests, 0 failures, 1 skipped
 
 Status of the consolidated task checklist against the implemented code.
 Legend: ✅ done · 🟡 partial · ❌ not done.
@@ -51,7 +51,7 @@ Legend: ✅ done · 🟡 partial · ❌ not done.
 | Task | Status | Evidence / gap |
 |---|---|---|
 | Mock L0/L1 device | ✅ | `device/MockL0L1Device`, `SyntheticScene`, android `MockFaceFrameSource` |
-| Automated liveness scenarios | ✅ | 751 green Java tests; engine flow/escalation/error suites |
+| Automated liveness scenarios | ✅ | 773 green Java tests; engine flow/escalation/error suites |
 | Automated PAD attack scenarios | ✅ | `AttackScenarioHarness` (240 presentations, seeded), `PrintAttackFixtureTest` |
 | Interop testing framework | 🟡 | Shared suite runs across mock/ONNX/MediaPipe backends + 2 device adapters; no formal cross-vendor report |
 | Model version management | ✅ | sha256 + version + rollback (`android/ModelStore`; bundled model hash verified at load) |

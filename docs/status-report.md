@@ -1,8 +1,8 @@
 # MOSIP Face Liveness & PAD Engine — Status Report
 
-**Date:** 2026-10-17 · **Branch:** `main` · **Artifact:** `io.mosip.liveness:pad-liveness-backend:1.0.0-SNAPSHOT`
-**Last updated:** 2026-10-17 — reconciled with the current tree (accounts, ONNX default,
-anti-replay evidence, 751 Java tests). Earlier sections keep their original dates where
+**Date:** 2026-11-02 · **Branch:** `main` · **Artifact:** `io.mosip.liveness:pad-liveness-backend:1.0.0-SNAPSHOT`
+**Last updated:** 2026-11-02 — reconciled with the current tree (accounts, ONNX default,
+anti-replay evidence, 773 Java tests). Earlier sections keep their original dates where
 they record a measurement or a decision rather than current state.
 
 ---
@@ -19,8 +19,8 @@ they record a measurement or a decision rather than current state.
 
 ## 2. Existing Code — What Is Implemented
 
-190 Java source files, 95 files under `src/test/java` (88 test classes plus 7 support
-helpers). **All 751 Java tests pass**, and the 49-test Python backend suite is green in its
+191 Java source files, 99 files under `src/test/java` (92 test classes plus 7 support
+helpers). **The Java suite is green: 773 tests, 0 failures, 1 skipped**, and the 49-test Python backend suite is green in its
 own job.
 
 ### 2.1 Architecture layers (`docs/design.md`)

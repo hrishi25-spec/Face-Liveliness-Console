@@ -51,7 +51,7 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 │   │   ├── static/console.css              # Console styles (external — strict CSP)
 │   │   ├── static/console.js               # Console logic (external — strict CSP)
 │   │   └── db/migration/V1__init_schema.sql  # Flyway DB migration
-│   └── test/java/io/mosip/liveness/       # 88 test classes + 7 support files (95 files)
+│   └── test/java/io/mosip/liveness/       # 92 test classes + 7 support files (99 files)
 │
 ├── pad_liveness_backend/                   # Python FastAPI ORIGINAL reference backend
 │   ├── app/                                # FastAPI application (35 .py files)
@@ -81,9 +81,9 @@ The service is designed to run **entirely offline** (no mandatory cloud calls) o
 
 | Language | Where | Lines of Code | Purpose |
 |----------|-------|---------------|---------|
-| **Java 17** | `src/main/java` (190 files) | ~24,100 | Main backend: engine, API, device adapters, backends, services, models |
-| **Java 17** | `src/test/java` (95 files) | ~21,700 | Unit + integration tests and test utilities |
-| **Python 3.11+** | `pad_liveness_backend/` (53 files) | ~3,840 | Original FastAPI reference implementation (kept for comparison) |
+| **Java 17** | `src/main/java` (191 files) | ~24,800 | Main backend: engine, API, device adapters, backends, services, models |
+| **Java 17** | `src/test/java` (99 files) | ~23,400 | Unit + integration tests and test utilities |
+| **Python 3.11+** | `pad_liveness_backend/` (53 files) | ~3,890 | Original FastAPI reference implementation (kept for comparison) |
 | **SQL** | `V1__init_schema.sql` | ~85 | PostgreSQL schema (Flyway migration) |
 | **YAML** | `application.yml`, `application-dev.yml` | ~60 | Spring Boot configuration |
 | **JavaScript/HTML** | `static/index.html`, `static/console.css`, `static/console.js` | ~1,340 | Single-page browser test console (external assets so CSP stays strict) |
@@ -1093,7 +1093,7 @@ The Java version is a **complete superset** of the Python version — it adds th
 
 ## 14. Test Suite
 
-**88 test classes + 7 support files (95 files), 751 tests, all green.** The
+**92 test classes + 7 support files (99 files), 773 tests, all green (1 skipped).** The
 cross-backend contract test runs in its own CI job (it needs both runtimes), so
 it is excluded from the unit matrix rather than skipping there.
 
@@ -1226,30 +1226,43 @@ already in use.
 
 ## 17. File Inventory
 
-### Java Source (156 files, ~19,400 LOC)
+### Java Source (191 files, ~24,800 LOC)
 
 **Entry Point (1)**
 - `PadLivenessApplication.java`
 
-**API Layer — Controllers (9)**
-- `SessionsController.java` — POST/GET sessions, POST close
+**API Layer — Controllers and error handler (14)**
+- `SessionsController.java` — session create/read/close, feed and audit
 - `FramesController.java` — POST frames
 - `ChallengesController.java` — POST validate
-- `ConfigController.java` — GET/PUT config
+- `ActiveLivenessController.java` — unified active-stage submission
+- `ConfigController.java` — GET/PUT config, config audit and chain verification
 - `CalibrationController.java` — GET threshold-sweep (BPCER/APCER table + recommendation)
 - `MetricsController.java` — GET metrics
 - `AuditController.java` — GET audit trail
+- `RejectionsController.java` — GET rejection feed
+- `AuthController.java` — login/logout, who-am-I, role, password change
+- `UsersController.java` — account management
+- `DiagnosticsController.java` — GET diagnostics (loopback, opt-in)
 - `HealthController.java` — GET health
 - `GlobalExceptionHandler.java` — @RestControllerAdvice for all error types
 
-**DTOs (12)**
-- `SessionCreateRequest`, `SessionResponse`, `SessionSummary`
+**API Layer — Filters, guards and route inventory (16)**
+- `AuthContextFilter`, `AuthGate`, `SupervisorGateFilter`, `UserSessionGuard`
+- `OperatorKeyFilter`, `OperatorKeyGuard`, `SessionOwnershipFilter`, `SessionCookie`
+- `RateLimitFilter`, `RateLimitCounters`, `FeedLimit`, `FilterRefusal`
+- `ClientIpFilter`, `ClientIpResolver`, `SecurityHeadersFilter`, `RouteInventory`
+
+**DTOs (22)**
+- `SessionCreateRequest`, `SessionResponse`, `SessionSummary`, `SessionListItem`
 - `FrameSubmitRequest`, `FrameProcessResult`
 - `ChallengeValidateRequest`, `ChallengeValidationResult`, `ChallengeResponse`
 - `ConfigPolicyUpdate`, `ConfigPolicyResponse`
-- `OperationalMetrics`, `AuditLogEntry`
+- `OperationalMetrics`, `AuditLogEntry`, `RejectionEvent`, `RejectionFeed`
+- `LoginRequest`, `ChangePasswordRequest`, `UserCreateRequest`, `UserUpdateRequest`, `UserResponse`
+- `EvidenceVerificationRequest`, `EvidenceVerificationResponse`
 
-**Services (8)**
+**Services (9)**
 - `DecisionEngineService` — orchestrates passive→active→accept/reject (challenge lock, median-window decision)
 - `LivenessEngineService` — face observation, passive scoring (heuristic), active challenge validation (OpenCV-based)
 - `PassiveScoringService` — scorer façade: MiniFASNet ONNX model or heuristic fallback (`mosip.liveness.backend`)
@@ -1258,15 +1271,17 @@ already in use.
 - `ChallengeSelectorService` — dynamic challenge selection with SecureRandom
 - `ConfigService` — bridges DB config with engine EffectivePolicy
 - `ImageUtils` — frame decode (base64→Mat), face/eye detection, sharpness/brightness scoring
+- `LivenessEvidenceVerifier` — verifies a signed evidence bundle against the session nonce
 
-**CRUD Repositories (5)**
+**CRUD Repositories (7)**
 - `LivenessSessionRepository`, `FrameEventRepository`, `ChallengeRepository`, `AuditLogRepository`, `ConfigPolicyRepository`
+- `AuthUserRepository`, `AuthTokenRepository`
 
-**Core Domain Types (13)**
+**Core Domain Types (14)**
 - `Frame`, `FaceSignals`, `Challenge`, `ChallengeType`, `ChallengeProgress`
 - `PadVerdict`, `PadAttackType`
-- `CombinedLivenessScore`, `ActiveFrameResult`
-- `WorkflowType`, `RepeatedFailureAction`
+- `CombinedLivenessScore`, `ActiveFrameResult`, `ProbabilityCalibration`
+- `WorkflowType`, `LivenessMessageKeys`
 - `LivenessException`, `LivenessErrorCode`
 
 **Engine (8)**
@@ -1279,8 +1294,9 @@ already in use.
 - `SessionSummary` — close-session audit record
 - `AssessmentStatus` — enum of frame assessment states
 
-**Backends (5)**
+**Backends (6)**
 - `LivenessBackend` — interface
+- `LivenessBackendSelection` — resolves `mosip.liveness.backend` for both wiring paths
 - `MockLivenessBackend` — scriptable test double
 - `OnnxMiniFasNetBackend` — real passive liveness + PAD via ONNX Runtime on the bundled `minifasnet_v2.onnx` (checksum-verified)
 - `TfLiteMiniFasNetBackend` — real PAD via TFLite + OpenCV
@@ -1290,13 +1306,17 @@ already in use.
 - `ChallengeEvaluators` — rule-based evaluators for all 9 challenge types (batch + frame-by-frame)
 - `ChallengeSelector` — shuffled-bag selection with SecureRandom
 
-**Config (3)**
+**Config (6)**
 - `LivenessConfig` — full config with builder
 - `EffectivePolicy` — resolved policy record
 - `LivenessPolicy` — per-workflow override (all fields nullable)
+- `EffectivePolicyValidator` — cross-field invariants, checked before a policy is frozen
+- `SecurityValidator` — startup checks for secrets, bootstrap account and binds
+- `WorkflowPolicyDefaults` — the three seeded operating points
 
-**Audit (6)**
+**Audit (8)**
 - `AuditEvent`, `AuditEventType`, `AuditLogger`, `StructuredAuditLogger`
+- `AuditChain`, `AuditChainKey` — HMAC-SHA-256 chain and key rotation
 - `MetricsCollector`, `MetricsSnapshot`
 
 **Device Adapters (10)**
@@ -1323,28 +1343,58 @@ already in use.
 - `AppConfig` — Spring @Configuration: bean wiring, OpenCV init (catches `Throwable`,
   including `LinkageError`, and degrades instead of aborting startup), CORS
 
-**Client (5)** — integration surface for host applications
+**Client (8)** — integration surface for host applications
 - `LivenessClient` — platform-neutral client interface + result records
 - `LivenessHttpClient` — HTTP client for this service's REST API, including session
   ownership (`X-Subject-Ref`) for the sessions it creates
 - `LivenessClientException` — client-side error type
 - `DesktopLivenessAdapter` — Desktop (JavaFX/Java) adapter
 - `AndroidLivenessAdapter` — Android (Flutter / Pigeon bridge) adapter
+- `LivenessChallengeOverlay`, `LivenessOverlayPresenter`, `ServiceLivenessEventMapper` — JavaFX overlay and the response→event mapping shared with the HTTP path
 
-**Models (13)** — API/DB layer, kept deliberately separate from `core/`
-- `entity/` — `LivenessSession`, `FrameEvent`, `ChallengeEntity`, `AuditLog`, `ConfigPolicy`
+**Models (17)** — API/DB layer, kept deliberately separate from `core/`
+- `entity/` — `LivenessSession`, `FrameEvent`, `ChallengeEntity`, `AuditLog`, `ConfigPolicy`,
+  `AuthUser`, `AuthToken`
 - `enums/` — `WorkflowType`, `SessionStatus`, `LivenessStage`, `ChallengeStatus`,
-  `ChallengeType`, `FailurePolicy`
-- `converter/` — `StringListJsonConverter`, `StringObjectMapJsonConverter`
+  `ChallengeType`, `FailurePolicy`, `AuthRole`
+- `converter/` — `StringListJsonConverter`, `StringObjectMapJsonConverter`,
+  `EffectivePolicyJsonConverter`
   (JSON text ↔ Java collections, so H2 and PostgreSQL behave identically)
 
-### Java Tests (95 files, 88 test classes, 751 tests)
+**Auth (7)**
+- `AuthPrincipal`, `AuthRefusals`, `AuthService`, `AuthUserBootstrap`, `DevAuthUserBootstrap`,
+  `PasswordHasher`, `SessionTokens`
+
+**Security (1)**
+- `AntiReplayValidator` — session nonce and signed-evidence binding (V13)
+
+**Diagnostics (2)**
+- `DiagnosticsService`, `DiagnosticsSnapshot` — opt-in, loopback-only snapshot
+
+**Metrics (1)**
+- `PipelineTimers` — per-stage timers for the metrics feed
+
+**Tools (1)**
+- `ModelManifestTool` — signs and verifies model manifests
+
+**Shared definitions (1)**
+- `RepeatedFailureAction` — the terminal action vocabulary shared by config and the engine
+
+**Android (23)**
+- `AndroidLivenessOrchestrator`, `AndroidLivenessPolicyProvider`, `FaceFrameSource`, `FrameRateMeter`
+- `LivenessState`, `LivenessStateEvent`, `LivenessHint`, `LivenessRole`, `LivenessListener`
+- `LivenessEvidence`, `LivenessEvidenceSigner`, `LivenessStartResult`, `LivenessFinalResult`
+- `LivenessGatePolicy`, `LivenessFailReason`, `LivenessFailCategory`, `LivenessDeviceError`
+- `ModelStore`, `InMemoryModelStore`, `SignedManifestModelStore`, `SignedModelManifest`,
+  `LockoutStore`, `MockFaceFrameSource`
+
+### Java Tests (99 files, 92 test classes, 773 tests)
 - Engine, challenge, config, API (one class per controller plus the fail-closed
   and route-inventory gates), device, evaluation, model, service and audit tests
 - Support files: `TestConfig`, `MutableClock`, `RecordingAuditLogger`,
   `AuthTestFixture`, `RawHttpSupport`, `HeadlessFx`, `AndroidOrchestratorSupport`
 
-### Python Reference Backend (50 files, ~3,390 LOC)
+### Python Reference Backend (53 files, ~3,890 LOC)
 - FastAPI app with identical API contract
 - SQLAlchemy + Alembic for DB
 - Same decision flow, pluggable engines, audit logging
@@ -1396,7 +1446,7 @@ already in use.
 
 ---
 
-*Last updated: 2026-10-17*
+*Last updated: 2026-11-02*
 *Branch: main*
 *Artifact: `io.mosip.liveness:pad-liveness-backend:1.0.0-SNAPSHOT`*
-*Verified against: 190 main source files / 95 test files / 751 passing tests*
+*Verified against: 191 main source files / 99 test files / 773 tests (1 skipped)*
